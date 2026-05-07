@@ -1,0 +1,15 @@
+[package]
+name = "o3"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "shared-nothing primitives"
+readme = "README.md"
+keywords = ["bytes", "buffer", "single-threaded", "no-share", "zero-copy"]
+categories = ["data-structures", "memory-management"]
+rust-version = "1.95"
+
+[lib]
+
+[dependencies]
+libc = "0.2"
