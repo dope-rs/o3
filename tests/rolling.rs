@@ -24,6 +24,8 @@ fn push_consume_compact_zero_copy() {
     let spare = r.spare_capacity_mut();
     assert_eq!(spare.len(), 8);
     spare[..4].copy_from_slice(b"abcd");
-    unsafe { r.advance(4); }
+    unsafe {
+        r.advance(4);
+    }
     assert_eq!(r.as_slice(), b"abcd");
 }

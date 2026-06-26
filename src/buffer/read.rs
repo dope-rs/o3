@@ -17,6 +17,12 @@ pub trait Read {
     }
 
     fn copy_to_slice(&mut self, dst: &mut [u8]) {
+        assert!(
+            self.remaining() >= dst.len(),
+            "buffer::Read::copy_to_slice: source exhausted (need {}, have {})",
+            dst.len(),
+            self.remaining()
+        );
         let mut filled = 0usize;
         while filled < dst.len() {
             let chunk = self.chunk();

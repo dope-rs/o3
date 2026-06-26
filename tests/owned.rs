@@ -53,6 +53,8 @@ fn spare_capacity_write_then_set_len() {
     spare[0].write(b'x');
     spare[1].write(b'y');
     spare[2].write(b'z');
-    unsafe { o.set_len(3); }
+    unsafe {
+        o.set_len(3);
+    }
     assert_eq!(o.as_slice(), b"xyz");
 }
