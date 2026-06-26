@@ -100,6 +100,13 @@ impl RawMut {
 
     #[inline]
     pub fn data_mut_ptr(&mut self) -> *mut u8 {
+        // SAFETY: writes through this pointer require unique ownership; a live Raw
+        // produced by share() aliases the same payload, so the caller must call
+        // ensure_unique_for_mutate before mutating when the buffer may be shared.
+        debug_assert!(
+            self.refcount() == 1,
+            "buffer::RawMut::data_mut_ptr: aliased write (refcount > 1); call ensure_unique_for_mutate first"
+        );
         unsafe { (self.ptr.as_ptr() as *mut u8).add(HEADER_SIZE) }
     }
 

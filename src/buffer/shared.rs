@@ -10,11 +10,7 @@ pub struct Shared {
 #[derive(Clone)]
 enum SharedRepr {
     Static(&'static [u8]),
-    Owned {
-        buf: Raw,
-        start: u32,
-        len: u32,
-    },
+    Owned { buf: Raw, start: u32, len: u32 },
 }
 
 impl Shared {
@@ -33,10 +29,12 @@ impl Shared {
     }
 
     pub fn from_raw_range(buf: Raw, start: u32, len: u32) -> Self {
-        debug_assert!(
+        assert!(
             start
                 .checked_add(len)
-                .is_some_and(|end| end <= buf.capacity())
+                .is_some_and(|end| end <= buf.capacity()),
+            "buffer::Shared::from_raw_range: range out of bounds (start={start}, len={len}, capacity={})",
+            buf.capacity()
         );
         Self {
             repr: SharedRepr::Owned { buf, start, len },
@@ -280,9 +278,7 @@ impl Owned {
 
     pub fn as_slice(&self) -> &[u8] {
         match self.raw.as_ref() {
-            Some(raw) => unsafe {
-                std::slice::from_raw_parts(raw.data_ptr(), self.len as usize)
-            },
+            Some(raw) => unsafe { std::slice::from_raw_parts(raw.data_ptr(), self.len as usize) },
             None => &[],
         }
     }
@@ -290,9 +286,7 @@ impl Owned {
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         let len = self.len as usize;
         match self.raw.as_mut() {
-            Some(raw) => unsafe {
-                std::slice::from_raw_parts_mut(raw.data_mut_ptr(), len)
-            },
+            Some(raw) => unsafe { std::slice::from_raw_parts_mut(raw.data_mut_ptr(), len) },
             None => &mut [],
         }
     }
@@ -315,7 +309,9 @@ impl Owned {
     }
 
     pub fn reserve(&mut self, additional: usize) {
-        let target = (self.len as usize).checked_add(additional).expect("overflow");
+        let target = (self.len as usize)
+            .checked_add(additional)
+            .expect("overflow");
         self.reserve_total(target);
     }
 

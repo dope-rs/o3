@@ -4,6 +4,9 @@ pub struct Rolling<const CAP: usize> {
     tail: u32,
 }
 
+// SAFETY: all-zero is a valid `Rolling` — empty `[0u8; CAP]` body, head == tail == 0.
+unsafe impl<const CAP: usize> crate::mem::ZeroValid for Rolling<CAP> {}
+
 impl<const CAP: usize> Default for Rolling<CAP> {
     #[inline(always)]
     fn default() -> Self {

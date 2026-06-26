@@ -23,6 +23,22 @@ core::cfg_select! {
     }
 }
 
+pub unsafe trait ZeroValid {}
+
+macro_rules! impl_zero_valid {
+    ($($t:ty),* $(,)?) => { $(unsafe impl ZeroValid for $t {})* };
+}
+
+impl_zero_valid!(
+    u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize
+);
+
+#[inline]
+pub fn boxed_zeroed<T: ZeroValid>() -> Box<T> {
+    // SAFETY: `T: ZeroValid` — an all-zero `T` is a valid value.
+    unsafe { Box::new_zeroed().assume_init() }
+}
+
 pub struct Mmap<T> {
     ptr: NonNull<T>,
     len: usize,
@@ -31,7 +47,10 @@ pub struct Mmap<T> {
 }
 
 impl<T> Mmap<T> {
-    pub fn new_zeroed(len: usize) -> io::Result<Self> {
+    pub fn new_zeroed(len: usize) -> io::Result<Self>
+    where
+        T: ZeroValid,
+    {
         assert!(len > 0);
         let bytes = size_of::<T>().checked_mul(len).expect("slab size overflow");
         let prot = libc::PROT_READ | libc::PROT_WRITE;
