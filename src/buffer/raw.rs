@@ -1,215 +1,246 @@
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::cell::Cell;
 use std::marker::PhantomData;
-use std::ptr::NonNull;
+use std::mem::forget;
+use std::ops::Range;
+use std::ptr::{NonNull, copy, copy_nonoverlapping};
 
 #[repr(C)]
-struct RawHeader {
-    refcount: Cell<u32>,
+struct Header {
+    refs: Cell<u32>,
     capacity: u32,
 }
 
-const HEADER_SIZE: usize = std::mem::size_of::<RawHeader>();
-const HEADER_ALIGN: usize = std::mem::align_of::<RawHeader>();
+const DATA_OFFSET: usize = size_of::<Header>();
+const ALIGN: usize = align_of::<Header>();
 
-fn layout_for(payload: usize) -> Layout {
-    let total = HEADER_SIZE
-        .checked_add(payload)
-        .expect("buffer::Raw: layout overflow");
-    Layout::from_size_align(total, HEADER_ALIGN).expect("buffer::Raw: layout invariant")
+fn is_span_in_bounds(start: usize, len: usize, capacity: usize) -> bool {
+    start.checked_add(len).is_some_and(|end| end <= capacity)
 }
 
-unsafe fn alloc_header(cap: usize) -> NonNull<RawHeader> {
-    assert!(
-        cap <= u32::MAX as usize,
-        "buffer::Raw: capacity too large ({cap}, max {})",
-        u32::MAX
-    );
-    let layout = layout_for(cap);
-    let raw = unsafe { alloc(layout) };
-    if raw.is_null() {
-        handle_alloc_error(layout);
-    }
-    let header_ptr = raw as *mut RawHeader;
-    unsafe {
-        header_ptr.write(RawHeader {
-            refcount: Cell::new(1),
-            capacity: cap as u32,
-        });
-        NonNull::new_unchecked(header_ptr)
-    }
+fn is_range_in_bounds(src: &Range<usize>, dest: usize, capacity: usize) -> bool {
+    src.start <= src.end && src.end <= capacity && is_span_in_bounds(dest, src.len(), capacity)
 }
 
-unsafe fn dealloc_buffer(ptr: NonNull<RawHeader>) {
-    unsafe {
-        let cap = ptr.as_ref().capacity as usize;
-        let layout = layout_for(cap);
-        std::ptr::drop_in_place(ptr.as_ptr());
-        dealloc(ptr.as_ptr() as *mut u8, layout);
+impl Header {
+    fn layout(capacity: u32) -> Layout {
+        let size = DATA_OFFSET
+            .checked_add(capacity as usize)
+            .expect("buffer capacity overflow");
+        Layout::from_size_align(size, ALIGN).expect("buffer layout invariant")
     }
-}
 
-unsafe fn refcount_inc(ptr: NonNull<RawHeader>) {
-    unsafe {
-        let header = ptr.as_ref();
-        let next = header
-            .refcount
-            .get()
-            .checked_add(1)
-            .expect("buffer::Raw: refcount overflow");
-        header.refcount.set(next);
+    fn allocate(capacity: usize) -> NonNull<Header> {
+        assert!(u32::try_from(capacity).is_ok(), "buffer capacity overflow");
+        let capacity = capacity as u32;
+        let layout = Header::layout(capacity);
+        let ptr = unsafe { alloc(layout) }.cast::<Header>();
+        let Some(ptr) = NonNull::new(ptr) else {
+            handle_alloc_error(layout);
+        };
+        unsafe {
+            ptr.write(Header {
+                refs: Cell::new(1),
+                capacity,
+            });
+        }
+        ptr
     }
-}
 
-unsafe fn refcount_dec(ptr: NonNull<RawHeader>) {
-    unsafe {
-        let header = ptr.as_ref();
-        let prev = header.refcount.get();
-        debug_assert!(prev > 0, "buffer::Raw: drop with zero refcount");
-        let next = prev - 1;
-        if next != 0 {
-            header.refcount.set(next);
+    unsafe fn retain(ptr: NonNull<Header>) {
+        let refs = unsafe { ptr.as_ref() }.refs.get();
+        assert!(refs != u32::MAX, "buffer reference overflow");
+        unsafe { ptr.as_ref() }.refs.set(refs + 1);
+    }
+
+    unsafe fn release(ptr: NonNull<Header>) {
+        let header = unsafe { ptr.as_ref() };
+        let refs = header.refs.get();
+        debug_assert_ne!(refs, 0);
+        if refs != 1 {
+            header.refs.set(refs - 1);
             return;
         }
-        dealloc_buffer(ptr);
+        let layout = Header::layout(header.capacity);
+        unsafe { dealloc(ptr.as_ptr().cast(), layout) };
     }
 }
 
-pub struct RawMut {
-    ptr: NonNull<RawHeader>,
-    _marker: PhantomData<*mut ()>,
+pub(super) struct RawMut {
+    ptr: NonNull<Header>,
+    marker: PhantomData<*mut ()>,
 }
 
 impl RawMut {
-    pub fn with_capacity(cap: usize) -> Self {
+    pub(super) fn with_capacity(capacity: usize) -> Self {
         Self {
-            ptr: unsafe { alloc_header(cap) },
-            _marker: PhantomData,
+            ptr: Header::allocate(capacity),
+            marker: PhantomData,
         }
     }
 
-    #[inline]
-    pub fn capacity(&self) -> u32 {
-        unsafe { self.ptr.as_ref().capacity }
+    pub(super) fn into_data(mut self) -> NonNull<u8> {
+        let ptr = unsafe { NonNull::new_unchecked(self.data_mut_ptr()) };
+        forget(self);
+        ptr
     }
 
-    #[inline]
-    pub fn data_ptr(&self) -> *const u8 {
-        unsafe { (self.ptr.as_ptr() as *const u8).add(HEADER_SIZE) }
+    /// # Safety
+    /// `ptr` came from `RawMut::into_data` and still owns that allocation.
+    pub(super) unsafe fn from_data(ptr: NonNull<u8>) -> Self {
+        Self {
+            ptr: unsafe { NonNull::new_unchecked(ptr.as_ptr().sub(DATA_OFFSET).cast()) },
+            marker: PhantomData,
+        }
     }
 
-    #[inline]
-    pub fn data_mut_ptr(&mut self) -> *mut u8 {
-        // SAFETY: writes through this pointer require unique ownership; a live Raw
-        // produced by share() aliases the same payload, so the caller must call
-        // ensure_unique_for_mutate before mutating when the buffer may be shared.
-        debug_assert!(
-            self.refcount() == 1,
-            "buffer::RawMut::data_mut_ptr: aliased write (refcount > 1); call ensure_unique_for_mutate first"
-        );
-        unsafe { (self.ptr.as_ptr() as *mut u8).add(HEADER_SIZE) }
+    pub(super) fn capacity(&self) -> usize {
+        unsafe { self.ptr.as_ref() }.capacity as usize
     }
 
-    pub fn share(&self) -> Raw {
-        unsafe { refcount_inc(self.ptr) };
+    pub(super) fn data_ptr(&self) -> *const u8 {
+        unsafe { self.ptr.as_ptr().cast::<u8>().add(DATA_OFFSET) }
+    }
+
+    pub(super) fn data_mut_ptr(&mut self) -> *mut u8 {
+        debug_assert_eq!(unsafe { self.ptr.as_ref() }.refs.get(), 1);
+        unsafe { self.ptr.as_ptr().cast::<u8>().add(DATA_OFFSET) }
+    }
+
+    pub(super) fn is_unique(&self) -> bool {
+        unsafe { self.ptr.as_ref() }.refs.get() == 1
+    }
+
+    pub(super) fn share(&self) -> Raw {
+        unsafe { Header::retain(self.ptr) };
         Raw {
             ptr: self.ptr,
-            _marker: PhantomData,
+            marker: PhantomData,
         }
     }
 
-    pub fn freeze(self) -> Raw {
-        let ptr = self.ptr;
-        std::mem::forget(self);
-        Raw {
-            ptr,
-            _marker: PhantomData,
-        }
+    pub(super) fn freeze(self) -> Raw {
+        let raw = Raw {
+            ptr: self.ptr,
+            marker: PhantomData,
+        };
+        forget(self);
+        raw
     }
 
-    #[inline]
-    pub fn refcount(&self) -> u32 {
-        unsafe { self.ptr.as_ref().refcount.get() }
-    }
-
-    #[inline]
-    pub fn ensure_unique_for_mutate(&mut self, keep: usize) {
-        if self.refcount() == 1 {
-            return;
+    pub(super) fn detach_range(&mut self, src: Range<usize>, dest: usize) -> bool {
+        debug_assert!(is_range_in_bounds(&src, dest, self.capacity()));
+        if unsafe { self.ptr.as_ref() }.refs.get() == 1 {
+            return false;
         }
-        self.cow_swap(keep);
+        self.detach_range_slow(src, dest);
+        true
     }
 
     #[cold]
-    fn cow_swap(&mut self, keep: usize) {
-        let cap = self.capacity() as usize;
-        debug_assert!(keep <= cap, "buffer::RawMut::cow_swap: keep > cap");
-        let new_ptr = unsafe { alloc_header(cap) };
-        if keep > 0 {
+    fn detach_range_slow(&mut self, src: Range<usize>, dest: usize) {
+        let ptr = Header::allocate(self.capacity());
+        if !src.is_empty() {
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    (self.ptr.as_ptr() as *const u8).add(HEADER_SIZE),
-                    (new_ptr.as_ptr() as *mut u8).add(HEADER_SIZE),
-                    keep,
+                copy_nonoverlapping(
+                    self.data_ptr().add(src.start),
+                    ptr.as_ptr().cast::<u8>().add(DATA_OFFSET + dest),
+                    src.len(),
                 );
             }
         }
-        unsafe { refcount_dec(self.ptr) };
-        self.ptr = new_ptr;
+        unsafe { Header::release(self.ptr) };
+        self.ptr = ptr;
+    }
+
+    pub(super) fn copy_from_slice(&mut self, offset: usize, src: &[u8]) {
+        debug_assert!(is_span_in_bounds(offset, src.len(), self.capacity()));
+        unsafe {
+            copy_nonoverlapping(src.as_ptr(), self.data_mut_ptr().add(offset), src.len());
+        }
+    }
+
+    /// # Safety
+    /// The destination is in bounds and overlaps neither `src` nor any shared range.
+    pub(super) unsafe fn copy_from_slice_disjoint(&mut self, offset: usize, src: &[u8]) {
+        debug_assert!(is_span_in_bounds(offset, src.len(), self.capacity()));
+        unsafe {
+            copy_nonoverlapping(
+                src.as_ptr(),
+                self.ptr.as_ptr().cast::<u8>().add(DATA_OFFSET + offset),
+                src.len(),
+            );
+        }
+    }
+
+    pub(super) fn copy_from_raw(
+        &mut self,
+        offset: usize,
+        src: &Self,
+        src_offset: usize,
+        len: usize,
+    ) {
+        debug_assert!(
+            is_span_in_bounds(offset, len, self.capacity())
+                && is_span_in_bounds(src_offset, len, src.capacity())
+        );
+        unsafe {
+            copy_nonoverlapping(
+                src.data_ptr().add(src_offset),
+                self.data_mut_ptr().add(offset),
+                len,
+            );
+        }
+    }
+
+    pub(super) fn copy_within(&mut self, src: Range<usize>, dest: usize) {
+        debug_assert!(is_range_in_bounds(&src, dest, self.capacity()));
+        unsafe {
+            let data = self.data_mut_ptr();
+            copy(data.add(src.start), data.add(dest), src.len());
+        }
     }
 }
 
 impl Drop for RawMut {
     fn drop(&mut self) {
-        unsafe { refcount_dec(self.ptr) };
+        unsafe { Header::release(self.ptr) };
     }
 }
 
-pub struct Raw {
-    ptr: NonNull<RawHeader>,
-    _marker: PhantomData<*mut ()>,
+pub(super) struct Raw {
+    ptr: NonNull<Header>,
+    marker: PhantomData<*mut ()>,
 }
 
 impl Raw {
-    pub fn from_slice(slice: &[u8]) -> Self {
-        let mut buf = RawMut::with_capacity(slice.len());
-        if !slice.is_empty() {
-            unsafe {
-                std::ptr::copy_nonoverlapping(slice.as_ptr(), buf.data_mut_ptr(), slice.len());
-            }
-        }
-        buf.freeze()
+    pub(super) fn from_slice(slice: &[u8]) -> Self {
+        let mut data = RawMut::with_capacity(slice.len());
+        data.copy_from_slice(0, slice);
+        data.freeze()
     }
 
-    #[inline]
-    pub fn data_ptr(&self) -> *const u8 {
-        unsafe { (self.ptr.as_ptr() as *const u8).add(HEADER_SIZE) }
+    pub(super) fn data_ptr(&self) -> *const u8 {
+        unsafe { self.ptr.as_ptr().cast::<u8>().add(DATA_OFFSET) }
     }
 
-    #[inline]
-    pub fn capacity(&self) -> u32 {
-        unsafe { self.ptr.as_ref().capacity }
-    }
-
-    #[inline]
-    pub fn refcount(&self) -> u32 {
-        unsafe { self.ptr.as_ref().refcount.get() }
+    pub(super) fn capacity(&self) -> usize {
+        unsafe { self.ptr.as_ref() }.capacity as usize
     }
 }
 
 impl Clone for Raw {
-    #[inline]
     fn clone(&self) -> Self {
-        unsafe { refcount_inc(self.ptr) };
+        unsafe { Header::retain(self.ptr) };
         Self {
             ptr: self.ptr,
-            _marker: PhantomData,
+            marker: PhantomData,
         }
     }
 }
 
 impl Drop for Raw {
     fn drop(&mut self) {
-        unsafe { refcount_dec(self.ptr) };
+        unsafe { Header::release(self.ptr) };
     }
 }

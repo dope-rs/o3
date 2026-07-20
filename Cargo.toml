@@ -1,15 +1,32 @@
 [package]
 name = "o3"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 description = "shared-nothing primitives"
 readme = "README.md"
+repository = "https://github.com/dope-rs/o3"
+documentation = "https://docs.rs/o3"
 keywords = ["bytes", "buffer", "single-threaded", "no-share", "zero-copy"]
 categories = ["data-structures", "memory-management"]
 rust-version = "1.95"
+autotests = false
 
-[lib]
+[dev-dependencies]
+trybuild = "1"
 
-[dependencies]
-libc = "0.2"
+[[test]]
+name = "buffer"
+path = "tests/buffer_integration.rs"
+
+[[test]]
+name = "collections"
+path = "tests/collections_integration.rs"
+
+[[test]]
+name = "primitives"
+path = "tests/primitives_integration.rs"
+
+[[test]]
+name = "compile_fail"
+path = "tests/compile_fail.rs"

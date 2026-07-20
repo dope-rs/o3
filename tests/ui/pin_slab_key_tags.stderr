@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+ --> tests/ui/pin_slab_key_tags.rs:7:17
+  |
+7 |     slab.remove(key);
+  |          ------ ^^^ expected `SlabKey<Write, u32::MAX>`, found `SlabKey<Read, u32::MAX>`
+  |          |
+  |          arguments to this method are incorrect
+  |
+  = note: expected struct `SlabKey<Write, u32::MAX>`
+             found struct `SlabKey<Read, u32::MAX>`
+note: method defined here
+ --> src/collections/pin_slab.rs
+  |
+  |     pub fn remove(&mut self, key: SlabKey<Tag, MAX>) -> bool {
+  |            ^^^^^^

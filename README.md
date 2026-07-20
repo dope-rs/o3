@@ -1,6 +1,6 @@
 # o3
-[![License](https://img.shields.io/crates/l/o3)](LICENSE)
+[![License](https://img.shields.io/crates/l/o3)](LICENSE.md)
 
-shared-nothing primitives
+Thread-per-core primitives
 
 inq, 2026
