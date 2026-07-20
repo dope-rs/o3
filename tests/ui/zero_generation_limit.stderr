@@ -1,0 +1,22 @@
+error[E0080]: evaluation panicked: generation limit must be nonzero
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `o3::collections::SlabGeneration::<0>::VALID` failed here
+  |
+ ::: src/collections/slab/key.rs
+  |
+  |     const VALID: () = assert!(MAX != 0, "generation limit must be nonzero");
+  |                       ----------------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/collections/slab/key.rs
+  |
+  |         let () = Self::VALID;
+  |                  ^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> tests/ui/zero_generation_limit.rs:3:30
+  |
+3 | const _: SlabGeneration<0> = SlabGeneration::MIN;
+  |                              ^^^^^^^^^^^^^^^^^^^
