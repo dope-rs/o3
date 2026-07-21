@@ -1,15 +1,22 @@
-use std::mem::MaybeUninit;
-
+mod batch_set;
+mod bitmap;
+mod grow;
 mod heap;
+pub mod intrusive;
 mod pin_cell_slab;
 mod pin_slab;
 mod queue;
 mod slab;
 mod table;
 
-pub use heap::{IndexedMinHeap, IndexedMinHeapVacantEntry};
+pub use batch_set::{BatchDrain, BatchSet};
+pub use bitmap::CellBitmap;
+pub use heap::{FixedHeap, IndexedMinHeap, IndexedMinHeapVacantEntry};
 pub use pin_cell_slab::{PinCellSlab, PinCellSlabOccupiedEntry, PinCellSlabVacantEntry};
-pub use pin_slab::{FixedPinSlab, FixedPinSlabOccupiedEntry, PinSlab, PinSlabOccupiedEntry};
+pub use pin_slab::{
+    FixedPinSlab, FixedPinSlabOccupiedEntry, FixedPinSlabVacantEntry, PinSlab,
+    PinSlabOccupiedEntry, PinSlabVacantEntry,
+};
 pub use queue::{CellQueue, FixedQueue, FixedQueueVacantEntry, SlotQueue, SlotQueueVacantEntry};
 pub use slab::{CellSlab, Slab, SlabGeneration, SlabKey, SlabKeyParts, SlabVacantEntry};
 pub use table::FixedHashTable;
@@ -30,14 +37,6 @@ impl IndexKey for usize {
 }
 
 impl index::Sealed for usize {}
-
-pub(crate) struct Storage;
-
-impl Storage {
-    pub(crate) fn uninit_boxed_slice<T>(len: usize) -> Box<[MaybeUninit<T>]> {
-        Box::<[T]>::new_uninit_slice(len)
-    }
-}
 
 pub(crate) struct ClearGuard<'a, T: ?Sized> {
     value: &'a mut T,

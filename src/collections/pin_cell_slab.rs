@@ -80,7 +80,7 @@ impl<T, Tag, const MAX: u32> PinCellSlabOccupiedEntry<'_, T, Tag, MAX> {
         self.key.parts()
     }
 
-    pub fn get_pin_mut(&mut self) -> Pin<&mut T> {
+    pub fn as_pin_mut(&mut self) -> Pin<&mut T> {
         let slot = unsafe { self.slab.slots.get_unchecked(self.index() as usize) };
         debug_assert!(slot.link.get() == BORROWED && slot.generation.get() == self.generation());
         unsafe { Pin::new_unchecked((&mut *slot.value.get()).assume_init_mut()) }
@@ -215,7 +215,7 @@ impl<T, Tag, const MAX: u32> PinCellSlab<T, Tag, MAX> {
         f: impl FnOnce(Pin<&mut T>) -> R,
     ) -> Option<R> {
         let mut entry = self.entry_parts(parts)?;
-        Some(f(entry.get_pin_mut()))
+        Some(f(entry.as_pin_mut()))
     }
 
     pub fn remove(self: Pin<&Self>, key: SlabKey<Tag, MAX>) -> bool {
@@ -246,7 +246,7 @@ impl<T, Tag, const MAX: u32> PinCellSlab<T, Tag, MAX> {
         let Some(mut entry) = self.entry_parts(parts) else {
             return false;
         };
-        if !predicate(entry.get_pin_mut()) {
+        if !predicate(entry.as_pin_mut()) {
             return false;
         }
         entry.remove();

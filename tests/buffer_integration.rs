@@ -10,5 +10,3 @@ mod rolling;
 mod shared_pool;
 #[path = "snapshot_buf.rs"]
 mod snapshot_buf;
-#[path = "view.rs"]
-mod view;

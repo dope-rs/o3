@@ -107,6 +107,23 @@ fn slot_queue_preserves_index_order_and_membership() {
 }
 
 #[test]
+fn indexed_heap_growth_preserves_live_order_and_positions() {
+    let mut heap = IndexedMinHeap::with_capacity(2);
+    assert_eq!(heap.insert(0, 30), Ok(()));
+    assert_eq!(heap.insert(1, 10), Ok(()));
+
+    heap.grow_to(4);
+
+    assert_eq!(heap.capacity(), 4);
+    assert!(heap.contains_key(0));
+    assert!(heap.contains_key(1));
+    assert_eq!(heap.insert(2, 20), Ok(()));
+    assert_eq!(heap.pop(), Some((1, 10)));
+    assert_eq!(heap.remove(0), Some(30));
+    assert_eq!(heap.pop(), Some((2, 20)));
+}
+
+#[test]
 fn indexed_collections_reject_reused_slab_keys() {
     let mut slab: Slab<()> = Slab::with_capacity(1);
     let first = slab.insert(()).unwrap();

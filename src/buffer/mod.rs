@@ -1,28 +1,32 @@
+mod block_pool;
 mod byte_ring;
+mod bytes;
 mod capacity;
 mod owned;
 mod pool;
 mod raw;
+mod ref_count;
 mod rolling;
 mod shared;
 mod shared_pool;
 mod snapshot_buf;
-mod view;
 
 use std::mem::MaybeUninit;
+use std::ops::Range;
 use std::ptr::{self, NonNull, copy_nonoverlapping};
 
 use crate::marker::ThreadBound;
 
+pub use block_pool::{BlockLease, BlockPool};
 pub use byte_ring::ByteRing;
+pub use bytes::{Borrowed, ByteSpan, Bytes, Leased, RetainBytes, Retained};
 pub use capacity::CapacityError;
-pub use owned::{Owned, Writer};
-pub use pool::{Lease, Pool};
+pub use owned::{Block, Owned};
+pub use pool::{Lease, Pool, PoolLayout, PoolLayoutError};
 pub use rolling::RollingBuffer;
 pub use shared::Shared;
 pub use shared_pool::{Pooled, SharedLease, SharedPool};
 pub use snapshot_buf::SnapshotBuf;
-pub use view::{OwnedView, View};
 
 pub struct SpareWriter<'a> {
     ptr: NonNull<MaybeUninit<u8>>,
@@ -30,6 +34,21 @@ pub struct SpareWriter<'a> {
     written: usize,
     target: &'a mut u32,
     _thread: ThreadBound,
+}
+
+pub enum SpareFillError<E> {
+    Fill(E),
+    Capacity,
+}
+
+trait RangeExt {
+    fn is_within(&self, len: usize) -> bool;
+}
+
+impl RangeExt for Range<usize> {
+    fn is_within(&self, len: usize) -> bool {
+        self.start <= self.end && self.end <= len
+    }
 }
 
 impl<'a> SpareWriter<'a> {
@@ -57,6 +76,23 @@ impl<'a> SpareWriter<'a> {
         unsafe {
             std::slice::from_raw_parts_mut(self.ptr.as_ptr().add(self.written), self.remaining())
         }
+    }
+
+    pub fn try_fill<E, F>(&mut self, fill: F) -> Result<(), SpareFillError<E>>
+    where
+        F: for<'b> FnOnce(&'b mut [MaybeUninit<u8>]) -> Result<&'b mut [u8], E>,
+    {
+        let expected = self.as_mut_ptr();
+        let remaining = self.remaining();
+        let (initialized, len) = {
+            let initialized = fill(self.spare_capacity_mut()).map_err(SpareFillError::Fill)?;
+            (initialized.as_ptr(), initialized.len())
+        };
+        if initialized != expected || len > remaining {
+            return Err(SpareFillError::Capacity);
+        }
+        self.written += len;
+        Ok(())
     }
 
     pub fn try_commit_initialized(&mut self, initialized: &[u8]) -> Result<(), CapacityError> {

@@ -1,6 +1,6 @@
 [package]
 name = "o3"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 description = "shared-nothing primitives"
@@ -30,3 +30,23 @@ path = "tests/primitives_integration.rs"
 [[test]]
 name = "compile_fail"
 path = "tests/compile_fail.rs"
+
+[[test]]
+name = "bytes"
+path = "tests/bytes.rs"
+
+[[test]]
+name = "bitmap"
+path = "tests/bitmap.rs"
+
+[[test]]
+name = "batch_set"
+path = "tests/batch_set.rs"
+
+[[test]]
+name = "fixed_heap"
+path = "tests/fixed_heap.rs"
+
+[[test]]
+name = "intrusive_avl"
+path = "tests/intrusive_avl.rs"

@@ -1,11 +1,12 @@
 use std::cell::{Cell, UnsafeCell};
 use std::marker::PhantomData;
-use std::mem::{self, ManuallyDrop};
+use std::mem::ManuallyDrop;
 
 use super::GenerationState;
 use std::hint::unreachable_unchecked;
 
 use crate::collections::ClearGuard;
+use crate::collections::grow::BoxSliceGrowth;
 use crate::marker::ThreadBound;
 
 mod guards;
@@ -162,10 +163,11 @@ impl<T, G: GenerationState, M: Mode> SlabCore<T, G, M> {
         }
 
         let old_free = self.free.get();
-        let mut slots = Vec::with_capacity(capacity);
-        let mut occupied = Vec::with_capacity(capacity);
-        slots.extend(mem::replace(&mut self.slots, Box::new([])));
-        occupied.extend(mem::replace(&mut self.occupied, Box::new([])));
+        let mut slots = BoxSliceGrowth::take(&mut self.slots);
+        let mut occupied = BoxSliceGrowth::take(&mut self.occupied);
+        let additional = capacity - old_capacity;
+        slots.reserve_exact(additional);
+        occupied.reserve_exact(additional);
         occupied.resize_with(capacity, || Cell::new(NONE));
 
         for index in old_capacity..capacity {
@@ -184,8 +186,8 @@ impl<T, G: GenerationState, M: Mode> SlabCore<T, G, M> {
             ));
         }
 
-        self.slots = slots.into_boxed_slice();
-        self.occupied = occupied.into_boxed_slice();
+        drop(slots);
+        drop(occupied);
         if old_free != NONE {
             self.set_free_prev(old_free, capacity as u32 - 1);
         }

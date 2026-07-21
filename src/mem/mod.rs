@@ -1,5 +1,5 @@
 mod budget;
-mod scratch;
+mod scratch_vec;
 
 pub use budget::{ByteBudget, ByteBudgetHandle, ByteLease};
-pub use scratch::Scratch;
+pub use scratch_vec::ScratchVec;

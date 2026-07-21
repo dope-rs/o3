@@ -1,0 +1,11 @@
+error[E0599]: no method named `slice` found for struct `o3::buffer::Bytes<Leased>` in the current scope
+ --> tests/ui/leased_bytes_slice.rs:4:19
+  |
+4 |     let _ = bytes.slice(0..0);
+  |                   ^^^^^
+  |
+help: there is a method `as_slice` with a similar name, but with different arguments
+ --> src/buffer/bytes.rs
+  |
+  |     pub fn as_slice(&self) -> &[u8] {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

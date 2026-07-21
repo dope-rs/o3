@@ -1,4 +1,4 @@
-use std::marker::{PhantomData, PhantomPinned};
+use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
 
@@ -80,8 +80,46 @@ struct CoreOccupiedEntry<'a, T, Tag, S: Slots<T, MAX>, const MAX: u32> {
     key: SlabKey<Tag, MAX>,
 }
 
+struct CoreVacantEntry<'a, T, Tag, S: Slots<T, MAX>, const MAX: u32> {
+    core: &'a mut Core<T, Tag, S, MAX>,
+    index: u32,
+}
+
+impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> CoreVacantEntry<'_, T, Tag, S, MAX> {
+    fn index(&self) -> u32 {
+        self.index
+    }
+
+    fn key(&self) -> SlabKey<Tag, MAX> {
+        let slot = unsafe {
+            self.core
+                .slots
+                .as_slice()
+                .get_unchecked(self.index as usize)
+        };
+        debug_assert!(slot.state == State::Free);
+        SlabKey::new(self.index, slot.generation)
+    }
+
+    fn insert(self, value: T) -> SlabKey<Tag, MAX> {
+        let slot = unsafe {
+            self.core
+                .slots
+                .as_mut_slice()
+                .get_unchecked_mut(self.index as usize)
+        };
+        debug_assert!(self.core.free == self.index && slot.state == State::Free);
+        self.core.free = slot.next;
+        slot.value.write(value);
+        slot.next = NONE;
+        slot.state = State::Occupied;
+        self.core.len += 1;
+        SlabKey::new(self.index, slot.generation)
+    }
+}
+
 impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> CoreOccupiedEntry<'_, T, Tag, S, MAX> {
-    fn get_pin_mut(&mut self) -> Pin<&mut T> {
+    fn as_pin_mut(&mut self) -> Pin<&mut T> {
         let slot = unsafe {
             self.core
                 .slots
@@ -128,18 +166,15 @@ impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Core<T, Tag, S, MAX> {
     }
 
     fn insert(&mut self, value: T) -> Result<SlabKey<Tag, MAX>, T> {
-        if self.free == NONE {
-            return Err(value);
+        match self.vacant_entry() {
+            Some(entry) => Ok(entry.insert(value)),
+            None => Err(value),
         }
+    }
+
+    fn vacant_entry(&mut self) -> Option<CoreVacantEntry<'_, T, Tag, S, MAX>> {
         let index = self.free;
-        let slot = unsafe { self.slots.as_mut_slice().get_unchecked_mut(index as usize) };
-        debug_assert!(slot.state == State::Free);
-        self.free = slot.next;
-        slot.value.write(value);
-        slot.next = NONE;
-        slot.state = State::Occupied;
-        self.len += 1;
-        Ok(SlabKey::new(index, slot.generation))
+        (index != NONE).then_some(CoreVacantEntry { core: self, index })
     }
 
     fn contains_parts(&self, parts: SlabKeyParts<MAX>) -> bool {
@@ -323,8 +358,8 @@ macro_rules! impl_occupied_entry {
             self.key().parts()
         }
 
-        pub fn get_pin_mut(&mut self) -> Pin<&mut T> {
-            self.entry.get_pin_mut()
+        pub fn as_pin_mut(&mut self) -> Pin<&mut T> {
+            self.entry.as_pin_mut()
         }
 
         pub fn remove(self) {
@@ -332,6 +367,26 @@ macro_rules! impl_occupied_entry {
         }
     };
 }
+
+macro_rules! impl_vacant_entry {
+    () => {
+        pub fn index(&self) -> u32 {
+            self.entry.index()
+        }
+
+        pub fn key(&self) -> SlabKey<Tag, MAX> {
+            self.entry.key()
+        }
+
+        pub fn insert(self, value: T) -> SlabKey<Tag, MAX> {
+            self.entry.insert(value)
+        }
+    };
+}
+
+mod fixed;
+
+pub use fixed::{FixedPinSlab, FixedPinSlabOccupiedEntry, FixedPinSlabVacantEntry};
 
 pub struct PinSlab<T, Tag = (), const MAX: u32 = { u32::MAX }> {
     core: Core<T, Tag, Box<[Slot<T, MAX>]>, MAX>,
@@ -342,8 +397,17 @@ pub struct PinSlabOccupiedEntry<'a, T, Tag = (), const MAX: u32 = { u32::MAX }> 
     entry: CoreOccupiedEntry<'a, T, Tag, Box<[Slot<T, MAX>]>, MAX>,
 }
 
+#[must_use]
+pub struct PinSlabVacantEntry<'a, T, Tag = (), const MAX: u32 = { u32::MAX }> {
+    entry: CoreVacantEntry<'a, T, Tag, Box<[Slot<T, MAX>]>, MAX>,
+}
+
 impl<T, Tag, const MAX: u32> PinSlabOccupiedEntry<'_, T, Tag, MAX> {
     impl_occupied_entry!();
+}
+
+impl<T, Tag, const MAX: u32> PinSlabVacantEntry<'_, T, Tag, MAX> {
+    impl_vacant_entry!();
 }
 
 impl<T, Tag, const MAX: u32> PinSlab<T, Tag, MAX> {
@@ -359,6 +423,12 @@ impl<T, Tag, const MAX: u32> PinSlab<T, Tag, MAX> {
 
     pub fn insert(&mut self, value: T) -> Result<SlabKey<Tag, MAX>, T> {
         self.core.insert(value)
+    }
+
+    pub fn vacant_entry(&mut self) -> Option<PinSlabVacantEntry<'_, T, Tag, MAX>> {
+        Some(PinSlabVacantEntry {
+            entry: self.core.vacant_entry()?,
+        })
     }
 
     impl_common!();
@@ -408,91 +478,5 @@ impl<T, Tag, const MAX: u32> PinSlab<T, Tag, MAX> {
         T: Unpin,
     {
         self.core.take(key)
-    }
-}
-
-pub struct FixedPinSlab<T, const N: usize, Tag = (), const MAX: u32 = { u32::MAX }> {
-    core: Core<T, Tag, [Slot<T, MAX>; N], MAX>,
-    _pin: PhantomPinned,
-}
-
-#[must_use]
-pub struct FixedPinSlabOccupiedEntry<'a, T, const N: usize, Tag = (), const MAX: u32 = { u32::MAX }>
-{
-    entry: CoreOccupiedEntry<'a, T, Tag, [Slot<T, MAX>; N], MAX>,
-}
-
-impl<T, const N: usize, Tag, const MAX: u32> FixedPinSlabOccupiedEntry<'_, T, N, Tag, MAX> {
-    impl_occupied_entry!();
-}
-
-impl<T, const N: usize, Tag, const MAX: u32> FixedPinSlab<T, N, Tag, MAX> {
-    pub fn new() -> Self {
-        Self {
-            core: Core::new(std::array::from_fn(|index| Slot::new(index, N))),
-            _pin: PhantomPinned,
-        }
-    }
-
-    pub fn insert(self: Pin<&mut Self>, value: T) -> Result<SlabKey<Tag, MAX>, T> {
-        unsafe { self.get_unchecked_mut() }.core.insert(value)
-    }
-
-    impl_common!();
-
-    pub fn get(self: Pin<&Self>, key: SlabKey<Tag, MAX>) -> Option<Pin<&T>> {
-        self.get_parts(key.parts())
-    }
-
-    pub fn get_parts(self: Pin<&Self>, parts: SlabKeyParts<MAX>) -> Option<Pin<&T>> {
-        self.get_ref().core.get_parts(parts)
-    }
-
-    pub fn get_mut(self: Pin<&mut Self>, key: SlabKey<Tag, MAX>) -> Option<Pin<&mut T>> {
-        self.get_parts_mut(key.parts())
-    }
-
-    pub fn get_parts_mut(self: Pin<&mut Self>, parts: SlabKeyParts<MAX>) -> Option<Pin<&mut T>> {
-        unsafe { self.get_unchecked_mut() }
-            .core
-            .get_parts_mut(parts)
-    }
-
-    pub fn entry(
-        self: Pin<&mut Self>,
-        key: SlabKey<Tag, MAX>,
-    ) -> Option<FixedPinSlabOccupiedEntry<'_, T, N, Tag, MAX>> {
-        self.entry_parts(key.parts())
-    }
-
-    pub fn entry_parts(
-        self: Pin<&mut Self>,
-        parts: SlabKeyParts<MAX>,
-    ) -> Option<FixedPinSlabOccupiedEntry<'_, T, N, Tag, MAX>> {
-        let this = unsafe { self.get_unchecked_mut() };
-        Some(FixedPinSlabOccupiedEntry {
-            entry: this.core.entry_parts(parts)?,
-        })
-    }
-
-    pub fn remove(self: Pin<&mut Self>, key: SlabKey<Tag, MAX>) -> bool {
-        self.remove_parts(key.parts())
-    }
-
-    pub fn remove_parts(self: Pin<&mut Self>, parts: SlabKeyParts<MAX>) -> bool {
-        unsafe { self.get_unchecked_mut() }.core.remove_parts(parts)
-    }
-
-    pub fn take(self: Pin<&mut Self>, key: SlabKey<Tag, MAX>) -> Option<T>
-    where
-        T: Unpin,
-    {
-        unsafe { self.get_unchecked_mut() }.core.take(key)
-    }
-}
-
-impl<T, const N: usize, Tag, const MAX: u32> Default for FixedPinSlab<T, N, Tag, MAX> {
-    fn default() -> Self {
-        Self::new()
     }
 }

@@ -2,12 +2,12 @@ use std::cell::Cell;
 
 use crate::marker::ThreadBound;
 
-pub struct Scratch<T> {
+pub struct ScratchVec<T> {
     slot: Cell<Vec<T>>,
     _thread: ThreadBound,
 }
 
-impl<T> Scratch<T> {
+impl<T> ScratchVec<T> {
     pub const fn new() -> Self {
         Self {
             slot: Cell::new(Vec::new()),
@@ -32,7 +32,7 @@ impl<T> Scratch<T> {
     }
 }
 
-impl<T> Default for Scratch<T> {
+impl<T> Default for ScratchVec<T> {
     fn default() -> Self {
         Self::new()
     }

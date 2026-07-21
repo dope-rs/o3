@@ -75,6 +75,41 @@ fn unpin_values_can_be_taken() {
 }
 
 #[test]
+fn vacant_entries_commit_once_and_cancel_without_state_changes() {
+    let mut dynamic = PinSlab::<u32>::with_capacity(1);
+    {
+        let entry = dynamic
+            .vacant_entry()
+            .expect("new dynamic pin slab should have one vacant slot");
+        assert_eq!(entry.index(), 0);
+        assert_eq!(entry.key().index(), 0);
+    }
+    let key = dynamic
+        .vacant_entry()
+        .expect("dropping a vacant entry should leave its slot available")
+        .insert(7);
+    assert_eq!(dynamic.get(key).map(|value| *value), Some(7));
+    assert!(dynamic.vacant_entry().is_none());
+
+    let mut fixed = std::pin::pin!(FixedPinSlab::<u32, 1>::new());
+    {
+        let entry = fixed
+            .as_mut()
+            .vacant_entry()
+            .expect("new fixed pin slab should have one vacant slot");
+        assert_eq!(entry.index(), 0);
+        assert_eq!(entry.key().index(), 0);
+    }
+    let key = fixed
+        .as_mut()
+        .vacant_entry()
+        .expect("dropping a fixed vacant entry should leave its slot available")
+        .insert(9);
+    assert_eq!(fixed.as_ref().get(key).map(|value| *value), Some(9));
+    assert!(fixed.as_mut().vacant_entry().is_none());
+}
+
+#[test]
 fn drop_panics_do_not_leak_other_slots() {
     let drops = Cell::new(0);
     let panic_once = Cell::new(true);

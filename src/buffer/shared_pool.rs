@@ -1,71 +1,97 @@
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::cell::Cell;
 use std::marker::PhantomData;
+use std::num::NonZeroU32;
 use std::ptr::NonNull;
 use std::slice;
 
-use super::SpareWriter;
+use super::ref_count::LocalRefCount;
+use super::{PoolLayoutError, SpareWriter};
 
 const NONE: u32 = u32::MAX;
 
 #[repr(C)]
 struct Group {
-    refs: Cell<u32>,
+    refs: LocalRefCount,
     free: Cell<u32>,
     free_len: Cell<u32>,
     slots: u32,
     capacity: u32,
-    slot_offset: usize,
     data_offset: usize,
+    allocation_size: usize,
 }
 
 #[repr(C)]
 struct Slot {
-    refs: Cell<u32>,
+    refs: LocalRefCount,
     next: Cell<u32>,
 }
 
-impl Group {
-    fn layout(slots: usize, capacity: usize) -> (Layout, usize, usize) {
-        let slots_layout = Layout::array::<Slot>(slots).expect("shared pool slot overflow");
-        let bytes = slots
-            .checked_mul(capacity)
-            .expect("shared pool capacity overflow");
-        let bytes_layout = Layout::array::<u8>(bytes).expect("shared pool capacity overflow");
-        let (layout, slot_offset) = Layout::new::<Group>()
-            .extend(slots_layout)
-            .expect("shared pool layout overflow");
-        let (layout, data_offset) = layout
-            .extend(bytes_layout)
-            .expect("shared pool layout overflow");
-        (layout.pad_to_align(), slot_offset, data_offset)
-    }
+const _: () = assert!(align_of::<Group>() >= align_of::<Slot>());
 
-    fn allocate(slots: usize, capacity: usize) -> NonNull<Self> {
-        assert!(capacity > 0, "shared pool needs capacity");
-        assert!(u32::try_from(slots).is_ok(), "shared pool slot overflow");
-        assert!(
-            u32::try_from(capacity).is_ok(),
-            "shared pool capacity overflow"
-        );
-        let (layout, slot_offset, data_offset) = Self::layout(slots, capacity);
-        let ptr = NonNull::new(unsafe { alloc(layout) }.cast::<Self>())
-            .unwrap_or_else(|| handle_alloc_error(layout));
+struct GroupLayout {
+    allocation: Layout,
+    slots: u32,
+    capacity: NonZeroU32,
+    data_offset: usize,
+}
+
+impl GroupLayout {
+    fn new(slots: usize, capacity: usize) -> Result<Self, PoolLayoutError> {
+        let slots = u32::try_from(slots).map_err(|_| PoolLayoutError::SlotOverflow)?;
+        let capacity = u32::try_from(capacity)
+            .ok()
+            .and_then(NonZeroU32::new)
+            .ok_or(if capacity == 0 {
+                PoolLayoutError::ZeroCapacity
+            } else {
+                PoolLayoutError::CapacityOverflow
+            })?;
+        let slots_layout =
+            Layout::array::<Slot>(slots as usize).map_err(|_| PoolLayoutError::CapacityOverflow)?;
+        let data_len = (slots as usize)
+            .checked_mul(capacity.get() as usize)
+            .ok_or(PoolLayoutError::CapacityOverflow)?;
+        let data_layout =
+            Layout::array::<u8>(data_len).map_err(|_| PoolLayoutError::CapacityOverflow)?;
+        let (layout, _) = Layout::new::<Group>()
+            .extend(slots_layout)
+            .map_err(|_| PoolLayoutError::CapacityOverflow)?;
+        let (layout, data_offset) = layout
+            .extend(data_layout)
+            .map_err(|_| PoolLayoutError::CapacityOverflow)?;
+        Ok(Self {
+            allocation: layout.pad_to_align(),
+            slots,
+            capacity,
+            data_offset,
+        })
+    }
+}
+
+impl Group {
+    fn allocate(layout: GroupLayout) -> NonNull<Self> {
+        let ptr = NonNull::new(unsafe { alloc(layout.allocation) }.cast::<Self>())
+            .unwrap_or_else(|| handle_alloc_error(layout.allocation));
         unsafe {
             ptr.write(Self {
-                refs: Cell::new(1),
-                free: Cell::new(if slots == 0 { NONE } else { 0 }),
-                free_len: Cell::new(slots as u32),
-                slots: slots as u32,
-                capacity: capacity as u32,
-                slot_offset,
-                data_offset,
+                refs: LocalRefCount::one(),
+                free: Cell::new(if layout.slots == 0 { NONE } else { 0 }),
+                free_len: Cell::new(layout.slots),
+                slots: layout.slots,
+                capacity: layout.capacity.get(),
+                data_offset: layout.data_offset,
+                allocation_size: layout.allocation.size(),
             });
-            let slot_ptr = ptr.as_ptr().cast::<u8>().add(slot_offset).cast::<Slot>();
-            for index in 0..slots as u32 {
+            let slot_ptr = ptr
+                .as_ptr()
+                .cast::<u8>()
+                .add(size_of::<Group>())
+                .cast::<Slot>();
+            for index in 0..layout.slots {
                 slot_ptr.add(index as usize).write(Slot {
-                    refs: Cell::new(0),
-                    next: Cell::new(if index + 1 == slots as u32 {
+                    refs: LocalRefCount::empty(),
+                    next: Cell::new(if index + 1 == layout.slots {
                         NONE
                     } else {
                         index + 1
@@ -77,20 +103,17 @@ impl Group {
     }
 
     unsafe fn retain(ptr: NonNull<Self>) {
-        let refs = unsafe { ptr.as_ref() }.refs.get();
-        assert!(refs != u32::MAX, "shared pool reference overflow");
-        unsafe { ptr.as_ref() }.refs.set(refs + 1);
+        unsafe { ptr.as_ref() }.refs.retain();
     }
 
     unsafe fn release(ptr: NonNull<Self>) {
         let group = unsafe { ptr.as_ref() };
-        let refs = group.refs.get();
-        debug_assert_ne!(refs, 0);
-        if refs != 1 {
-            group.refs.set(refs - 1);
+        if !group.refs.release() {
             return;
         }
-        let (layout, _, _) = Self::layout(group.slots as usize, group.capacity as usize);
+        let layout = unsafe {
+            Layout::from_size_align_unchecked(group.allocation_size, align_of::<Group>())
+        };
         unsafe { dealloc(ptr.as_ptr().cast(), layout) };
     }
 
@@ -100,7 +123,7 @@ impl Group {
         unsafe {
             ptr.as_ptr()
                 .cast::<u8>()
-                .add(group.slot_offset)
+                .add(size_of::<Group>())
                 .cast::<Slot>()
                 .add(index as usize)
         }
@@ -122,35 +145,27 @@ impl Group {
         if index == NONE {
             return None;
         }
-        let refs = group.refs.get();
-        assert!(refs != u32::MAX, "shared pool reference overflow");
+        group.refs.retain();
         let slot = unsafe { &*Self::slot(ptr, index) };
-        debug_assert_eq!(slot.refs.get(), 0);
+        debug_assert!(slot.refs.is_empty());
         group.free.set(slot.next.get());
         group.free_len.set(group.free_len.get() - 1);
-        slot.refs.set(1);
-        group.refs.set(refs + 1);
+        slot.refs.activate();
         Some(index)
     }
 
     unsafe fn retain_slot(ptr: NonNull<Self>, index: u32) {
         let slot = unsafe { &*Self::slot(ptr, index) };
-        let refs = slot.refs.get();
-        assert!(refs != u32::MAX, "pooled buffer reference overflow");
-        debug_assert_ne!(refs, 0);
-        slot.refs.set(refs + 1);
+        slot.refs.retain();
     }
 
     unsafe fn release_slot(ptr: NonNull<Self>, index: u32) {
         let group = unsafe { ptr.as_ref() };
         let slot = unsafe { &*Self::slot(ptr, index) };
-        let refs = slot.refs.get();
-        debug_assert_ne!(refs, 0);
-        if refs != 1 {
-            slot.refs.set(refs - 1);
+        if !slot.refs.release() {
             return;
         }
-        slot.refs.set(0);
+        slot.refs.deactivate();
         slot.next.set(group.free.get());
         group.free.set(index);
         group.free_len.set(group.free_len.get() + 1);
@@ -164,10 +179,27 @@ pub struct SharedPool {
 }
 
 impl SharedPool {
-    pub fn new(slots: usize, capacity: usize) -> Self {
-        Self {
-            group: Group::allocate(slots, capacity),
+    /// Creates a pool, returning an error when its fixed allocation cannot be
+    /// represented by the pool layout.
+    pub fn try_new(slots: usize, capacity: usize) -> Result<Self, PoolLayoutError> {
+        let layout = GroupLayout::new(slots, capacity)?;
+        Ok(Self {
+            group: Group::allocate(layout),
             marker: PhantomData,
+        })
+    }
+
+    /// Creates a pool with the requested fixed layout.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `capacity` is zero or the requested allocation cannot be
+    /// represented. Use [`SharedPool::try_new`] for runtime configuration.
+    #[track_caller]
+    pub fn new(slots: usize, capacity: usize) -> Self {
+        match Self::try_new(slots, capacity) {
+            Ok(pool) => pool,
+            Err(error) => panic!("invalid shared pool layout: {error}"),
         }
     }
 

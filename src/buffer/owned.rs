@@ -1,112 +1,59 @@
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
-use std::mem::{ManuallyDrop, replace, take};
 use std::ops::{Deref, DerefMut};
-use std::ptr::{NonNull, copy_nonoverlapping};
-use std::slice::{from_raw_parts, from_raw_parts_mut};
 
-use super::SpareWriter;
-use super::raw::RawMut;
+use super::raw::{RawMut, RawSpan};
 use super::shared::Shared;
+use super::{CapacityError, SpareWriter};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum Repr {
-    Native,
-    Vec,
-}
+pub(super) const BLOCK_CAPACITY: u32 = 64 * 1024;
 
+/// A uniquely owned, exact-capacity byte allocation that never grows.
 pub struct Owned {
-    ptr: NonNull<u8>,
-    capacity: usize,
+    raw: RawMut,
     len: u32,
-    repr: Repr,
-    marker: PhantomData<*mut ()>,
-}
-
-pub struct Writer<'a> {
-    owned: &'a mut Owned,
-    ptr: NonNull<u8>,
-    capacity: usize,
-    len: usize,
-    start: usize,
-}
-
-impl Writer<'_> {
-    pub fn len(&self) -> usize {
-        self.len - self.start
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == self.start
-    }
-
-    pub fn extend_from_slice(&mut self, src: &[u8]) {
-        let end = self
-            .len
-            .checked_add(src.len())
-            .filter(|&len| u32::try_from(len).is_ok())
-            .expect("buffer capacity overflow");
-        if end > self.capacity {
-            self.grow(src.len());
-        }
-        unsafe { copy_nonoverlapping(src.as_ptr(), self.ptr.as_ptr().add(self.len), src.len()) };
-        self.len = end;
-    }
-
-    pub fn push(&mut self, byte: u8) {
-        self.extend_from_slice(&[byte]);
-    }
-
-    pub fn finish(self) -> usize {
-        self.len - self.start
-    }
-
-    #[cold]
-    fn grow(&mut self, additional: usize) {
-        self.commit();
-        self.owned.reserve(additional);
-        self.ptr = self.owned.ptr;
-        self.capacity = self.owned.capacity;
-    }
-
-    fn commit(&mut self) {
-        self.owned.len = self.len as u32;
-    }
-}
-
-impl Drop for Writer<'_> {
-    fn drop(&mut self) {
-        self.commit();
-    }
 }
 
 impl Owned {
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, CapacityError> {
+        let capacity =
+            u32::try_from(capacity).map_err(|_| CapacityError::new(capacity, u32::MAX as usize))?;
+        Ok(Self::with_capacity_u32(capacity))
+    }
+
+    /// Creates a non-growing allocation with exactly `capacity` bytes.
+    ///
+    /// # Panics
+    /// Panics when `capacity` exceeds the buffer representation limit of
+    /// [`u32::MAX`]. Use [`try_with_capacity`](Self::try_with_capacity) when the
+    /// size is not already constrained by the caller's protocol.
     #[must_use]
-    pub const fn new() -> Self {
+    #[track_caller]
+    pub fn with_capacity(capacity: usize) -> Self {
+        if capacity > u32::MAX as usize {
+            panic!("buffer capacity overflow: {capacity} > {}", u32::MAX);
+        }
+        Self::with_capacity_u32(capacity as u32)
+    }
+
+    #[must_use]
+    pub fn with_capacity_u32(capacity: u32) -> Self {
         Self {
-            ptr: NonNull::dangling(),
-            capacity: 0,
+            raw: RawMut::with_capacity_u32(capacity),
             len: 0,
-            repr: Repr::Native,
-            marker: PhantomData,
         }
     }
 
     #[must_use]
-    pub fn with_capacity(capacity: usize) -> Self {
-        if capacity == 0 {
-            return Self::new();
-        }
-        let raw = RawMut::with_capacity(capacity);
-        Self {
-            ptr: raw.into_data(),
-            capacity,
-            len: 0,
-            repr: Repr::Native,
-            marker: PhantomData,
-        }
+    pub fn filled(len: usize, byte: u8) -> Self {
+        let mut value = Self::with_capacity(len);
+        value.raw.fill(byte);
+        value.len = len as u32;
+        value
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.raw.capacity()
     }
 
     pub fn len(&self) -> usize {
@@ -117,66 +64,60 @@ impl Owned {
         self.len == 0
     }
 
-    pub fn capacity(&self) -> usize {
-        self.capacity
-    }
-
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { from_raw_parts(self.ptr.as_ptr(), self.len()) }
+        self.raw.initialized(self.len())
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe { from_raw_parts_mut(self.ptr.as_ptr(), self.len()) }
+        self.raw.initialized_mut(self.len as usize)
     }
 
-    pub fn extend_from_slice(&mut self, src: &[u8]) {
-        if src.is_empty() {
-            return;
-        }
+    pub fn try_extend_from_slice(&mut self, src: &[u8]) -> Result<(), CapacityError> {
         let start = self.len();
-        let len = start
-            .checked_add(src.len())
-            .filter(|&len| u32::try_from(len).is_ok())
-            .expect("buffer capacity overflow");
-        self.reserve_total(len);
-        unsafe { copy_nonoverlapping(src.as_ptr(), self.ptr.as_ptr().add(start), src.len()) };
-        self.len = len as u32;
+        let end = start + src.len();
+        let capacity = self.capacity();
+        if end > capacity {
+            return Err(CapacityError::new(end, capacity));
+        }
+        self.raw.copy_from_slice(start, src);
+        self.len = end as u32;
+        Ok(())
     }
 
-    pub fn reserve(&mut self, additional: usize) {
-        let target = self
-            .len()
-            .checked_add(additional)
-            .filter(|&len| u32::try_from(len).is_ok())
-            .expect("buffer capacity overflow");
-        self.reserve_total(target);
+    /// Appends `src` without growing the allocation.
+    ///
+    /// # Panics
+    /// Panics when the configured capacity is insufficient. Use
+    /// [`try_extend_from_slice`](Self::try_extend_from_slice) when exhaustion is
+    /// an expected outcome.
+    #[track_caller]
+    pub fn extend_from_slice(&mut self, src: &[u8]) {
+        if let Err(error) = self.try_extend_from_slice(src) {
+            panic!("{error}");
+        }
     }
 
-    fn reserve_total(&mut self, target: usize) {
-        if target <= self.capacity {
-            return;
+    pub fn try_push(&mut self, byte: u8) -> Result<(), CapacityError> {
+        let offset = self.len();
+        let capacity = self.capacity();
+        if offset == capacity {
+            return Err(CapacityError::new(offset + 1, capacity));
         }
-        if self.repr == Repr::Vec {
-            let len = self.len();
-            self.vec().reserve(target - len);
-            return;
+        self.raw.write_byte(offset, byte);
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Appends one byte without growing the allocation.
+    ///
+    /// # Panics
+    /// Panics when the configured capacity is full. Use
+    /// [`try_push`](Self::try_push) when exhaustion is an expected outcome.
+    #[track_caller]
+    pub fn push(&mut self, byte: u8) {
+        if let Err(error) = self.try_push(byte) {
+            panic!("{error}");
         }
-        let capacity = self
-            .capacity
-            .saturating_mul(2)
-            .min(u32::MAX as usize)
-            .max(target)
-            .max(8);
-        let mut raw = RawMut::with_capacity(capacity);
-        if self.len != 0 {
-            unsafe { copy_nonoverlapping(self.ptr.as_ptr(), raw.data_mut_ptr(), self.len()) };
-        }
-        let ptr = raw.into_data();
-        if self.capacity != 0 {
-            unsafe { drop(RawMut::from_data(self.ptr)) };
-        }
-        self.ptr = ptr;
-        self.capacity = capacity;
     }
 
     pub fn clear(&mut self) {
@@ -189,163 +130,31 @@ impl Owned {
         }
     }
 
-    #[must_use]
-    pub fn copy_from_slice(bytes: &[u8]) -> Self {
-        Self::from(bytes)
-    }
-
-    pub fn push(&mut self, byte: u8) {
-        self.extend_from_slice(&[byte]);
-    }
-
-    pub fn writer(&mut self, additional: usize) -> Writer<'_> {
-        self.reserve(additional);
-        let len = self.len();
-        let ptr = self.ptr;
-        let capacity = self.capacity;
-        Writer {
-            owned: self,
-            ptr,
-            capacity,
-            len,
-            start: len,
-        }
-    }
-
     pub fn spare_writer(&mut self) -> SpareWriter<'_> {
-        let capacity = self.capacity.min(u32::MAX as usize);
-        let ptr = unsafe { self.ptr.as_ptr().add(self.len()).cast() };
-        unsafe { SpareWriter::new(ptr, capacity - self.len(), &mut self.len) }
+        self.raw.spare_writer(&mut self.len)
     }
 
-    #[must_use]
-    pub fn split(&mut self) -> Shared {
-        take(self).freeze()
-    }
-
-    #[must_use]
-    pub fn split_to(&mut self, at: usize) -> Self {
-        assert!(at <= self.len(), "Owned::split_to: out of bounds");
-        if self.repr == Repr::Vec {
-            let mut buf = self.vec();
-            let tail = buf.split_off(at);
-            return Self::from(replace(&mut *buf, tail));
-        }
-        let remaining = self.len() - at;
-        let mut tail = Self::with_capacity(remaining);
-        if remaining != 0 {
-            unsafe { copy_nonoverlapping(self.ptr.as_ptr().add(at), tail.ptr.as_ptr(), remaining) };
-            tail.len = remaining as u32;
-        }
-        let mut head = replace(self, tail);
-        head.len = at as u32;
-        head
-    }
-
-    #[must_use]
-    pub fn split_off(&mut self, at: usize) -> Self {
-        assert!(at <= self.len(), "Owned::split_off: out of bounds");
-        if self.repr == Repr::Vec {
-            return Self::from(self.vec().split_off(at));
-        }
-        let len = self.len() - at;
-        let mut tail = Self::with_capacity(len);
-        if len != 0 {
-            unsafe { copy_nonoverlapping(self.ptr.as_ptr().add(at), tail.ptr.as_ptr(), len) };
-            tail.len = len as u32;
-        }
-        self.len = at as u32;
-        tail
-    }
-
+    #[inline]
     #[must_use]
     pub fn freeze(self) -> Shared {
-        if self.is_empty() {
+        let Self { raw, len } = self;
+        if len == 0 {
             return Shared::new();
         }
-        let this = ManuallyDrop::new(self);
-        match this.repr {
-            Repr::Native => {
-                let raw = unsafe { RawMut::from_data(this.ptr) }.freeze();
-                Shared::from_raw_range(raw, 0, this.len)
-            }
-            Repr::Vec => {
-                let buf =
-                    unsafe { Vec::from_raw_parts(this.ptr.as_ptr(), this.len(), this.capacity) };
-                Shared::from_vec(buf)
-            }
-        }
-    }
-
-    fn vec(&mut self) -> VecGuard<'_> {
-        debug_assert!(self.repr == Repr::Vec);
-        let buf = unsafe { Vec::from_raw_parts(self.ptr.as_ptr(), self.len(), self.capacity) };
-        self.ptr = NonNull::dangling();
-        self.capacity = 0;
-        self.len = 0;
-        self.repr = Repr::Native;
-        VecGuard {
-            owner: self,
-            buf: ManuallyDrop::new(buf),
-        }
-    }
-}
-
-struct VecGuard<'a> {
-    owner: &'a mut Owned,
-    buf: ManuallyDrop<Vec<u8>>,
-}
-
-impl Deref for VecGuard<'_> {
-    type Target = Vec<u8>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.buf
-    }
-}
-
-impl DerefMut for VecGuard<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.buf
-    }
-}
-
-impl Drop for VecGuard<'_> {
-    fn drop(&mut self) {
-        self.owner.ptr = unsafe { NonNull::new_unchecked(self.buf.as_mut_ptr()) };
-        self.owner.capacity = self.buf.capacity();
-        self.owner.len = self.buf.len() as u32;
-        self.owner.repr = Repr::Vec;
-    }
-}
-
-impl Drop for Owned {
-    fn drop(&mut self) {
-        match self.repr {
-            Repr::Native if self.capacity != 0 => unsafe {
-                drop(RawMut::from_data(self.ptr));
-            },
-            Repr::Vec => unsafe {
-                drop(Vec::from_raw_parts(
-                    self.ptr.as_ptr(),
-                    self.len(),
-                    self.capacity,
-                ));
-            },
-            Repr::Native => {}
-        }
-    }
-}
-
-impl Default for Owned {
-    fn default() -> Self {
-        Self::new()
+        // SAFETY: `Owned` maintains `len <= raw.capacity()` on every mutation.
+        let span = unsafe { RawSpan::new_unchecked(raw.freeze(), 0, len) };
+        Shared::from_raw_span(span)
     }
 }
 
 impl Clone for Owned {
     fn clone(&self) -> Self {
-        Self::copy_from_slice(self.as_slice())
+        let mut clone = Self::with_capacity_u32(self.capacity() as u32);
+        if self.len != 0 {
+            clone.raw.copy_from_raw(0, &self.raw, 0, self.len());
+            clone.len = self.len;
+        }
+        clone
     }
 }
 
@@ -375,30 +184,14 @@ impl DerefMut for Owned {
     }
 }
 
-impl From<&[u8]> for Owned {
-    fn from(value: &[u8]) -> Self {
-        let mut buf = Self::with_capacity(value.len());
-        buf.extend_from_slice(value);
-        buf
-    }
-}
-
-impl From<Vec<u8>> for Owned {
-    fn from(buf: Vec<u8>) -> Self {
-        let len = u32::try_from(buf.len()).expect("buffer capacity overflow");
-        let mut buf = ManuallyDrop::new(buf);
-        Self {
-            ptr: unsafe { NonNull::new_unchecked(buf.as_mut_ptr()) },
-            capacity: buf.capacity(),
-            len,
-            repr: Repr::Vec,
-            marker: PhantomData,
-        }
-    }
-}
-
 impl PartialEq for Owned {
     fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl PartialEq<Block> for Owned {
+    fn eq(&self, other: &Block) -> bool {
         self.as_slice() == other.as_slice()
     }
 }
@@ -413,6 +206,188 @@ impl Hash for Owned {
 
 impl fmt::Debug for Owned {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Owned").field("len", &self.len()).finish()
+        f.debug_struct("Owned")
+            .field("len", &self.len())
+            .field("capacity", &self.capacity())
+            .finish()
+    }
+}
+
+/// A uniquely owned, fixed 64 KiB byte block that never grows.
+pub struct Block {
+    raw: RawMut,
+    len: u32,
+}
+
+impl Block {
+    pub const CAPACITY: usize = BLOCK_CAPACITY as usize;
+
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            raw: RawMut::with_capacity_u32(BLOCK_CAPACITY),
+            len: 0,
+        }
+    }
+
+    pub fn capacity(&self) -> usize {
+        Self::CAPACITY
+    }
+
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        self.raw.initialized(self.len())
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.raw.initialized_mut(self.len as usize)
+    }
+
+    pub fn try_extend_from_slice(&mut self, src: &[u8]) -> Result<(), CapacityError> {
+        let start = self.len();
+        let end = start + src.len();
+        if end > Self::CAPACITY {
+            return Err(CapacityError::new(end, Self::CAPACITY));
+        }
+        self.raw.copy_from_slice(start, src);
+        self.len = end as u32;
+        Ok(())
+    }
+
+    /// Appends `src` without growing the block.
+    ///
+    /// # Panics
+    /// Panics when the block is full. Use
+    /// [`try_extend_from_slice`](Self::try_extend_from_slice) when exhaustion is
+    /// an expected outcome.
+    #[track_caller]
+    pub fn extend_from_slice(&mut self, src: &[u8]) {
+        if let Err(error) = self.try_extend_from_slice(src) {
+            panic!("{error}");
+        }
+    }
+
+    pub fn try_push(&mut self, byte: u8) -> Result<(), CapacityError> {
+        let offset = self.len();
+        if offset == Self::CAPACITY {
+            return Err(CapacityError::new(offset + 1, Self::CAPACITY));
+        }
+        self.raw.write_byte(offset, byte);
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Appends one byte without growing the block.
+    ///
+    /// # Panics
+    /// Panics when the block is full. Use [`try_push`](Self::try_push) when
+    /// exhaustion is an expected outcome.
+    #[track_caller]
+    pub fn push(&mut self, byte: u8) {
+        if let Err(error) = self.try_push(byte) {
+            panic!("{error}");
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        if len < self.len() {
+            self.len = len as u32;
+        }
+    }
+
+    pub fn spare_writer(&mut self) -> SpareWriter<'_> {
+        self.raw.spare_writer(&mut self.len)
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn freeze(self) -> Shared {
+        let Self { raw, len } = self;
+        if len == 0 {
+            return Shared::new();
+        }
+        // SAFETY: `Block` maintains `len <= raw.capacity()` on every mutation.
+        let span = unsafe { RawSpan::new_unchecked(raw.freeze(), 0, len) };
+        Shared::from_raw_span(span)
+    }
+}
+
+impl Default for Block {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clone for Block {
+    fn clone(&self) -> Self {
+        let mut clone = Self::new();
+        if self.len != 0 {
+            clone.raw.copy_from_raw(0, &self.raw, 0, self.len());
+            clone.len = self.len;
+        }
+        clone
+    }
+}
+
+impl AsRef<[u8]> for Block {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl AsMut<[u8]> for Block {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.as_mut_slice()
+    }
+}
+
+impl Deref for Block {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl DerefMut for Block {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_mut_slice()
+    }
+}
+
+impl PartialEq for Block {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl PartialEq<Owned> for Block {
+    fn eq(&self, other: &Owned) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl Eq for Block {}
+
+impl Hash for Block {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_slice().hash(state);
+    }
+}
+
+impl fmt::Debug for Block {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Block").field("len", &self.len()).finish()
     }
 }
