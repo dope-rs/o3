@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use crate::collections::{ClearGuard, Storage};
+use crate::collections::ClearGuard;
 use crate::marker::ThreadBound;
 
 pub struct FixedQueue<T> {
@@ -27,7 +27,7 @@ impl<T> FixedQueueVacantEntry<'_, T> {
 impl<T> FixedQueue<T> {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            entries: Storage::uninit_boxed_slice(capacity),
+            entries: Box::<[T]>::new_uninit_slice(capacity),
             head: 0,
             len: 0,
             _thread: ThreadBound::NEW,

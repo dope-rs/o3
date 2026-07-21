@@ -1,5 +1,5 @@
 use crate::confined::assert_confined;
-use o3::buffer::{Pooled, SharedLease, SharedPool};
+use o3::buffer::{PoolLayoutError, Pooled, SharedLease, SharedPool};
 
 assert_confined!(SharedPool);
 assert_confined!(SharedLease);
@@ -36,4 +36,20 @@ fn frozen_slot_outlives_the_pool_handle() {
         lease.freeze()
     };
     assert_eq!(body.as_ref(), b"abc");
+}
+
+#[test]
+fn invalid_layout_is_reported_before_allocation() {
+    assert!(matches!(
+        SharedPool::try_new(1, 0),
+        Err(PoolLayoutError::ZeroCapacity)
+    ));
+    assert!(matches!(
+        SharedPool::try_new(usize::MAX, 1),
+        Err(PoolLayoutError::SlotOverflow)
+    ));
+    assert!(matches!(
+        SharedPool::try_new(u32::MAX as usize, u32::MAX as usize),
+        Err(PoolLayoutError::CapacityOverflow)
+    ));
 }

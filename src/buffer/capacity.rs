@@ -1,13 +1,10 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::marker::ThreadBound;
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct CapacityError {
     attempted: usize,
     capacity: usize,
-    _thread: ThreadBound,
 }
 
 impl CapacityError {
@@ -15,7 +12,6 @@ impl CapacityError {
         Self {
             attempted,
             capacity,
-            _thread: ThreadBound::NEW,
         }
     }
 

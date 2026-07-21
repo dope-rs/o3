@@ -18,7 +18,7 @@ fn entries_pin_and_remove_values() {
         panic!("capacity");
     };
     {
-        let mut item = entry.get_pin_mut();
+        let mut item = entry.as_pin_mut();
         item.as_ref().bind();
         item.as_mut().set(3);
         assert_eq!(item.as_ref().value(), 3);

@@ -1,6 +1,7 @@
 use std::mem::MaybeUninit;
 
 use crate::collections::ClearGuard;
+use crate::collections::grow::BoxSliceGrowth;
 use crate::marker::ThreadBound;
 
 const NONE: u32 = u32::MAX;
@@ -213,15 +214,21 @@ impl<T> SlotQueue<T> {
     }
 
     pub fn grow_to(&mut self, capacity: usize) {
-        assert!(capacity >= self.entries.len(), "slot queue cannot shrink");
-        if capacity == self.entries.len() {
+        let old_capacity = self.entries.len();
+        assert!(capacity >= old_capacity, "slot queue cannot shrink");
+        assert!(
+            u32::try_from(capacity).is_ok(),
+            "slot queue capacity overflow"
+        );
+        if capacity == old_capacity {
             return;
         }
-        let mut grown = Self::with_capacity(capacity);
-        while let Some((index, value)) = self.pop_front_key_value() {
-            unsafe { grown.push_back_unchecked(index, value) };
+
+        let mut entries = BoxSliceGrowth::take(&mut self.entries);
+        entries.reserve_exact(capacity - old_capacity);
+        for index in old_capacity..capacity {
+            entries.push(Slot::vacant(index as u32));
         }
-        *self = grown;
     }
 
     pub fn capacity(&self) -> usize {

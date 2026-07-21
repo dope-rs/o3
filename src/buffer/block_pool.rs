@@ -1,103 +1,47 @@
-use crate::buffer::{CapacityError, SpareWriter};
-use crate::marker::ThreadBound;
 use std::cell::Cell;
-use std::error::Error;
-use std::fmt;
 use std::marker::{PhantomData, PhantomPinned};
 use std::mem::MaybeUninit;
-use std::num::NonZeroU32;
 use std::pin::Pin;
-use std::ptr;
-use std::ptr::NonNull;
+use std::ptr::{self, NonNull};
 use std::slice;
+
+use crate::marker::ThreadBound;
+
+use super::{CapacityError, SpareWriter};
+
+const BLOCK_CAPACITY: u32 = 64 * 1024;
+const _: () = assert!(
+    BLOCK_CAPACITY as usize <= isize::MAX as usize / u32::MAX as usize,
+    "buffer pool capacity exceeds the allocation limit"
+);
 
 type ByteCell = Cell<MaybeUninit<u8>>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PoolLayout {
-    slots: u32,
-    capacity: NonZeroU32,
-    total: usize,
-}
-
-impl PoolLayout {
-    pub const fn new(slots: u32, capacity: u32) -> Result<Self, PoolLayoutError> {
-        let Some(capacity) = NonZeroU32::new(capacity) else {
-            return Err(PoolLayoutError::ZeroCapacity);
-        };
-        let Some(total) = (slots as usize).checked_mul(capacity.get() as usize) else {
-            return Err(PoolLayoutError::CapacityOverflow);
-        };
-        if total > isize::MAX as usize {
-            return Err(PoolLayoutError::CapacityOverflow);
-        }
-        Ok(Self {
-            slots,
-            capacity,
-            total,
-        })
-    }
-
-    pub const fn slots(self) -> u32 {
-        self.slots
-    }
-
-    pub const fn capacity(self) -> u32 {
-        self.capacity.get()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PoolLayoutError {
-    ZeroCapacity,
-    SlotOverflow,
-    CapacityOverflow,
-}
-
-impl fmt::Display for PoolLayoutError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ZeroCapacity => f.write_str("buffer pool capacity must be positive"),
-            Self::SlotOverflow => f.write_str("buffer pool slot count overflow"),
-            Self::CapacityOverflow => f.write_str("buffer pool allocation size overflow"),
-        }
-    }
-}
-
-impl Error for PoolLayoutError {}
-
-fn allocate(layout: PoolLayout) -> (Box<[ByteCell]>, Box<[Cell<u32>]>) {
-    (
-        (0..layout.total)
-            .map(|_| Cell::new(MaybeUninit::uninit()))
-            .collect(),
-        (0..layout.slots).map(Cell::new).collect(),
-    )
-}
-
-pub struct Pool {
+pub struct BlockPool {
     bytes: Box<[ByteCell]>,
     free: Box<[Cell<u32>]>,
     free_len: Cell<u32>,
-    capacity: NonZeroU32,
     _pin: PhantomPinned,
     _thread: ThreadBound,
 }
 
-impl Pool {
-    pub fn new(layout: PoolLayout) -> Self {
-        let (bytes, free) = allocate(layout);
+impl BlockPool {
+    pub const CAPACITY: usize = BLOCK_CAPACITY as usize;
+
+    pub fn new(slots: u32) -> Self {
+        let total = slots as usize * Self::CAPACITY;
         Self {
-            bytes,
-            free,
-            free_len: Cell::new(layout.slots),
-            capacity: layout.capacity,
+            bytes: (0..total)
+                .map(|_| Cell::new(MaybeUninit::uninit()))
+                .collect(),
+            free: (0..slots).map(Cell::new).collect(),
+            free_len: Cell::new(slots),
             _pin: PhantomPinned,
             _thread: ThreadBound::NEW,
         }
     }
 
-    pub fn try_acquire(self: Pin<&Self>) -> Option<Lease<'_>> {
+    pub fn try_acquire(self: Pin<&Self>) -> Option<BlockLease<'_>> {
         let this = self.get_ref();
         let len = this.free_len.get();
         if len == 0 {
@@ -105,8 +49,8 @@ impl Pool {
         }
         let index = unsafe { this.free.get_unchecked(len as usize - 1) }.get();
         this.free_len.set(len - 1);
-        let offset = index as usize * this.capacity.get() as usize;
-        Some(Lease {
+        let offset = index as usize * Self::CAPACITY;
+        Some(BlockLease {
             pool: NonNull::from(this),
             data: unsafe {
                 NonNull::new_unchecked(this.bytes.as_ptr().add(offset) as *mut ByteCell)
@@ -129,17 +73,17 @@ impl Pool {
     }
 }
 
-pub struct Lease<'d> {
-    pool: NonNull<Pool>,
+pub struct BlockLease<'d> {
+    pool: NonNull<BlockPool>,
     data: NonNull<ByteCell>,
     index: u32,
     head: u32,
     tail: u32,
-    lifetime: PhantomData<&'d Pool>,
+    lifetime: PhantomData<&'d BlockPool>,
 }
 
-impl Lease<'_> {
-    fn pool(&self) -> &Pool {
+impl BlockLease<'_> {
+    fn pool(&self) -> &BlockPool {
         unsafe { self.pool.as_ref() }
     }
 
@@ -151,8 +95,8 @@ impl Lease<'_> {
         self.head == self.tail
     }
 
-    pub fn capacity(&self) -> usize {
-        self.pool().capacity.get() as usize
+    pub const fn capacity(&self) -> usize {
+        BlockPool::CAPACITY
     }
 
     pub fn try_push(&mut self, byte: u8) -> Result<(), CapacityError> {
@@ -179,14 +123,13 @@ impl Lease<'_> {
         &mut self,
         src: [&[u8]; N],
     ) -> Result<(), CapacityError> {
-        let capacity = self.capacity();
         let mut additional = 0usize;
         for slice in &src {
             additional = additional
                 .checked_add(slice.len())
-                .ok_or_else(|| CapacityError::new(usize::MAX, capacity))?;
-            if additional > capacity {
-                return Err(CapacityError::new(additional, capacity));
+                .ok_or_else(|| CapacityError::new(usize::MAX, BlockPool::CAPACITY))?;
+            if additional > BlockPool::CAPACITY {
+                return Err(CapacityError::new(additional, BlockPool::CAPACITY));
             }
         }
         let start = self.reserve_append(additional)?;
@@ -206,15 +149,14 @@ impl Lease<'_> {
     }
 
     fn reserve_append(&mut self, additional: usize) -> Result<usize, CapacityError> {
-        let capacity = self.capacity();
         let len = self.len();
         let attempted = len
             .checked_add(additional)
-            .ok_or_else(|| CapacityError::new(usize::MAX, capacity))?;
-        if attempted > capacity {
-            return Err(CapacityError::new(attempted, capacity));
+            .ok_or_else(|| CapacityError::new(usize::MAX, BlockPool::CAPACITY))?;
+        if attempted > BlockPool::CAPACITY {
+            return Err(CapacityError::new(attempted, BlockPool::CAPACITY));
         }
-        if additional > (self.pool().capacity.get() - self.tail) as usize {
+        if additional > (BLOCK_CAPACITY - self.tail) as usize {
             self.compact();
         }
         Ok(self.tail as usize)
@@ -237,7 +179,7 @@ impl Lease<'_> {
     }
 
     pub fn contiguous_spare_writer(&mut self) -> SpareWriter<'_> {
-        let remaining = (self.pool().capacity.get() - self.tail) as usize;
+        let remaining = (BLOCK_CAPACITY - self.tail) as usize;
         let ptr = unsafe {
             self.data
                 .as_ptr()
@@ -273,13 +215,13 @@ impl Lease<'_> {
     }
 }
 
-impl AsRef<[u8]> for Lease<'_> {
+impl AsRef<[u8]> for BlockLease<'_> {
     fn as_ref(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.as_ptr(), self.len()) }
     }
 }
 
-impl Drop for Lease<'_> {
+impl Drop for BlockLease<'_> {
     fn drop(&mut self) {
         self.pool().release(self.index);
     }

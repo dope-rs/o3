@@ -1,8 +1,9 @@
 use std::marker::PhantomData;
-use std::mem::{self, ManuallyDrop, MaybeUninit};
+use std::mem::{ManuallyDrop, MaybeUninit};
 use std::ptr;
 
-use crate::collections::{ClearGuard, IndexKey, Storage};
+use crate::collections::grow::BoxSliceGrowth;
+use crate::collections::{ClearGuard, IndexKey};
 use crate::marker::ThreadBound;
 
 const NONE: u32 = u32::MAX;
@@ -121,6 +122,104 @@ struct HeapEntry<I, K> {
     key: K,
 }
 
+pub struct FixedHeap<T> {
+    entries: Box<[MaybeUninit<T>]>,
+    len: usize,
+    _thread: ThreadBound,
+}
+
+impl<T> FixedHeap<T> {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            entries: Box::<[T]>::new_uninit_slice(capacity),
+            len: 0,
+            _thread: ThreadBound::NEW,
+        }
+    }
+
+    pub fn push(&mut self, value: T) -> Result<(), T>
+    where
+        T: Ord,
+    {
+        if self.len == self.entries.len() {
+            return Err(value);
+        }
+        let position = self.len;
+        self.len += 1;
+        let mut hole = unsafe {
+            Hole::with_value(
+                self.entries.get_unchecked_mut(..self.len),
+                position,
+                value,
+                |_, _| {},
+            )
+        };
+        hole.sift_up(0, &mut |left, right| left > right);
+        Ok(())
+    }
+
+    pub fn peek(&self) -> Option<&T> {
+        (self.len != 0).then(|| unsafe { self.entries.get_unchecked(0).assume_init_ref() })
+    }
+
+    pub fn pop_if(&mut self, predicate: impl FnOnce(&T) -> bool) -> Option<T>
+    where
+        T: Ord,
+    {
+        let first = self.peek()?;
+        if predicate(first) { self.pop() } else { None }
+    }
+
+    pub fn pop(&mut self) -> Option<T>
+    where
+        T: Ord,
+    {
+        if self.len == 0 {
+            return None;
+        }
+        let value = unsafe { self.entries.get_unchecked(0).assume_init_read() };
+        self.len -= 1;
+        if self.len != 0 {
+            let tail = unsafe { self.entries.get_unchecked(self.len).assume_init_read() };
+            let mut hole = unsafe {
+                Hole::with_value(
+                    self.entries.get_unchecked_mut(..self.len),
+                    0,
+                    tail,
+                    |_, _| {},
+                )
+            };
+            hole.sift_down(&mut |left, right| left > right);
+        }
+        Some(value)
+    }
+
+    pub fn clear(&mut self) {
+        while self.len != 0 {
+            self.len -= 1;
+            unsafe { self.entries.get_unchecked_mut(self.len).assume_init_drop() };
+        }
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl<T> Drop for FixedHeap<T> {
+    fn drop(&mut self) {
+        ClearGuard::run(self, Self::clear);
+    }
+}
+
 pub struct IndexedMinHeap<K: Ord, I: IndexKey = usize> {
     entries: Box<[MaybeUninit<HeapEntry<I, K>>]>,
     positions: Box<[u32]>,
@@ -146,7 +245,7 @@ impl<K: Ord, I: IndexKey> IndexedMinHeap<K, I> {
             "index heap capacity overflow"
         );
         Self {
-            entries: Storage::uninit_boxed_slice(capacity),
+            entries: Box::<[HeapEntry<I, K>]>::new_uninit_slice(capacity),
             positions: vec![NONE; capacity].into_boxed_slice(),
             len: 0,
             _thread: ThreadBound::NEW,
@@ -245,22 +344,23 @@ impl<K: Ord, I: IndexKey> IndexedMinHeap<K, I> {
     }
 
     pub fn grow_to(&mut self, capacity: usize) {
-        assert!(capacity >= self.positions.len(), "index heap cannot shrink");
+        let old_capacity = self.positions.len();
+        assert!(capacity >= old_capacity, "index heap cannot shrink");
         assert!(
             u32::try_from(capacity).is_ok(),
             "index heap capacity overflow"
         );
-        if capacity == self.positions.len() {
+        if capacity == old_capacity {
             return;
         }
-        let mut entries = Storage::uninit_boxed_slice(capacity);
-        for position in 0..self.len {
-            entries[position] = mem::replace(&mut self.entries[position], MaybeUninit::uninit());
-        }
-        let mut positions = vec![NONE; capacity].into_boxed_slice();
-        positions[..self.positions.len()].copy_from_slice(&self.positions);
-        self.entries = entries;
-        self.positions = positions;
+
+        let additional = capacity - old_capacity;
+        let mut entries = BoxSliceGrowth::take(&mut self.entries);
+        let mut positions = BoxSliceGrowth::take(&mut self.positions);
+        entries.reserve_exact(additional);
+        positions.reserve_exact(additional);
+        entries.resize_with(capacity, MaybeUninit::uninit);
+        positions.resize(capacity, NONE);
     }
 
     pub fn contains_key(&self, index: I) -> bool {

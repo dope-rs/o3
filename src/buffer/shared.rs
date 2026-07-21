@@ -1,57 +1,50 @@
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::ops::{Bound, Deref, RangeBounds};
+use std::mem;
+use std::ops::{Bound, Deref, Range, RangeBounds};
+use std::ptr::NonNull;
 use std::rc::Rc;
 use std::slice::from_raw_parts;
 
-use super::owned::Owned;
-use super::raw::Raw;
+use super::RangeExt;
+use super::owned::{Block, Owned};
+use super::raw::{Owner, RawSpan};
 
+const VEC_ZERO_COPY_MIN: usize = 512;
+
+/// An immutable byte view whose materialized pointer keeps ownership off reads.
 #[derive(Clone)]
 pub struct Shared {
-    repr: SharedRepr,
-}
-
-#[derive(Clone)]
-enum SharedRepr {
-    Static(&'static [u8]),
-    Raw {
-        buf: Raw,
-        start: u32,
-        len: u32,
-    },
-    Vec {
-        buf: Rc<Vec<u8>>,
-        start: u32,
-        len: u32,
-    },
+    ptr: *const u8,
+    len: usize,
+    owner: Owner,
 }
 
 impl Shared {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            repr: SharedRepr::Static(&[]),
+            ptr: NonNull::<u8>::dangling().as_ptr(),
+            len: 0,
+            owner: Owner::NONE,
         }
     }
 
     #[must_use]
     pub const fn from_static(s: &'static [u8]) -> Self {
         Self {
-            repr: SharedRepr::Static(s),
+            ptr: s.as_ptr(),
+            len: s.len(),
+            owner: Owner::NONE,
         }
     }
 
-    pub(super) fn from_raw_range(buf: Raw, start: u32, len: u32) -> Self {
-        assert!(
-            start
-                .checked_add(len)
-                .is_some_and(|end| end as usize <= buf.capacity()),
-            "buffer::Shared::from_raw_range: range out of bounds (start={start}, len={len}, capacity={})",
-            buf.capacity()
-        );
+    pub(super) fn from_raw_span(span: RawSpan) -> Self {
+        let (raw, ptr, len) = span.into_parts();
         Self {
-            repr: SharedRepr::Raw { buf, start, len },
+            ptr,
+            len,
+            owner: Owner::from_raw(raw),
         }
     }
 
@@ -59,13 +52,20 @@ impl Shared {
         if buf.is_empty() {
             return Self::new();
         }
-        let len = u32::try_from(buf.len()).expect("buffer capacity overflow");
+        if buf.len() < VEC_ZERO_COPY_MIN {
+            return Self::copy_from_slice(&buf);
+        }
+        Self::from_vec_owner(buf)
+    }
+
+    fn from_vec_owner(buf: Vec<u8>) -> Self {
+        let buf = Rc::new(buf);
+        let ptr = buf.as_ptr();
+        let len = buf.len();
         Self {
-            repr: SharedRepr::Vec {
-                buf: Rc::new(buf),
-                start: 0,
-                len,
-            },
+            ptr,
+            len,
+            owner: Owner::from_vec(buf),
         }
     }
 
@@ -74,45 +74,34 @@ impl Shared {
         if s.is_empty() {
             return Self::new();
         }
-        let len = s.len();
-        assert!(
-            len <= u32::MAX as usize,
-            "buffer::Shared: payload too large ({len}, max {})",
-            u32::MAX
-        );
-        Self {
-            repr: SharedRepr::Raw {
-                buf: Raw::from_slice(s),
-                start: 0,
-                len: len as u32,
-            },
+        match RawSpan::copy_from_slice(s) {
+            Some(span) => Self::from_raw_span(span),
+            None => Self::copy_large(s),
         }
+    }
+
+    #[cold]
+    fn copy_large(s: &[u8]) -> Self {
+        Self::from_vec_owner(s.to_vec())
     }
 
     pub fn len(&self) -> usize {
-        match &self.repr {
-            SharedRepr::Static(s) => s.len(),
-            SharedRepr::Raw { len, .. } | SharedRepr::Vec { len, .. } => *len as usize,
-        }
+        self.len
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.len == 0
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        match &self.repr {
-            SharedRepr::Static(s) => s,
-            SharedRepr::Raw { buf, start, len } => unsafe {
-                from_raw_parts(buf.data_ptr().add(*start as usize), *len as usize)
-            },
-            SharedRepr::Vec { buf, start, len } => &buf[*start as usize..(*start + *len) as usize],
-        }
+        unsafe { from_raw_parts(self.ptr, self.len) }
     }
 
+    /// # Panics
+    /// Panics if `range` is reversed or out of bounds.
+    #[track_caller]
     #[must_use]
     pub fn slice(&self, range: impl RangeBounds<usize>) -> Self {
-        let len = self.len();
         let start = match range.start_bound() {
             Bound::Included(&n) => n,
             Bound::Excluded(&n) => n.saturating_add(1),
@@ -121,69 +110,78 @@ impl Shared {
         let end = match range.end_bound() {
             Bound::Included(&n) => n.saturating_add(1),
             Bound::Excluded(&n) => n,
-            Bound::Unbounded => len,
+            Bound::Unbounded => self.len,
         };
+        let range = start..end;
         assert!(
-            start <= end && end <= len,
+            range.is_within(self.len),
             "buffer::Shared::slice: range out of bounds"
         );
-        if start == end {
+        if range.is_empty() {
             return Self::new();
         }
-        match &self.repr {
-            SharedRepr::Static(s) => Self::from_static(&s[start..end]),
-            SharedRepr::Raw {
-                buf, start: cur, ..
-            } => Self {
-                repr: SharedRepr::Raw {
-                    buf: buf.clone(),
-                    start: *cur + start as u32,
-                    len: (end - start) as u32,
-                },
-            },
-            SharedRepr::Vec {
-                buf, start: cur, ..
-            } => Self {
-                repr: SharedRepr::Vec {
-                    buf: Rc::clone(buf),
-                    start: *cur + start as u32,
-                    len: (end - start) as u32,
-                },
-            },
+        Self {
+            ptr: unsafe { self.ptr.add(range.start) },
+            len: range.len(),
+            owner: self.owner.clone(),
         }
     }
 
+    #[inline]
+    pub(super) fn try_slice_in_place(&mut self, range: Range<usize>) -> bool {
+        if !range.is_within(self.len) {
+            return false;
+        }
+        if range.is_empty() {
+            self.clear();
+            return true;
+        }
+        self.ptr = unsafe { self.ptr.add(range.start) };
+        self.len = range.len();
+        true
+    }
+
+    /// # Panics
+    /// Panics if `n` exceeds the remaining length.
+    #[inline]
+    #[track_caller]
     pub fn advance(&mut self, n: usize) {
-        let len = self.len();
-        assert!(n <= len, "buffer::Shared::advance: out of bounds");
-        match &mut self.repr {
-            SharedRepr::Static(s) => *s = &s[n..],
-            SharedRepr::Raw { start, len, .. } | SharedRepr::Vec { start, len, .. } => {
-                *start += n as u32;
-                *len -= n as u32;
-            }
-        }
+        let len = self.len;
+        assert!(
+            self.try_slice_in_place(n..len),
+            "buffer::Shared::advance: out of bounds"
+        );
     }
 
+    /// # Panics
+    /// Panics if `at` exceeds the remaining length.
+    #[track_caller]
     #[must_use]
     pub fn split_to(&mut self, at: usize) -> Self {
-        let head = self.slice(..at);
-        self.advance(at);
+        assert!(at <= self.len, "buffer::Shared::split_to: out of bounds");
+        if at == 0 {
+            return Self::new();
+        }
+        if at == self.len {
+            return mem::take(self);
+        }
+        let head = Self {
+            ptr: self.ptr,
+            len: at,
+            owner: self.owner.clone(),
+        };
+        self.ptr = unsafe { self.ptr.add(at) };
+        self.len -= at;
         head
     }
 
     pub fn clear(&mut self) {
-        self.repr = SharedRepr::Static(&[]);
+        *self = Self::new();
     }
 
     pub fn truncate(&mut self, n: usize) {
-        let len = self.len();
-        if n >= len {
-            return;
-        }
-        match &mut self.repr {
-            SharedRepr::Static(s) => *s = &s[..n],
-            SharedRepr::Raw { len, .. } | SharedRepr::Vec { len, .. } => *len = n as u32,
+        if n < self.len {
+            self.len = n;
         }
     }
 }
@@ -202,6 +200,7 @@ impl AsRef<[u8]> for Shared {
 
 impl Deref for Shared {
     type Target = [u8];
+
     fn deref(&self) -> &[u8] {
         self.as_slice()
     }
@@ -227,6 +226,12 @@ impl From<Vec<u8>> for Shared {
 
 impl From<Owned> for Shared {
     fn from(value: Owned) -> Self {
+        value.freeze()
+    }
+}
+
+impl From<Block> for Shared {
+    fn from(value: Block) -> Self {
         value.freeze()
     }
 }

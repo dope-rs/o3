@@ -1,7 +1,7 @@
 use std::fmt;
 use std::mem::MaybeUninit;
 
-use crate::collections::{ClearGuard, Storage};
+use crate::collections::ClearGuard;
 use crate::marker::ThreadBound;
 
 const EMPTY: u8 = u8::MAX;
@@ -52,14 +52,15 @@ impl<V: fmt::Debug> fmt::Debug for FixedHashTable<V> {
 
 impl<V> FixedHashTable<V> {
     pub fn with_capacity(capacity: usize) -> Self {
-        let buckets = capacity
-            .checked_mul(2)
-            .and_then(usize::checked_next_power_of_two)
-            .expect("hash table capacity overflow");
+        assert!(
+            capacity <= 1 << (usize::BITS - 2),
+            "hash table capacity overflow"
+        );
+        let buckets = (capacity * 2).next_power_of_two();
         Self {
             controls: vec![EMPTY; buckets].into_boxed_slice(),
-            hashes: Storage::uninit_boxed_slice(buckets),
-            values: Storage::uninit_boxed_slice(buckets),
+            hashes: Box::<[u64]>::new_uninit_slice(buckets),
+            values: Box::<[V]>::new_uninit_slice(buckets),
             len: 0,
             capacity,
             _thread: ThreadBound::NEW,
