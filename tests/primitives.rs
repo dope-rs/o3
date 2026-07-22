@@ -1,9 +1,8 @@
 use std::pin::pin;
 
-use o3::buffer::{BlockLease, BlockPool, Pool, PoolLayout, PoolLayoutError};
-use o3::cell::{BrandCell, BrandToken};
-use o3::mem::ByteBudget;
-use o3::mem::ScratchVec;
+use o3::buffer::{BlockLease, BlockPool, Pool, PoolLayout, PoolLayoutError, Shared, SharedStr};
+use o3::cell::{BrandCell, BrandToken, BrandedCell, BrandedToken, RegionCell};
+use o3::mem::{ByteBudget, FairCredits, ScratchVec};
 
 #[test]
 fn pooled_buffers_enforce_capacity_and_recycle_leases() {
@@ -22,6 +21,19 @@ fn pooled_buffers_enforce_capacity_and_recycle_leases() {
 }
 
 #[test]
+fn shared_str_validates_utf8_without_copying() {
+    let shared = Shared::from(String::from("hello"));
+    let ptr = shared.as_ptr();
+    let text = SharedStr::from_utf8(shared).unwrap();
+    let clone = text.clone();
+    assert_eq!(text.as_str(), "hello");
+    assert_eq!(clone.as_bytes(), b"hello");
+    assert_eq!(text.as_bytes().as_ptr(), ptr);
+    assert_eq!(clone.as_bytes().as_ptr(), ptr);
+    assert!(SharedStr::from_utf8(Shared::from(vec![0xff])).is_err());
+}
+
+#[test]
 fn byte_budget_returns_capacity() {
     let budget = pin!(ByteBudget::new(4));
     let handle = budget.as_ref().handle();
@@ -32,6 +44,30 @@ fn byte_budget_returns_capacity() {
     assert_eq!(lease.amount(), 2);
     drop(lease);
     assert_eq!(handle.used(), 0);
+}
+
+#[test]
+fn fair_credits_protect_each_lane_and_share_the_rest() {
+    let mut credits = FairCredits::with_reserve(8, 2, 2);
+    assert!(credits.try_acquire(0, 6));
+    assert!(!credits.try_acquire(0, 1));
+    assert!(credits.try_acquire(1, 2));
+    assert_eq!(credits.used(), 8);
+
+    credits.release(0, 3);
+    assert_eq!(credits.shared_available(), 3);
+    assert!(credits.try_acquire(1, 1));
+    assert_eq!(credits.held_by(0), Some(3));
+    assert_eq!(credits.held_by(1), Some(3));
+    assert_eq!(credits.lane_count(), 2);
+    assert_eq!(credits.reserve_per_lane(), 2);
+
+    let available = credits.available();
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        credits.acquire(0, available + 1);
+    }));
+    assert!(caught.is_err());
+    assert_eq!(credits.available(), available);
 }
 
 #[test]
@@ -99,6 +135,27 @@ fn brand_cells_mutate_in_place() {
         let value = BrandCell::new(1);
         *value.borrow_mut(&mut brand) = 2;
         assert_eq!(*value.borrow(&brand), 2);
+    });
+
+    enum Domain {}
+
+    BrandedToken::<Domain>::scope(|mut token| {
+        let value = BrandedCell::<_, Domain>::new(1);
+        *value.borrow_mut(&mut token) = 2;
+        assert_eq!(*value.borrow(&token), 2);
+    });
+}
+
+#[test]
+fn application_and_state_permissions_are_independent() {
+    BrandToken::scope_with_region(|mut app, mut state| {
+        let dispatcher = BrandCell::new(1);
+        let storage = RegionCell::new(2);
+
+        let dispatcher = dispatcher.borrow_mut(&mut app);
+        *storage.borrow_mut(&mut state) += *dispatcher;
+
+        assert_eq!(*storage.borrow(&state), 3);
     });
 }
 

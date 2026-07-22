@@ -9,6 +9,7 @@ mod ref_count;
 mod rolling;
 mod shared;
 mod shared_pool;
+mod shared_str;
 mod snapshot_buf;
 
 use std::mem::MaybeUninit;
@@ -26,6 +27,7 @@ pub use pool::{Lease, Pool, PoolLayout, PoolLayoutError};
 pub use rolling::RollingBuffer;
 pub use shared::Shared;
 pub use shared_pool::{Pooled, SharedLease, SharedPool};
+pub use shared_str::SharedStr;
 pub use snapshot_buf::SnapshotBuf;
 
 pub struct SpareWriter<'a> {

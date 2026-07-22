@@ -3,21 +3,25 @@ mod bitmap;
 mod grow;
 mod heap;
 pub mod intrusive;
+mod linked_pool;
 mod pin_cell_slab;
 mod pin_slab;
 mod queue;
+mod round_robin;
 mod slab;
 mod table;
 
 pub use batch_set::{BatchDrain, BatchSet};
 pub use bitmap::CellBitmap;
 pub use heap::{FixedHeap, IndexedMinHeap, IndexedMinHeapVacantEntry};
+pub use linked_pool::{LinkedPool, LinkedPoolChain};
 pub use pin_cell_slab::{PinCellSlab, PinCellSlabOccupiedEntry, PinCellSlabVacantEntry};
 pub use pin_slab::{
     FixedPinSlab, FixedPinSlabOccupiedEntry, FixedPinSlabVacantEntry, PinSlab,
     PinSlabOccupiedEntry, PinSlabVacantEntry,
 };
 pub use queue::{CellQueue, FixedQueue, FixedQueueVacantEntry, SlotQueue, SlotQueueVacantEntry};
+pub use round_robin::RoundRobinSet;
 pub use slab::{CellSlab, Slab, SlabGeneration, SlabKey, SlabKeyParts, SlabVacantEntry};
 pub use table::FixedHashTable;
 

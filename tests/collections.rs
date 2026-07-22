@@ -1,7 +1,11 @@
 use o3::collections::Slab;
-use o3::collections::{CellQueue, FixedHashTable, FixedQueue, IndexedMinHeap, SlotQueue};
+use o3::collections::{
+    CellQueue, FixedHashTable, FixedQueue, IndexedMinHeap, LinkedPool, LinkedPoolChain,
+    RoundRobinSet, SlotQueue,
+};
 use std::cell::Cell;
 use std::cmp::Ordering;
+use std::pin::pin;
 
 use crate::support::PanicDrop;
 
@@ -169,6 +173,60 @@ fn bounded_queues_are_fifo() {
 }
 
 #[test]
+fn linked_pool_shares_nodes_without_mixing_chain_order() {
+    let pool = pin!(LinkedPool::with_capacity(3));
+    let mut left = pool.as_ref().chain();
+    let mut right = pool.as_ref().chain();
+
+    assert_eq!(left.push_back(1), Ok(()));
+    assert_eq!(right.push_back(2), Ok(()));
+    assert_eq!(left.push_front(0), Ok(()));
+    assert_eq!(right.push_back(3), Err(3));
+    assert_eq!(left.front(), Some(&0));
+    assert_eq!(left.len(), 2);
+    assert_eq!(right.len(), 1);
+
+    assert_eq!(left.pop_front(), Some(0));
+    assert_eq!(right.push_back(3), Ok(()));
+    assert_eq!(left.pop_front(), Some(1));
+    assert_eq!(right.pop_front(), Some(2));
+    assert_eq!(right.pop_front(), Some(3));
+    assert!(pool.is_empty());
+}
+
+#[test]
+fn linked_pool_chain_drop_reclaims_nodes() {
+    let first = pin!(LinkedPool::with_capacity(1));
+    let second = pin!(LinkedPool::with_capacity(1));
+    let mut first_chain = first.as_ref().chain();
+    let mut second_chain = second.as_ref().chain();
+
+    first_chain.push_back(1).unwrap();
+    second_chain.push_back(2).unwrap();
+    assert_eq!(first_chain.front(), Some(&1));
+    assert_eq!(second_chain.front(), Some(&2));
+    drop(first_chain);
+    assert_eq!(first.available(), 1);
+    assert_eq!(second.available(), 0);
+}
+
+#[test]
+fn round_robin_set_rotates_and_unlinks() {
+    let mut set = RoundRobinSet::with_capacity(4);
+    assert!(set.insert(1));
+    assert!(set.insert(3));
+    assert!(!set.insert(1));
+    assert_eq!(set.next_index(), Some(1));
+    assert_eq!(set.next_index(), Some(3));
+    assert_eq!(set.next_index(), Some(1));
+    assert!(set.remove(1));
+    assert_eq!(set.next_index(), Some(3));
+    assert!(set.remove(3));
+    assert_eq!(set.next_index(), None);
+    assert!(set.is_empty());
+}
+
+#[test]
 fn fixed_hash_table_reuses_wrapped_clusters() {
     let mut table: FixedHashTable<(u32, u32)> = FixedHashTable::with_capacity(8);
     for epoch in 0..256u32 {
@@ -331,6 +389,9 @@ fn fixed_collections_keep_their_thin_layouts() {
     assert_eq!(std::mem::size_of::<FixedQueue<u64>>(), 32);
     assert_eq!(std::mem::size_of::<SlotQueue<u64>>(), 32);
     assert_eq!(std::mem::size_of::<Slab<u64>>(), 40);
+    assert_eq!(std::mem::size_of::<LinkedPool<u64>>(), 32);
+    assert_eq!(std::mem::size_of::<LinkedPoolChain<'static, u64>>(), 24);
+    assert_eq!(std::mem::size_of::<RoundRobinSet>(), 32);
 }
 
 #[test]
@@ -390,5 +451,12 @@ fn collection_drop_finishes_after_one_element_panics() {
         queue.push_back(0, first).ok();
         queue.push_back(1, second).ok();
         drop(queue);
+    });
+    assert_panicking_drop_finishes(&drops, &panic_once, |first, second| {
+        let pool = pin!(LinkedPool::with_capacity(2));
+        let mut chain = pool.as_ref().chain();
+        chain.push_back(first).ok();
+        chain.push_back(second).ok();
+        drop(chain);
     });
 }

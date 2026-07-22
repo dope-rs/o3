@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+ --> tests/ui/region_permission_domain.rs:6:26
+  |
+6 |         *cell.borrow_mut(&mut token) = 1;
+  |               ---------- ^^^^^^^^^^ expected `&mut BrandedToken<'_, RegionPermission>`, found `&mut BrandedToken<'_, BrandPermission>`
+  |               |
+  |               arguments to this method are incorrect
+  |
+  = note: expected mutable reference `&mut BrandedToken<'_, o3::cell::brand::RegionPermission>`
+             found mutable reference `&mut BrandedToken<'_, o3::cell::brand::BrandPermission>`
+note: method defined here
+ --> src/cell/brand.rs
+  |
+  |     pub fn borrow_mut<'a>(&'a self, token: &'a mut BrandedToken<'id, Tag>) -> &'a mut T
+  |            ^^^^^^^^^^
