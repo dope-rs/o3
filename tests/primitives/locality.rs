@@ -84,6 +84,7 @@ fn state_is_confined_and_keys_are_word_sized() {
     assert_eq!(std::mem::size_of::<SlabKeyParts>(), 8);
     assert_eq!(std::mem::size_of::<SlabGeneration>(), 4);
     assert_eq!(std::mem::size_of::<FairCredits>(), 48);
+    assert_eq!(std::mem::size_of::<FairCredits<2>>(), 80);
     assert_eq!(
         std::mem::size_of::<PinCellSlabVacantEntry<'static, u8>>(),
         16
