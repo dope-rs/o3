@@ -1,10 +1,12 @@
 use crate::confined::assert_confined;
 use o3::buffer::{
     Block, BlockLease, BlockPool, ByteRing, Bytes, CapacityError, Lease, Owned, Pool, Retained,
-    RollingBuffer, Shared, SnapshotBuf, SpareWriter,
+    RollingBuffer, Shared, SharedStr, SnapshotBuf, SpareWriter,
 };
 use o3::cell::{BrandCell, BrandToken, RawCell};
-use o3::collections::{CellQueue, FixedQueue, SlotQueue};
+use o3::collections::{
+    CellQueue, FixedQueue, LinkedPool, LinkedPoolChain, RoundRobinSet, SlotQueue,
+};
 use o3::collections::{FixedHashTable, IndexedMinHeap};
 use o3::collections::{
     FixedPinSlab, FixedPinSlabOccupiedEntry, FixedPinSlabVacantEntry, PinCellSlab,
@@ -13,11 +15,14 @@ use o3::collections::{
 };
 use o3::marker::ThreadBound;
 use o3::mem::ScratchVec;
-use o3::mem::{ByteBudget, ByteBudgetHandle, ByteLease};
+use o3::mem::{ByteBudget, ByteBudgetHandle, ByteLease, FairCredits};
 
 assert_confined!(FixedQueue<u8>);
 assert_confined!(CellQueue<u8>);
 assert_confined!(SlotQueue<u8>);
+assert_confined!(LinkedPoolChain<'static, u8>);
+assert_confined!(LinkedPool<u8>);
+assert_confined!(RoundRobinSet);
 assert_confined!(IndexedMinHeap<u8>);
 assert_confined!(FixedHashTable<u8>);
 assert_confined!(PinSlab<u8>);
@@ -37,6 +42,7 @@ assert_confined!(Owned);
 assert_confined!(Block);
 assert_confined!(SpareWriter<'static>);
 assert_confined!(Shared);
+assert_confined!(SharedStr);
 assert_confined!(Bytes<Retained>);
 assert_confined!(SnapshotBuf<16_384>);
 assert_confined!(Pool);
@@ -48,6 +54,7 @@ assert_confined!(ByteRing);
 assert_confined!(ByteBudget);
 assert_confined!(ByteBudgetHandle<'static>);
 assert_confined!(ByteLease<'static>);
+assert_confined!(FairCredits);
 assert_confined!(ScratchVec<u8>);
 assert_confined!(ThreadBound);
 assert_confined!(BrandToken<'static>);
@@ -76,6 +83,7 @@ fn state_is_confined_and_keys_are_word_sized() {
     assert_eq!(std::mem::size_of::<SlabKey>(), 8);
     assert_eq!(std::mem::size_of::<SlabKeyParts>(), 8);
     assert_eq!(std::mem::size_of::<SlabGeneration>(), 4);
+    assert_eq!(std::mem::size_of::<FairCredits>(), 48);
     assert_eq!(
         std::mem::size_of::<PinCellSlabVacantEntry<'static, u8>>(),
         16
