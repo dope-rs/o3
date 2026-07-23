@@ -2,7 +2,7 @@ use std::cell::{Cell, UnsafeCell};
 
 use crate::marker::ThreadBound;
 
-use super::CellBitmap;
+use super::bitmap::CellBitmap;
 
 const WORD_BITS: usize = usize::BITS as usize;
 const ENTRIES_PER_WORD: usize = WORD_BITS / 2;

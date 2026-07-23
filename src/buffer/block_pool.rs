@@ -178,7 +178,7 @@ impl BlockLease<'_> {
         self.contiguous_spare_writer()
     }
 
-    pub fn contiguous_spare_writer(&mut self) -> SpareWriter<'_> {
+    fn contiguous_spare_writer(&mut self) -> SpareWriter<'_> {
         let remaining = (BLOCK_CAPACITY - self.tail) as usize;
         let ptr = unsafe {
             self.data

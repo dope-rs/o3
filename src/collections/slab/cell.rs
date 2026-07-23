@@ -47,21 +47,13 @@ impl<T, Tag, const MAX: u32> CellSlab<T, Tag, MAX> {
     }
 
     pub fn insert(&self, value: T) -> Result<SlabKey<Tag, MAX>, T> {
-        self.insert_with(value, |key, _| key)
-    }
-
-    pub fn insert_with<R>(
-        &self,
-        value: T,
-        f: impl FnOnce(SlabKey<Tag, MAX>, &mut T) -> R,
-    ) -> Result<R, T> {
         let Some(ticket) = self.core.take_free() else {
             return Err(value);
         };
         let pending = Pending::new(&self.core, ticket);
         let key = SlabKey::new(ticket.index.get(), ticket.generation);
-        let result = pending.commit_with(value, |value| f(key, value));
-        Ok(result)
+        pending.commit(value);
+        Ok(key)
     }
 
     pub fn update<R>(&self, key: SlabKey<Tag, MAX>, f: impl FnOnce(&mut T) -> R) -> Option<R> {
@@ -84,14 +76,6 @@ impl<T, Tag, const MAX: u32> CellSlab<T, Tag, MAX> {
         self.core
             .remove(parts.index(), parts.generation())
             .map(|(value, _)| value)
-    }
-
-    pub fn remove_with<R>(
-        &self,
-        key: SlabKey<Tag, MAX>,
-        f: impl FnOnce(&mut T) -> Option<R>,
-    ) -> Option<(T, R)> {
-        self.remove_parts_with(key.parts(), f)
     }
 
     pub fn remove_parts_with<R>(

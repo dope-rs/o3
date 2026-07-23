@@ -36,8 +36,7 @@ impl Owned {
         Self::with_capacity_u32(capacity as u32)
     }
 
-    #[must_use]
-    pub fn with_capacity_u32(capacity: u32) -> Self {
+    fn with_capacity_u32(capacity: u32) -> Self {
         Self {
             raw: RawMut::with_capacity_u32(capacity),
             len: 0,

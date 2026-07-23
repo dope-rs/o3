@@ -1,8 +1,5 @@
 use std::cell::{Cell, UnsafeCell};
-use std::marker::{PhantomData, PhantomPinned};
 use std::mem::MaybeUninit;
-use std::pin::Pin;
-use std::ptr::NonNull;
 
 use crate::marker::ThreadBound;
 
@@ -37,24 +34,7 @@ impl ChainState {
     };
 }
 
-/// Fixed node storage for scoped chains that borrow a pinned outer owner.
-pub struct LinkedPool<T> {
-    nodes: NodePool<T>,
-    _pin: PhantomPinned,
-}
-
-/// A FIFO chain that cannot outlive its pinned [`LinkedPool`].
-pub struct LinkedPoolChain<'pool, T> {
-    nodes: NonNull<NodePool<T>>,
-    state: ChainState,
-    lifetime: PhantomData<&'pool NodePool<T>>,
-}
-
 /// Fixed node storage and persistent FIFO lanes under one movable owner.
-///
-/// Unlike [`LinkedPoolChain`], lanes are indices rather than self-references.
-/// This makes the arena suitable for long-lived state that owns both shared
-/// storage and every lane using it.
 pub struct LinkedArena<T> {
     nodes: NodePool<T>,
     lanes: Box<[ChainState]>,
@@ -81,22 +61,6 @@ impl<T> NodePool<T> {
             available: Cell::new(capacity),
             _thread: ThreadBound::NEW,
         }
-    }
-
-    fn capacity(&self) -> usize {
-        self.nodes.len()
-    }
-
-    fn len(&self) -> usize {
-        self.nodes.len() - self.available.get()
-    }
-
-    fn available(&self) -> usize {
-        self.available.get()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.available.get() == self.nodes.len()
     }
 
     fn is_full(&self) -> bool {
@@ -178,92 +142,6 @@ impl<T> NodePool<T> {
     }
 }
 
-impl<T> LinkedPool<T> {
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            nodes: NodePool::with_capacity(capacity),
-            _pin: PhantomPinned,
-        }
-    }
-
-    pub fn chain(self: Pin<&Self>) -> LinkedPoolChain<'_, T> {
-        LinkedPoolChain {
-            nodes: NonNull::from(&self.get_ref().nodes),
-            state: ChainState::EMPTY,
-            lifetime: PhantomData,
-        }
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.nodes.capacity()
-    }
-
-    pub fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
-    pub fn available(&self) -> usize {
-        self.nodes.available()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-
-    pub fn is_full(&self) -> bool {
-        self.nodes.is_full()
-    }
-}
-
-impl<T> LinkedPoolChain<'_, T> {
-    fn nodes(&self) -> &NodePool<T> {
-        unsafe { self.nodes.as_ref() }
-    }
-
-    pub fn len(&self) -> usize {
-        self.state.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.state.len == 0
-    }
-
-    pub fn front(&self) -> Option<&T> {
-        self.nodes().front(&self.state)
-    }
-
-    pub fn push_back(&mut self, value: T) -> Result<(), T> {
-        let nodes = self.nodes;
-        unsafe { nodes.as_ref() }.push_back(&mut self.state, value)
-    }
-
-    pub fn push_front(&mut self, value: T) -> Result<(), T> {
-        let nodes = self.nodes;
-        unsafe { nodes.as_ref() }.push_front(&mut self.state, value)
-    }
-
-    pub fn pop_front(&mut self) -> Option<T> {
-        let nodes = self.nodes;
-        unsafe { nodes.as_ref() }.pop_front(&mut self.state)
-    }
-
-    pub fn clear(&mut self) {
-        ClearGuard::run(self, Self::clear_remaining);
-    }
-
-    fn clear_remaining(&mut self) {
-        while let Some(value) = self.pop_front() {
-            drop(value);
-        }
-    }
-}
-
-impl<T> Drop for LinkedPoolChain<'_, T> {
-    fn drop(&mut self) {
-        self.clear();
-    }
-}
-
 impl<T> LinkedArena<T> {
     pub fn with_capacity(capacity: usize, lanes: usize) -> Self {
         assert!(lanes > 0, "linked arena lane count must be positive");
@@ -273,28 +151,8 @@ impl<T> LinkedArena<T> {
         }
     }
 
-    pub fn capacity(&self) -> usize {
-        self.nodes.capacity()
-    }
-
-    pub fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
-    pub fn available(&self) -> usize {
-        self.nodes.available()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-
     pub fn is_full(&self) -> bool {
         self.nodes.is_full()
-    }
-
-    pub fn lane_count(&self) -> usize {
-        self.lanes.len()
     }
 
     pub fn lane_len(&self, lane: usize) -> usize {
@@ -321,7 +179,7 @@ impl<T> LinkedArena<T> {
         self.nodes.pop_front(&mut self.lanes[lane])
     }
 
-    pub fn clear(&mut self) {
+    fn clear(&mut self) {
         ClearGuard::run(self, Self::clear_remaining);
     }
 
