@@ -3,7 +3,7 @@ use o3::buffer::{
     Block, BlockLease, BlockPool, ByteRing, Bytes, CapacityError, Lease, Owned, Pool, Retained,
     RollingBuffer, Shared, SharedStr, SnapshotBuf, SpareWriter,
 };
-use o3::cell::{BrandCell, BrandToken, RawCell};
+use o3::cell::{BrandCell, BrandToken, CheckedCell, RawCell};
 use o3::collections::{CellQueue, FixedQueue, RoundRobinSet, SlotQueue};
 use o3::collections::{FixedHashTable, IndexedMinHeap};
 use o3::collections::{
@@ -49,6 +49,7 @@ assert_confined!(ScratchVec<u8>);
 assert_confined!(ThreadBound);
 assert_confined!(BrandToken<'static>);
 assert_confined!(BrandCell<'static, u8>);
+assert_confined!(CheckedCell<u8>);
 assert_confined!(RawCell<u8>);
 
 const _: fn() = || {
@@ -94,4 +95,22 @@ fn raw_cell_mutates_without_layout_overhead() {
     *cell.get_mut() += 1;
     assert_eq!(unsafe { cell.with(|value| *value) }, 3);
     assert_eq!(std::mem::size_of_val(&cell), std::mem::size_of::<u64>());
+}
+
+#[test]
+fn checked_cell_rejects_reentry_and_restores_access_after_unwind() {
+    let cell = CheckedCell::new(1_u64);
+    let reentered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        cell.with_mut(|_| cell.with_mut(|_| {}));
+    }));
+    assert!(reentered.is_err());
+
+    assert_eq!(
+        cell.with_mut(|value| {
+            *value += 1;
+            *value
+        }),
+        2,
+    );
+    assert_eq!(std::mem::size_of_val(&cell), std::mem::size_of::<u64>() * 2,);
 }
