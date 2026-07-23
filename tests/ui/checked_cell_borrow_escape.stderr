@@ -1,0 +1,13 @@
+error: lifetime may not live long enough
+ --> tests/ui/checked_cell_borrow_escape.rs:4:27
+  |
+4 |     cell.with_mut(|value| value)
+  |                    ------ ^^^^^ returning this value requires that `'1` must outlive `'2`
+  |                    |    |
+  |                    |    return type of closure is &'2 mut u8
+  |                    has type `&'1 mut u8`
+  |
+help: dereference the return value
+  |
+4 |     cell.with_mut(|value| *value)
+  |                           +

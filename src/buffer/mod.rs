@@ -26,7 +26,9 @@ pub use owned::{Block, Owned};
 pub use pool::{Lease, Pool, PoolLayout, PoolLayoutError};
 pub use rolling::RollingBuffer;
 pub use shared::Shared;
-pub use shared_pool::{Pooled, SharedLease, SharedPool};
+pub use shared_pool::{
+    InitializedSharedLease, InitializedSharedPool, Pooled, SharedLease, SharedPool,
+};
 pub use shared_str::SharedStr;
 pub use snapshot_buf::SnapshotBuf;
 
