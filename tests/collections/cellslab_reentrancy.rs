@@ -14,14 +14,11 @@ fn reentrant_remove_observes_a_busy_slot() {
 }
 
 #[test]
-fn update_keeps_the_value_in_its_slot() {
+fn updates_keep_the_value_in_its_slot() {
     let slab: CellSlab<u32> = CellSlab::with_capacity(1);
-    let (key, inserted) = slab
-        .insert_with(42, |key, value| (key, value as *mut u32))
-        .unwrap();
+    let key = slab.insert(42).unwrap();
     let first = slab.update(key, |value| value as *mut u32).unwrap();
     let second = slab.update(key, |value| value as *mut u32).unwrap();
-    assert_eq!(inserted, first);
     assert_eq!(first, second);
 }
 
@@ -29,8 +26,13 @@ fn update_keeps_the_value_in_its_slot() {
 fn conditional_remove_visits_the_slot_once() {
     let slab: CellSlab<u32> = CellSlab::with_capacity(1);
     let key = slab.insert(7).unwrap();
-    assert!(slab.remove_with(key, |_| None::<()>).is_none());
-    let (value, output) = slab.remove_with(key, |value| Some(*value + 1)).unwrap();
+    assert!(
+        slab.remove_parts_with(key.parts(), |_| None::<()>)
+            .is_none()
+    );
+    let (value, output) = slab
+        .remove_parts_with(key.parts(), |value| Some(*value + 1))
+        .unwrap();
     assert_eq!((value, output), (7, 8));
 }
 
@@ -76,7 +78,7 @@ fn panicking_callbacks_restore_the_slot() {
 
     let key = slab.insert(7).unwrap();
     let caught = catch_unwind(AssertUnwindSafe(|| {
-        slab.remove_with(key, |_| -> Option<()> { panic!("remove") });
+        slab.remove_parts_with(key.parts(), |_| -> Option<()> { panic!("remove") });
     }));
     assert!(caught.is_err());
     assert!(slab.contains_key(key));

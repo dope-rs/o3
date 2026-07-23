@@ -4,8 +4,7 @@ use crate::marker::ThreadBound;
 
 const WORD_BITS: usize = usize::BITS as usize;
 
-/// A growable, single-threaded bitmap with hierarchical successor lookup.
-pub struct CellBitmap {
+pub(super) struct CellBitmap {
     words: UnsafeCell<Words>,
     summary: UnsafeCell<Option<Box<CellBitmap>>>,
     capacity: Cell<usize>,
@@ -54,7 +53,7 @@ impl Words {
 }
 
 impl CellBitmap {
-    pub fn with_capacity(capacity: usize) -> Self {
+    pub(super) fn with_capacity(capacity: usize) -> Self {
         let word_count = capacity.div_ceil(WORD_BITS);
         Self {
             words: UnsafeCell::new(Words::zeroed(word_count)),
@@ -68,14 +67,7 @@ impl CellBitmap {
         }
     }
 
-    pub fn filled(capacity: usize) -> Self {
-        let bitmap = Self::with_capacity(capacity);
-        bitmap.fill();
-        bitmap
-    }
-
-    /// Grows the bitmap while preserving existing bits.
-    pub fn grow_to(&self, capacity: usize) {
+    pub(super) fn grow_to(&self, capacity: usize) {
         if capacity <= self.capacity.get() {
             return;
         }
@@ -100,9 +92,8 @@ impl CellBitmap {
         self.capacity.set(capacity);
     }
 
-    /// Returns whether the bit changed from clear to set.
     #[inline]
-    pub fn insert(&self, index: usize) -> bool {
+    pub(super) fn insert(&self, index: usize) -> bool {
         if index >= self.capacity.get() {
             return false;
         }
@@ -123,9 +114,8 @@ impl CellBitmap {
         true
     }
 
-    /// Returns whether the bit changed from set to clear.
     #[inline]
-    pub fn remove(&self, index: usize) -> bool {
+    pub(super) fn remove(&self, index: usize) -> bool {
         if index >= self.capacity.get() {
             return false;
         }
@@ -147,16 +137,8 @@ impl CellBitmap {
         true
     }
 
-    pub fn contains(&self, index: usize) -> bool {
-        if index >= self.capacity.get() {
-            return false;
-        }
-        self.words()[index / WORD_BITS].get() & (1usize << (index % WORD_BITS)) != 0
-    }
-
-    /// Removes the next set bit, rotating the starting position after every hit.
     #[inline]
-    pub fn pop_next(&self) -> Option<usize> {
+    pub(super) fn pop_next(&self) -> Option<usize> {
         if self.len.get() == 0 {
             return None;
         }
@@ -182,47 +164,6 @@ impl CellBitmap {
         let last = words[start_word].get() & low_mask;
         debug_assert!(last != 0);
         Some(self.take_bit(start_word, last))
-    }
-
-    pub fn clear(&self) {
-        for word in self.words() {
-            word.set(0);
-        }
-        if let Some(summary) = self.summary() {
-            summary.clear();
-        }
-        self.len.set(0);
-        self.cursor.set(0);
-    }
-
-    pub fn fill(&self) {
-        for word in self.words() {
-            word.set(usize::MAX);
-        }
-        if let Some(last) = self.words().last() {
-            let tail = self.capacity.get() % WORD_BITS;
-            if tail != 0 {
-                last.set((1usize << tail) - 1);
-            }
-        }
-        if let Some(summary) = self.summary() {
-            summary.fill();
-        }
-        self.len.set(self.capacity.get());
-        self.cursor.set(0);
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.capacity.get()
-    }
-
-    pub fn len(&self) -> usize {
-        self.len.get()
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len.get() == 0
     }
 
     #[inline]

@@ -30,8 +30,7 @@ impl<const N: usize> FairCredits<N> {
         Self::with_reserve_per_lane(capacity, lane_count, reserve)
     }
 
-    /// Builds dimensions with the same reserve assigned to every lane.
-    pub fn with_reserve_per_lane(
+    fn with_reserve_per_lane(
         capacity: [usize; N],
         lane_count: usize,
         reserve_per_lane: [usize; N],
@@ -55,31 +54,7 @@ impl<const N: usize> FairCredits<N> {
         }
     }
 
-    pub const fn capacities(&self) -> [usize; N] {
-        self.capacity
-    }
-
-    pub const fn available_all(&self) -> [usize; N] {
-        self.available
-    }
-
-    pub fn used_all(&self) -> [usize; N] {
-        array::from_fn(|dimension| self.capacity[dimension] - self.available[dimension])
-    }
-
-    pub fn lane_count(&self) -> usize {
-        self.held.len()
-    }
-
-    pub fn held_all(&self, lane: usize) -> Option<[usize; N]> {
-        self.held.get(lane).copied()
-    }
-
-    pub fn shared_available_all(&self) -> [usize; N] {
-        array::from_fn(|dimension| self.available[dimension] - self.protected[dimension])
-    }
-
-    pub fn can_acquire_all(&self, lane: usize, amount: [usize; N]) -> bool {
+    fn can_acquire_all(&self, lane: usize, amount: [usize; N]) -> bool {
         let Some(held) = self.held.get(lane) else {
             return false;
         };
@@ -149,20 +124,8 @@ impl<const N: usize> FairCredits<N> {
 }
 
 impl FairCredits {
-    pub fn new(capacity: usize, lane_count: usize) -> Self {
-        Self::from_capacities([capacity], lane_count)
-    }
-
     pub fn with_reserve(capacity: usize, lane_count: usize, reserve_per_lane: usize) -> Self {
         Self::with_reserve_per_lane([capacity], lane_count, [reserve_per_lane])
-    }
-
-    pub const fn capacity(&self) -> usize {
-        self.capacity[0]
-    }
-
-    pub const fn available(&self) -> usize {
-        self.available[0]
     }
 
     pub fn used(&self) -> usize {

@@ -1,6 +1,5 @@
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::mem;
 use std::ops::{Bound, Deref, Range, RangeBounds};
 use std::ptr::NonNull;
 use std::rc::Rc;
@@ -151,28 +150,6 @@ impl Shared {
             self.try_slice_in_place(n..len),
             "buffer::Shared::advance: out of bounds"
         );
-    }
-
-    /// # Panics
-    /// Panics if `at` exceeds the remaining length.
-    #[track_caller]
-    #[must_use]
-    pub fn split_to(&mut self, at: usize) -> Self {
-        assert!(at <= self.len, "buffer::Shared::split_to: out of bounds");
-        if at == 0 {
-            return Self::new();
-        }
-        if at == self.len {
-            return mem::take(self);
-        }
-        let head = Self {
-            ptr: self.ptr,
-            len: at,
-            owner: self.owner.clone(),
-        };
-        self.ptr = unsafe { self.ptr.add(at) };
-        self.len -= at;
-        head
     }
 
     pub fn clear(&mut self) {

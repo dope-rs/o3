@@ -1,9 +1,9 @@
 use std::marker::PhantomPinned;
 use std::pin::Pin;
 
-use crate::collections::{SlabGeneration, SlabKey, SlabKeyParts};
+use crate::collections::{SlabKey, SlabKeyParts};
 
-use super::{Core, CoreOccupiedEntry, CoreVacantEntry, Slot};
+use super::{Core, CoreVacantEntry, Slot};
 
 pub struct FixedPinSlab<T, const N: usize, Tag = (), const MAX: u32 = { u32::MAX }> {
     core: Core<T, Tag, [Slot<T, MAX>; N], MAX>,
@@ -11,18 +11,8 @@ pub struct FixedPinSlab<T, const N: usize, Tag = (), const MAX: u32 = { u32::MAX
 }
 
 #[must_use]
-pub struct FixedPinSlabOccupiedEntry<'a, T, const N: usize, Tag = (), const MAX: u32 = { u32::MAX }>
-{
-    entry: CoreOccupiedEntry<'a, T, Tag, [Slot<T, MAX>; N], MAX>,
-}
-
-#[must_use]
 pub struct FixedPinSlabVacantEntry<'a, T, const N: usize, Tag = (), const MAX: u32 = { u32::MAX }> {
     entry: CoreVacantEntry<'a, T, Tag, [Slot<T, MAX>; N], MAX>,
-}
-
-impl<T, const N: usize, Tag, const MAX: u32> FixedPinSlabOccupiedEntry<'_, T, N, Tag, MAX> {
-    impl_occupied_entry!();
 }
 
 impl<T, const N: usize, Tag, const MAX: u32> FixedPinSlabVacantEntry<'_, T, N, Tag, MAX> {
@@ -68,23 +58,6 @@ impl<T, const N: usize, Tag, const MAX: u32> FixedPinSlab<T, N, Tag, MAX> {
         unsafe { self.get_unchecked_mut() }
             .core
             .get_parts_mut(parts)
-    }
-
-    pub fn entry(
-        self: Pin<&mut Self>,
-        key: SlabKey<Tag, MAX>,
-    ) -> Option<FixedPinSlabOccupiedEntry<'_, T, N, Tag, MAX>> {
-        self.entry_parts(key.parts())
-    }
-
-    pub fn entry_parts(
-        self: Pin<&mut Self>,
-        parts: SlabKeyParts<MAX>,
-    ) -> Option<FixedPinSlabOccupiedEntry<'_, T, N, Tag, MAX>> {
-        let this = unsafe { self.get_unchecked_mut() };
-        Some(FixedPinSlabOccupiedEntry {
-            entry: this.core.entry_parts(parts)?,
-        })
     }
 
     pub fn remove(self: Pin<&mut Self>, key: SlabKey<Tag, MAX>) -> bool {

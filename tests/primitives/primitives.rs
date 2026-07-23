@@ -1,7 +1,7 @@
 use std::pin::pin;
 
 use o3::buffer::{BlockLease, BlockPool, Pool, PoolLayout, PoolLayoutError, Shared, SharedStr};
-use o3::cell::{BrandCell, BrandToken, BrandedCell, BrandedToken, RegionCell};
+use o3::cell::{BrandCell, BrandToken, RegionCell};
 use o3::mem::{ByteBudget, FairCredits, ScratchVec};
 
 #[test]
@@ -37,11 +37,12 @@ fn shared_str_validates_utf8_without_copying() {
 fn byte_budget_returns_capacity() {
     let budget = pin!(ByteBudget::new(4));
     let handle = budget.as_ref().handle();
-    let mut lease = handle.try_acquire(2).unwrap();
-    assert!(lease.try_grow(1));
+    let mut lease = handle.try_acquire(3).unwrap();
     assert!(handle.try_acquire(2).is_none());
     lease.shrink(1);
     assert_eq!(lease.amount(), 2);
+    let remainder = handle.try_acquire(2).unwrap();
+    drop(remainder);
     drop(lease);
     assert_eq!(handle.used(), 0);
 }
@@ -61,36 +62,28 @@ fn fair_credits_protect_each_lane_and_share_the_rest() {
     assert_eq!(credits.held_by(1), Some(3));
     assert_eq!(credits.reserved_for(0), Some(2));
     assert_eq!(credits.reserved_for(1), Some(2));
-    assert_eq!(credits.lane_count(), 2);
 
-    let available = credits.available();
-    assert!(!credits.try_acquire(0, available + 1));
-    assert_eq!(credits.available(), available);
+    let used = credits.used();
+    assert!(!credits.try_acquire(0, 9));
+    assert_eq!(credits.used(), used);
 }
 
 #[test]
 fn fair_credits_acquire_multiple_dimensions_atomically() {
-    let mut credits = FairCredits::<2>::with_reserve_per_lane([8, 80], 2, [2, 20]);
+    let mut credits = FairCredits::from_capacities([8, 80], 2);
 
     assert!(!credits.try_acquire_all(0, [6, 61]));
-    assert_eq!(credits.available_all(), [8, 80]);
-    assert_eq!(credits.held_all(0), Some([0, 0]));
-
     assert!(credits.try_acquire_all(0, [6, 60]));
     assert!(credits.try_acquire_all(1, [2, 20]));
-    assert_eq!(credits.used_all(), [8, 80]);
 
-    let available = credits.available_all();
-    let held = credits.held_all(0);
     let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         credits.release_all(0, [3, 61]);
     }));
     assert!(caught.is_err());
-    assert_eq!(credits.available_all(), available);
-    assert_eq!(credits.held_all(0), held);
-
-    credits.release_all(0, [3, 30]);
-    assert_eq!(credits.shared_available_all(), [3, 30]);
+    credits.release_all(0, [6, 60]);
+    credits.release_all(1, [2, 20]);
+    assert!(credits.try_acquire_all(0, [6, 60]));
+    assert!(credits.try_acquire_all(1, [2, 20]));
 }
 
 #[test]
@@ -158,14 +151,6 @@ fn brand_cells_mutate_in_place() {
         let value = BrandCell::new(1);
         *value.borrow_mut(&mut brand) = 2;
         assert_eq!(*value.borrow(&brand), 2);
-    });
-
-    enum Domain {}
-
-    BrandedToken::<Domain>::scope(|mut token| {
-        let value = BrandedCell::<_, Domain>::new(1);
-        *value.borrow_mut(&mut token) = 2;
-        assert_eq!(*value.borrow(&token), 2);
     });
 }
 

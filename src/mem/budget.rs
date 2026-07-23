@@ -85,15 +85,6 @@ impl ByteLease<'_> {
         self.amount
     }
 
-    pub fn try_grow(&mut self, additional: usize) -> bool {
-        let Some(lease) = self.budget.try_acquire(additional) else {
-            return false;
-        };
-        self.amount += lease.amount;
-        std::mem::forget(lease);
-        true
-    }
-
     pub fn shrink(&mut self, amount: usize) {
         assert!(amount <= self.amount, "byte lease underflow");
         self.amount -= amount;

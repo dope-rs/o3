@@ -49,22 +49,6 @@ fn constructor_unwind_invalidates_exposed_keys() {
     assert_ne!(stale, fresh);
     assert_eq!(slab.get(stale), None);
     assert_eq!(slab.get(fresh), Some(&7));
-
-    let slab: CellSlab<u32> = CellSlab::with_capacity(1);
-    let exposed = Cell::new(None);
-    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = slab.insert_with(1, |key, _| {
-            exposed.set(Some(key));
-            panic!("initializer");
-        });
-    }));
-    assert!(caught.is_err());
-    let stale = exposed.get().unwrap();
-    let fresh = slab.insert(2).unwrap();
-    assert_ne!(stale, fresh);
-    assert!(!slab.contains_key(stale));
-    assert_eq!(slab.remove(stale), None);
-    assert_eq!(slab.remove(fresh), Some(2));
 }
 
 #[test]

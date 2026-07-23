@@ -11,7 +11,7 @@ use crate::marker::ThreadBound;
 
 mod guards;
 
-use guards::{Busy, Initializing};
+use guards::Busy;
 
 pub(super) const NONE: u32 = u32::MAX;
 const USED: u32 = NONE - 1;
@@ -302,18 +302,6 @@ impl<T, G: GenerationState, M: Mode> SlabCore<T, G, M> {
         let slot = self.reserved_slot(ticket);
         unsafe { slot.write_value(value) };
         self.commit_initialized(ticket);
-    }
-
-    pub(super) fn commit_with<R>(
-        &self,
-        ticket: Ticket<G>,
-        value: T,
-        f: impl FnOnce(&mut T) -> R,
-    ) -> R {
-        let mut initializing = Initializing::new(self, ticket, value);
-        let result = f(initializing.value_mut());
-        initializing.commit();
-        result
     }
 
     fn commit_initialized(&self, ticket: Ticket<G>) {

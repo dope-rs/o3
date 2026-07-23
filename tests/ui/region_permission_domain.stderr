@@ -6,8 +6,8 @@ error[E0308]: mismatched types
   |               |
   |               arguments to this method are incorrect
   |
-  = note: expected mutable reference `&mut BrandedToken<'_, o3::cell::brand::RegionPermission>`
-             found mutable reference `&mut BrandedToken<'_, o3::cell::brand::BrandPermission>`
+  = note: expected mutable reference `&mut o3::cell::brand::BrandedToken<'_, o3::cell::brand::RegionPermission>`
+             found mutable reference `&mut o3::cell::brand::BrandedToken<'_, o3::cell::brand::BrandPermission>`
 note: method defined here
  --> src/cell/brand.rs
   |

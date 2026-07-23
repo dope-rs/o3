@@ -18,11 +18,6 @@ impl<'a, T, G: GenerationState, M: Mode> Pending<'a, T, G, M> {
         self.core
             .commit(unsafe { self.ticket.take().unwrap_unchecked() }, value);
     }
-
-    pub(super) fn commit_with<R>(mut self, value: T, f: impl FnOnce(&mut T) -> R) -> R {
-        self.core
-            .commit_with(unsafe { self.ticket.take().unwrap_unchecked() }, value, f)
-    }
 }
 
 impl<T, G: GenerationState, M: Mode> Drop for Pending<'_, T, G, M> {

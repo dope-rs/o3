@@ -252,13 +252,11 @@ fn cartel_reply_rows_and_bytes_are_reserved_atomically() {
 
     assert!(credits.try_push(0, 6, 60));
     assert!(!credits.try_push(1, 2, 21));
-    assert_eq!(credits.resources.available_all(), [2, 20]);
-    assert_eq!(credits.resources.held_all(1), Some([0, 0]));
-
     assert!(credits.try_push(1, 2, 20));
     credits.pop(0, 6, 60);
     credits.pop(1, 2, 20);
-    assert_eq!(credits.resources.available_all(), [8, 80]);
+    assert!(credits.try_push(0, 6, 60));
+    assert!(credits.try_push(1, 2, 20));
 }
 
 #[test]
