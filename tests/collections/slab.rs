@@ -52,6 +52,24 @@ fn entry_and_explicit_index_paths_preserve_the_free_list() {
 }
 
 #[test]
+fn indexed_entry_reserves_before_construction_and_rolls_back_on_drop() {
+    let mut slab = Slab::<u32>::with_capacity(4);
+    let occupied = slab.insert_at_with(1, |_| 7).unwrap();
+    assert!(slab.vacant_entry_at(occupied.index()).is_none());
+    assert!(slab.vacant_entry_at(4).is_none());
+
+    let reservation = slab.vacant_entry_at(3).unwrap();
+    let cancelled = reservation.key();
+    assert_eq!(cancelled.index(), 3);
+    drop(reservation);
+
+    let replacement = slab.vacant_entry_at(3).unwrap().insert(9);
+    assert_ne!(replacement, cancelled);
+    assert_eq!(slab.get(replacement), Some(&9));
+    assert_eq!(slab.insert(11).unwrap().index(), 0);
+}
+
+#[test]
 fn sparse_iteration_clear_and_index_removal_follow_live_entries() {
     let mut slab: Slab<u32> = Slab::with_capacity(128);
     assert_eq!(slab.key(127), None);

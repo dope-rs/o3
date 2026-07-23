@@ -107,17 +107,23 @@ impl<T, Tag, const MAX: u32> Slab<T, Tag, MAX> {
         })
     }
 
+    pub fn vacant_entry_at(&mut self, index: u32) -> Option<SlabVacantEntry<'_, T, Tag, MAX>> {
+        let ticket = self.core.take_index(index)?;
+        Some(SlabVacantEntry {
+            slab: self,
+            ticket: Some(ticket),
+        })
+    }
+
     pub fn insert_at_with(
         &mut self,
         index: u32,
         make: impl FnOnce(SlabKey<Tag, MAX>) -> T,
     ) -> Option<SlabKey<Tag, MAX>> {
-        let ticket = self.core.take_index(index)?;
-        let pending = Pending::new(&self.core, ticket);
-        let key = SlabKey::new(ticket.index.get(), ticket.generation);
+        let entry = self.vacant_entry_at(index)?;
+        let key = entry.key();
         let value = make(key);
-        pending.commit(value);
-        Some(key)
+        Some(entry.insert(value))
     }
 
     pub fn get(&self, key: SlabKey<Tag, MAX>) -> Option<&T> {
