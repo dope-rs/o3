@@ -21,7 +21,7 @@ use crate::marker::ThreadBound;
 pub use block_pool::{BlockLease, BlockPool};
 pub use byte_ring::ByteRing;
 pub use bytes::{Borrowed, ByteSpan, Bytes, Leased, RetainBytes, Retained};
-pub use capacity::CapacityError;
+pub use capacity::{CapacityError, ExactBuildError};
 pub use owned::{Block, Owned};
 pub use pool::{Lease, Pool, PoolLayout, PoolLayoutError};
 pub use rolling::RollingBuffer;

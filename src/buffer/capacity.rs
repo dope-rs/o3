@@ -44,3 +44,44 @@ impl fmt::Display for CapacityError {
 }
 
 impl Error for CapacityError {}
+
+/// Failure to construct an exact-length [`Owned`] buffer.
+///
+/// [`Owned`]: crate::buffer::Owned
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExactBuildError<E> {
+    /// The requested length exceeds the buffer representation.
+    Capacity(CapacityError),
+    /// The encoder returned an error.
+    Build(E),
+    /// The encoder completed without initializing the requested number of bytes.
+    LengthMismatch { expected: usize, actual: usize },
+}
+
+impl<E: fmt::Display> fmt::Display for ExactBuildError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Capacity(error) => error.fmt(f),
+            Self::Build(error) => error.fmt(f),
+            Self::LengthMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "exact buffer length mismatch: expected {expected}, wrote {actual}"
+                )
+            }
+        }
+    }
+}
+
+impl<E> Error for ExactBuildError<E>
+where
+    E: Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Capacity(error) => Some(error),
+            Self::Build(error) => Some(error),
+            Self::LengthMismatch { .. } => None,
+        }
+    }
+}

@@ -4,7 +4,7 @@ use std::ops::{Deref, DerefMut};
 
 use super::raw::{RawMut, RawSpan};
 use super::shared::Shared;
-use super::{CapacityError, SpareWriter};
+use super::{CapacityError, ExactBuildError, SpareWriter};
 
 pub(super) const BLOCK_CAPACITY: u32 = 64 * 1024;
 
@@ -19,6 +19,25 @@ impl Owned {
         let capacity =
             u32::try_from(capacity).map_err(|_| CapacityError::new(capacity, u32::MAX as usize))?;
         Ok(Self::with_capacity_u32(capacity))
+    }
+
+    /// Initializes exactly `capacity` bytes in one allocation.
+    /// On success, [`freeze`](Self::freeze) transfers it to [`Shared`] without copying.
+    pub fn try_build_exact<E>(
+        capacity: usize,
+        build: impl FnOnce(&mut SpareWriter<'_>) -> Result<(), E>,
+    ) -> Result<Self, ExactBuildError<E>> {
+        let mut value = Self::try_with_capacity(capacity).map_err(ExactBuildError::Capacity)?;
+        let mut writer = value.spare_writer();
+        build(&mut writer).map_err(ExactBuildError::Build)?;
+        let actual = writer.finish();
+        if actual != capacity {
+            return Err(ExactBuildError::LengthMismatch {
+                expected: capacity,
+                actual,
+            });
+        }
+        Ok(value)
     }
 
     /// Creates a non-growing allocation with exactly `capacity` bytes.
