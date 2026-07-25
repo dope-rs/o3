@@ -11,6 +11,8 @@ use std::ptr;
 use std::ptr::NonNull;
 use std::slice;
 
+pub mod shared;
+
 type ByteCell = Cell<MaybeUninit<u8>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

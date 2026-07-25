@@ -2,10 +2,9 @@ use std::array;
 
 use crate::marker::ThreadBound;
 
-/// Fair accounting for one or more resources shared by fixed lanes.
+/// Fair accounting for fixed lanes sharing one or more resources.
 ///
-/// Acquisitions preserve every lane's unclaimed reserve. Multi-resource
-/// operations update every dimension or leave the accounting unchanged.
+/// Acquisitions preserve unclaimed reserves and update all dimensions atomically.
 pub struct FairCredits<const N: usize = 1> {
     capacity: [usize; N],
     available: [usize; N],
@@ -144,17 +143,14 @@ impl FairCredits {
         self.available[0] - self.protected[0]
     }
 
-    #[inline]
     pub fn can_acquire(&self, lane: usize, amount: usize) -> bool {
         self.can_acquire_all(lane, [amount])
     }
 
-    #[inline]
     pub fn try_acquire(&mut self, lane: usize, amount: usize) -> bool {
         self.try_acquire_all(lane, [amount])
     }
 
-    #[inline]
     pub fn release(&mut self, lane: usize, amount: usize) {
         self.release_all(lane, [amount]);
     }

@@ -1,9 +1,9 @@
 use std::mem::MaybeUninit;
 use std::ptr::copy_nonoverlapping;
-
-use crate::marker::ThreadBound;
+use std::slice::from_raw_parts;
 
 use super::CapacityError;
+use crate::marker::ThreadBound;
 
 macro_rules! wrap {
     ($index:expr, $capacity:expr) => {{
@@ -56,8 +56,8 @@ impl ByteRing {
         let second_len = self.len - first_len;
         unsafe {
             (
-                std::slice::from_raw_parts(self.buf.as_ptr().add(self.head).cast(), first_len),
-                std::slice::from_raw_parts(self.buf.as_ptr().cast(), second_len),
+                from_raw_parts(self.buf.as_ptr().add(self.head).cast(), first_len),
+                from_raw_parts(self.buf.as_ptr().cast(), second_len),
             )
         }
     }
@@ -72,8 +72,8 @@ impl ByteRing {
         let second_len = len - first_len;
         unsafe {
             Some((
-                std::slice::from_raw_parts(self.buf.as_ptr().add(start).cast(), first_len),
-                std::slice::from_raw_parts(self.buf.as_ptr().cast(), second_len),
+                from_raw_parts(self.buf.as_ptr().add(start).cast(), first_len),
+                from_raw_parts(self.buf.as_ptr().cast(), second_len),
             ))
         }
     }

@@ -18,12 +18,16 @@ impl SharedStr {
     }
 
     pub fn from_utf8(value: Shared) -> Result<Self, Utf8Error> {
-        std::str::from_utf8(value.as_slice())?;
+        use std::str;
+        str::from_utf8(value.as_slice())?;
         Ok(Self(value))
     }
 
     pub fn as_str(&self) -> &str {
-        unsafe { std::str::from_utf8_unchecked(self.0.as_slice()) }
+        unsafe {
+            use std::str::from_utf8_unchecked;
+            from_utf8_unchecked(self.0.as_slice())
+        }
     }
 
     pub fn as_bytes(&self) -> &[u8] {

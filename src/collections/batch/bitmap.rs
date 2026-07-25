@@ -44,9 +44,10 @@ impl Words {
     }
 
     fn as_slice(&self) -> &[Cell<usize>] {
+        use std::slice::from_ref;
         match self {
             Self::Empty => &[],
-            Self::Inline(word) => std::slice::from_ref(word),
+            Self::Inline(word) => from_ref(word),
             Self::Heap(words) => words,
         }
     }
@@ -92,7 +93,6 @@ impl CellBitmap {
         self.capacity.set(capacity);
     }
 
-    #[inline]
     pub(super) fn insert(&self, index: usize) -> bool {
         if index >= self.capacity.get() {
             return false;
@@ -114,7 +114,6 @@ impl CellBitmap {
         true
     }
 
-    #[inline]
     pub(super) fn remove(&self, index: usize) -> bool {
         if index >= self.capacity.get() {
             return false;
@@ -137,7 +136,6 @@ impl CellBitmap {
         true
     }
 
-    #[inline]
     pub(super) fn pop_next(&self) -> Option<usize> {
         if self.len.get() == 0 {
             return None;
@@ -166,7 +164,6 @@ impl CellBitmap {
         Some(self.take_bit(start_word, last))
     }
 
-    #[inline]
     pub(super) fn find_at_or_after(&self, start: usize) -> Option<usize> {
         if self.len.get() == 0 || start >= self.capacity.get() {
             return None;

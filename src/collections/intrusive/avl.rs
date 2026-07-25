@@ -51,10 +51,7 @@ impl AvlTree {
     }
 
     /// # Safety
-    ///
-    /// `node` must not already belong to an intrusive tree and must remain pinned and alive
-    /// until it is removed from this tree. The comparator must define a stable ordering for the
-    /// entire time the node is linked.
+    /// `node` must be unlinked and pinned until removal; `before` must stay stable.
     pub unsafe fn insert(
         &self,
         node: Pin<&AvlNode>,
@@ -96,9 +93,7 @@ impl AvlTree {
     }
 
     /// # Safety
-    ///
-    /// `node` must point to a live node currently linked in this tree. It must not be removed
-    /// again unless it has first been reinserted.
+    /// `node` must be live and linked here, and cannot be removed twice.
     pub unsafe fn remove(&self, node: NonNull<AvlNode>) {
         let node_ref = unsafe { node.as_ref() };
         debug_assert_ne!(node_ref.height.get(), 0);

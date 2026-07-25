@@ -5,8 +5,8 @@ use std::mem::ManuallyDrop;
 use super::GenerationState;
 use std::hint::unreachable_unchecked;
 
+use crate::collections::BoxSliceGrowth;
 use crate::collections::ClearGuard;
-use crate::collections::grow::BoxSliceGrowth;
 use crate::marker::ThreadBound;
 
 mod guards;
@@ -386,7 +386,7 @@ impl<T, G: GenerationState, M: Mode> SlabCore<T, G, M> {
         Some((value, result, index))
     }
 
-    pub(super) fn get_index(&self, index: u32) -> Option<(&T, G)> {
+    pub(super) fn index(&self, index: u32) -> Option<(&T, G)> {
         let slot = self.slots.get(index as usize)?;
         if slot.state.get() == State::Occupied {
             Some((unsafe { slot.value() }, slot.generation.get()))
@@ -395,7 +395,7 @@ impl<T, G: GenerationState, M: Mode> SlabCore<T, G, M> {
         }
     }
 
-    pub(super) fn get_index_mut(&mut self, index: u32) -> Option<(&mut T, G)> {
+    pub(super) fn index_mut(&mut self, index: u32) -> Option<(&mut T, G)> {
         let slot = self.slots.get_mut(index as usize)?;
         if slot.state.get() == State::Occupied {
             let generation = slot.generation.get();

@@ -5,8 +5,11 @@ use std::ptr::NonNull;
 use std::rc::Rc;
 use std::slice::from_raw_parts;
 
+pub mod snapshot;
+pub mod strings;
+
 use super::RangeExt;
-use super::owned::{Block, Owned};
+use super::block::{Block, Owned};
 use super::raw::{Owner, RawSpan};
 
 const VEC_ZERO_COPY_MIN: usize = 512;
@@ -126,7 +129,6 @@ impl Shared {
         }
     }
 
-    #[inline]
     pub(super) fn try_slice_in_place(&mut self, range: Range<usize>) -> bool {
         if !range.is_within(self.len) {
             return false;
@@ -142,7 +144,6 @@ impl Shared {
 
     /// # Panics
     /// Panics if `n` exceeds the remaining length.
-    #[inline]
     #[track_caller]
     pub fn advance(&mut self, n: usize) {
         let len = self.len;

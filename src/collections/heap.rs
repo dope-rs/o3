@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::ptr;
 
-use crate::collections::grow::BoxSliceGrowth;
+use crate::collections::BoxSliceGrowth;
 use crate::collections::{ClearGuard, IndexKey};
 use crate::marker::ThreadBound;
 

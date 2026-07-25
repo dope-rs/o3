@@ -1,22 +1,26 @@
-mod batch_set;
-mod bitmap;
-mod grow;
+mod arena;
+mod batch;
 mod heap;
 pub mod intrusive;
-mod linked_pool;
-mod pin_slab;
 mod queue;
-mod round_robin;
 mod slab;
 mod table;
 
-pub use batch_set::{BatchDrain, BatchSet};
+use std::mem;
+use std::ops::{Deref, DerefMut};
+
+pub use arena::LinkedArena;
+pub use batch::{BatchDrain, BatchSet};
 pub use heap::{FixedHeap, IndexedMinHeap, IndexedMinHeapVacantEntry};
-pub use linked_pool::LinkedArena;
-pub use pin_slab::{FixedPinSlab, FixedPinSlabVacantEntry, PinSlab, PinSlabVacantEntry};
-pub use queue::{CellQueue, FixedQueue, FixedQueueVacantEntry, SlotQueue, SlotQueueVacantEntry};
-pub use round_robin::RoundRobinSet;
-pub use slab::{CellSlab, Slab, SlabGeneration, SlabKey, SlabKeyParts, SlabVacantEntry};
+pub use queue::cell::CellQueue;
+pub use queue::fixed::{FixedQueue, FixedQueueVacantEntry};
+pub use queue::round::RoundRobinSet;
+pub use queue::slot::{SlotQueue, SlotQueueVacantEntry};
+pub use slab::cell::CellSlab;
+pub use slab::key::{SlabGeneration, SlabKey, SlabKeyParts};
+pub use slab::pin::fixed::{FixedPinSlab, FixedPinSlabVacantEntry};
+pub use slab::pin::{PinSlab, PinSlabVacantEntry};
+pub use slab::{Slab, SlabVacantEntry};
 pub use table::FixedHashTable;
 
 pub(crate) mod index {
@@ -35,6 +39,38 @@ impl IndexKey for usize {
 }
 
 impl index::Sealed for usize {}
+
+pub(super) struct BoxSliceGrowth<'a, T> {
+    target: &'a mut Box<[T]>,
+    values: Vec<T>,
+}
+
+impl<'a, T> BoxSliceGrowth<'a, T> {
+    pub(super) fn take(target: &'a mut Box<[T]>) -> Self {
+        let values = mem::take(target).into_vec();
+        Self { target, values }
+    }
+}
+
+impl<T> Deref for BoxSliceGrowth<'_, T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.values
+    }
+}
+
+impl<T> DerefMut for BoxSliceGrowth<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.values
+    }
+}
+
+impl<T> Drop for BoxSliceGrowth<'_, T> {
+    fn drop(&mut self) {
+        *self.target = mem::take(&mut self.values).into_boxed_slice();
+    }
+}
 
 pub(crate) struct ClearGuard<'a, T: ?Sized> {
     value: &'a mut T,

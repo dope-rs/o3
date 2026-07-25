@@ -3,8 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::num::{NonZeroU32, NonZeroU64};
 
-use crate::collections::IndexKey;
-use crate::collections::index;
+use crate::collections::{IndexKey, index};
 use crate::marker::ThreadBound;
 
 use super::GenerationState;

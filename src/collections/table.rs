@@ -89,8 +89,9 @@ impl<V> FixedHashTable<V> {
     ) -> Result<Option<V>, V> {
         match self.probe(hash, matches) {
             Probe::Occupied(index) => {
+                use std::mem::replace;
                 let current = unsafe { self.values.get_unchecked_mut(index).assume_init_mut() };
-                Ok(Some(std::mem::replace(current, value)))
+                Ok(Some(replace(current, value)))
             }
             Probe::Vacant(index) => {
                 self.insert_at(index, hash, value);

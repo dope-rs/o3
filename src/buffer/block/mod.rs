@@ -2,6 +2,8 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut};
 
+pub mod pool;
+
 use super::raw::{RawMut, RawSpan};
 use super::shared::Shared;
 use super::{CapacityError, ExactBuildError, SpareWriter};
@@ -41,11 +43,8 @@ impl Owned {
     }
 
     /// Creates a non-growing allocation with exactly `capacity` bytes.
-    ///
     /// # Panics
-    /// Panics when `capacity` exceeds the buffer representation limit of
-    /// [`u32::MAX`]. Use [`try_with_capacity`](Self::try_with_capacity) when the
-    /// size is not already constrained by the caller's protocol.
+    /// Panics when `capacity` exceeds [`u32::MAX`].
     #[must_use]
     #[track_caller]
     pub fn with_capacity(capacity: usize) -> Self {
@@ -103,11 +102,8 @@ impl Owned {
     }
 
     /// Appends `src` without growing the allocation.
-    ///
     /// # Panics
-    /// Panics when the configured capacity is insufficient. Use
-    /// [`try_extend_from_slice`](Self::try_extend_from_slice) when exhaustion is
-    /// an expected outcome.
+    /// Panics when the configured capacity is insufficient.
     #[track_caller]
     pub fn extend_from_slice(&mut self, src: &[u8]) {
         if let Err(error) = self.try_extend_from_slice(src) {
@@ -127,10 +123,8 @@ impl Owned {
     }
 
     /// Appends one byte without growing the allocation.
-    ///
     /// # Panics
-    /// Panics when the configured capacity is full. Use
-    /// [`try_push`](Self::try_push) when exhaustion is an expected outcome.
+    /// Panics when the configured capacity is full.
     #[track_caller]
     pub fn push(&mut self, byte: u8) {
         if let Err(error) = self.try_push(byte) {
@@ -152,7 +146,6 @@ impl Owned {
         self.raw.spare_writer(&mut self.len)
     }
 
-    #[inline]
     #[must_use]
     pub fn freeze(self) -> Shared {
         let Self { raw, len } = self;
@@ -280,11 +273,8 @@ impl Block {
     }
 
     /// Appends `src` without growing the block.
-    ///
     /// # Panics
-    /// Panics when the block is full. Use
-    /// [`try_extend_from_slice`](Self::try_extend_from_slice) when exhaustion is
-    /// an expected outcome.
+    /// Panics when the block is full.
     #[track_caller]
     pub fn extend_from_slice(&mut self, src: &[u8]) {
         if let Err(error) = self.try_extend_from_slice(src) {
@@ -303,10 +293,8 @@ impl Block {
     }
 
     /// Appends one byte without growing the block.
-    ///
     /// # Panics
-    /// Panics when the block is full. Use [`try_push`](Self::try_push) when
-    /// exhaustion is an expected outcome.
+    /// Panics when the block is full.
     #[track_caller]
     pub fn push(&mut self, byte: u8) {
         if let Err(error) = self.try_push(byte) {
@@ -328,7 +316,6 @@ impl Block {
         self.raw.spare_writer(&mut self.len)
     }
 
-    #[inline]
     #[must_use]
     pub fn freeze(self) -> Shared {
         let Self { raw, len } = self;

@@ -2,7 +2,9 @@ use std::cell::{Cell, UnsafeCell};
 
 use crate::marker::ThreadBound;
 
-use super::bitmap::CellBitmap;
+mod bitmap;
+
+use bitmap::CellBitmap;
 
 const WORD_BITS: usize = usize::BITS as usize;
 const ENTRIES_PER_WORD: usize = WORD_BITS / 2;
@@ -31,9 +33,7 @@ impl Side {
 
 /// A single-threaded set of indices drained in isolated batches.
 ///
-/// Duplicate inserts coalesce across both the draining and pending batches.
-/// Once an index is removed from a drain, inserting it again defers it to the
-/// next batch.
+/// Duplicates coalesce; reinserting a drained index defers it to the next batch.
 pub struct BatchSet {
     words: UnsafeCell<Words>,
     summaries: [CellBitmap; 2],
@@ -76,9 +76,10 @@ impl Words {
     }
 
     fn as_slice(&self) -> &[Cell<usize>] {
+        use std::slice::from_ref;
         match self {
             Self::Empty => &[],
-            Self::Inline(word) => std::slice::from_ref(word),
+            Self::Inline(word) => from_ref(word),
             Self::Heap(words) => words,
         }
     }
@@ -118,9 +119,7 @@ impl BatchSet {
 
     /// Inserts an index into the pending batch.
     ///
-    /// Returns `false` when the index is outside the set's capacity or already
-    /// present in either the batch being drained or the pending batch. This
-    /// method never grows the set.
+    /// Returns `false` outside capacity or when either batch already contains it.
     pub fn insert(&self, index: usize) -> bool {
         if index >= self.capacity.get() {
             return false;
@@ -182,8 +181,7 @@ impl BatchSet {
 
     /// Starts draining a stable batch.
     ///
-    /// Returns `None` while another batch drain is live. Inserts made through
-    /// the set during a drain are deferred to the next batch.
+    /// Returns `None` during another drain; concurrent inserts enter the next batch.
     pub fn drain_batch(&self) -> Option<BatchDrain<'_>> {
         if self.draining.replace(true) {
             return None;
@@ -303,8 +301,6 @@ impl BatchSet {
     fn word(&self, index: usize) -> &Cell<usize> {
         let words = unsafe { &*self.words.get() }.as_slice();
         debug_assert!(index < words.len());
-        // Every caller derives `index` either from an element below `capacity`
-        // or from a summary whose capacity is kept equal to `words.len()`.
         unsafe { words.get_unchecked(index) }
     }
 }

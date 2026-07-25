@@ -1,3 +1,8 @@
-mod thread_bound;
+use std::marker::PhantomData;
 
-pub use thread_bound::ThreadBound;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ThreadBound(PhantomData<*mut ()>);
+
+impl ThreadBound {
+    pub const NEW: Self = Self(PhantomData);
+}

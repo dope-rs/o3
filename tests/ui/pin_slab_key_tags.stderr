@@ -9,7 +9,7 @@ error[E0308]: mismatched types
   = note: expected struct `SlabKey<Write, u32::MAX>`
              found struct `SlabKey<Read, u32::MAX>`
 note: method defined here
- --> src/collections/pin_slab.rs
+ --> src/collections/slab/pin/mod.rs
   |
   |     pub fn remove(&mut self, key: SlabKey<Tag, MAX>) -> bool {
   |            ^^^^^^
