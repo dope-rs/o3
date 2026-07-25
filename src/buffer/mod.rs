@@ -1,36 +1,117 @@
-mod block_pool;
-mod byte_ring;
+mod block;
 mod bytes;
-mod capacity;
-mod owned;
 mod pool;
 mod raw;
-mod ref_count;
+mod refs;
+mod ring;
 mod rolling;
 mod shared;
-mod shared_pool;
-mod shared_str;
-mod snapshot_buf;
 
+use std::error::Error;
+use std::fmt;
 use std::mem::MaybeUninit;
 use std::ops::Range;
 use std::ptr::{self, NonNull, copy_nonoverlapping};
 
 use crate::marker::ThreadBound;
 
-pub use block_pool::{BlockLease, BlockPool};
-pub use byte_ring::ByteRing;
+pub use block::pool::{BlockLease, BlockPool};
+pub use block::{Block, Owned};
 pub use bytes::{Borrowed, ByteSpan, Bytes, Leased, RetainBytes, Retained};
-pub use capacity::{CapacityError, ExactBuildError};
-pub use owned::{Block, Owned};
-pub use pool::{Lease, Pool, PoolLayout, PoolLayoutError};
-pub use rolling::RollingBuffer;
-pub use shared::Shared;
-pub use shared_pool::{
+pub use pool::shared::{
     InitializedSharedLease, InitializedSharedPool, Pooled, SharedLease, SharedPool,
 };
-pub use shared_str::SharedStr;
-pub use snapshot_buf::SnapshotBuf;
+pub use pool::{Lease, Pool, PoolLayout, PoolLayoutError};
+pub use ring::ByteRing;
+pub use rolling::RollingBuffer;
+pub use shared::Shared;
+pub use shared::snapshot::SnapshotBuf;
+pub use shared::strings::SharedStr;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct CapacityError {
+    attempted: usize,
+    capacity: usize,
+}
+
+impl CapacityError {
+    pub(crate) const fn new(attempted: usize, capacity: usize) -> Self {
+        Self {
+            attempted,
+            capacity,
+        }
+    }
+
+    pub const fn attempted(self) -> usize {
+        self.attempted
+    }
+
+    pub const fn capacity(self) -> usize {
+        self.capacity
+    }
+}
+
+impl fmt::Debug for CapacityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CapacityError")
+            .field("attempted", &self.attempted)
+            .field("capacity", &self.capacity)
+            .finish()
+    }
+}
+
+impl fmt::Display for CapacityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "capacity exceeded: attempted {}, capacity {}",
+            self.attempted, self.capacity
+        )
+    }
+}
+
+impl Error for CapacityError {}
+
+/// Failure to construct an exact-length [`Owned`] buffer.
+///
+/// [`Owned`]: crate::buffer::Owned
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExactBuildError<E> {
+    /// The requested length exceeds the buffer representation.
+    Capacity(CapacityError),
+    /// The encoder returned an error.
+    Build(E),
+    /// The encoder completed without initializing the requested number of bytes.
+    LengthMismatch { expected: usize, actual: usize },
+}
+
+impl<E: fmt::Display> fmt::Display for ExactBuildError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Capacity(error) => error.fmt(f),
+            Self::Build(error) => error.fmt(f),
+            Self::LengthMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "exact buffer length mismatch: expected {expected}, wrote {actual}"
+                )
+            }
+        }
+    }
+}
+
+impl<E> Error for ExactBuildError<E>
+where
+    E: Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Capacity(error) => Some(error),
+            Self::Build(error) => Some(error),
+            Self::LengthMismatch { .. } => None,
+        }
+    }
+}
 
 pub struct SpareWriter<'a> {
     ptr: NonNull<MaybeUninit<u8>>,
@@ -78,7 +159,8 @@ impl<'a> SpareWriter<'a> {
 
     pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         unsafe {
-            std::slice::from_raw_parts_mut(self.ptr.as_ptr().add(self.written), self.remaining())
+            use std::slice::from_raw_parts_mut;
+            from_raw_parts_mut(self.ptr.as_ptr().add(self.written), self.remaining())
         }
     }
 

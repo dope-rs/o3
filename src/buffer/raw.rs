@@ -10,7 +10,7 @@ use std::slice::{from_raw_parts, from_raw_parts_mut};
 use crate::marker::ThreadBound;
 
 use super::SpareWriter;
-use super::ref_count::LocalRefCount;
+use super::refs::LocalRefCount;
 
 #[repr(C)]
 struct Header {
@@ -36,9 +36,7 @@ fn is_range_in_bounds(src: &Range<usize>, dest: usize, capacity: usize) -> bool 
 
 impl Header {
     fn layout(capacity: u32) -> Layout {
-        // SAFETY: `ALIGN` comes from `align_of`, and `MAX_LAYOUT_SIZE` proves
-        // at compile time that every u32 capacity remains within isize::MAX
-        // after rounding the allocation size up to that alignment.
+        // SAFETY: ALIGN and MAX_LAYOUT_SIZE prove every u32 capacity has a valid rounded layout.
         unsafe { Layout::from_size_align_unchecked(DATA_OFFSET + capacity as usize, ALIGN) }
     }
 
@@ -57,7 +55,6 @@ impl Header {
         ptr
     }
 
-    #[inline]
     unsafe fn retain(ptr: NonNull<Header>) {
         unsafe { ptr.as_ref() }.refs.retain();
     }
@@ -134,7 +131,6 @@ impl RawMut {
         unsafe { self.ptr.as_ref() }.refs.is_unique()
     }
 
-    #[inline]
     pub(super) fn share(&self) -> Raw {
         unsafe { Header::retain(self.ptr) };
         Raw {

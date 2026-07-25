@@ -1,5 +1,6 @@
-use super::raw::{RawMut, RawSpan};
-use super::{CapacityError, Shared};
+use super::super::CapacityError;
+use super::super::raw::{RawMut, RawSpan};
+use super::Shared;
 
 pub struct SnapshotBuf<const MAX_CAPACITY: usize> {
     buf: RawMut,
@@ -100,7 +101,7 @@ impl<const MAX_CAPACITY: usize> SnapshotBuf<MAX_CAPACITY> {
         if h <= t {
             return None;
         }
-        // SAFETY: `SnapshotBuf` maintains `tail <= head <= buf.capacity()`.
+        // SAFETY: SnapshotBuf maintains tail <= head <= buf.capacity().
         let span = unsafe { RawSpan::new_unchecked(self.buf.share(), t, h - t) };
         Some(Shared::from_raw_span(span))
     }

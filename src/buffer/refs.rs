@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::process::abort;
 
 #[repr(transparent)]
 pub(super) struct LocalRefCount(Cell<u32>);
@@ -30,7 +31,6 @@ impl LocalRefCount {
         self.0.set(0);
     }
 
-    #[inline]
     pub(super) fn retain(&self) {
         let refs = self.0.get();
         debug_assert_ne!(refs, 0);
@@ -58,5 +58,5 @@ const _: () = assert!(size_of::<LocalRefCount>() == size_of::<u32>());
 
 #[cold]
 fn overflow() -> ! {
-    std::process::abort()
+    abort()
 }

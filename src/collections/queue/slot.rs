@@ -1,7 +1,7 @@
 use std::mem::MaybeUninit;
 
+use crate::collections::BoxSliceGrowth;
 use crate::collections::ClearGuard;
-use crate::collections::grow::BoxSliceGrowth;
 use crate::marker::ThreadBound;
 
 const NONE: u32 = u32::MAX;

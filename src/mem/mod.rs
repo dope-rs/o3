@@ -1,7 +1,7 @@
 mod budget;
 mod credits;
-mod scratch_vec;
+mod scratch;
 
 pub use budget::{ByteBudget, ByteBudgetHandle, ByteLease};
 pub use credits::FairCredits;
-pub use scratch_vec::ScratchVec;
+pub use scratch::ScratchVec;

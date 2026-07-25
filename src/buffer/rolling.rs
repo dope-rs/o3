@@ -65,13 +65,19 @@ impl<const CAP: usize> RollingBuffer<CAP> {
     pub fn as_slice(&self) -> &[u8] {
         let h = self.head as usize;
         let t = self.tail as usize;
-        unsafe { std::slice::from_raw_parts(self.buf.as_ptr().add(h).cast(), t - h) }
+        unsafe {
+            use std::slice::from_raw_parts;
+            from_raw_parts(self.buf.as_ptr().add(h).cast(), t - h)
+        }
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         let h = self.head as usize;
         let t = self.tail as usize;
-        unsafe { std::slice::from_raw_parts_mut(self.buf.as_mut_ptr().add(h).cast(), t - h) }
+        unsafe {
+            use std::slice::from_raw_parts_mut;
+            from_raw_parts_mut(self.buf.as_mut_ptr().add(h).cast(), t - h)
+        }
     }
 
     pub fn spare_writer(&mut self) -> SpareWriter<'_> {

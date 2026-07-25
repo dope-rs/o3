@@ -1,55 +1,13 @@
 use std::marker::PhantomData;
 
-macro_rules! impl_slab_common {
-    () => {
-        #[must_use]
-        pub fn with_capacity(capacity: usize) -> Self {
-            Self {
-                core: SlabCore::with_capacity(capacity),
-                tag: PhantomData,
-            }
-        }
-
-        pub fn capacity(&self) -> usize {
-            self.core.capacity()
-        }
-
-        pub fn grow_to(&mut self, capacity: usize) {
-            self.core.grow_to(capacity);
-        }
-
-        pub fn len(&self) -> usize {
-            self.core.len()
-        }
-
-        pub fn is_empty(&self) -> bool {
-            self.len() == 0
-        }
-
-        pub fn contains_key(&self, key: SlabKey<Tag, MAX>) -> bool {
-            self.contains_parts(key.parts())
-        }
-
-        pub fn contains_parts(&self, parts: SlabKeyParts<MAX>) -> bool {
-            self.core.contains(parts.index(), parts.generation())
-        }
-
-        pub fn resolve(&self, parts: SlabKeyParts<MAX>) -> Option<SlabKey<Tag, MAX>> {
-            self.contains_parts(parts)
-                .then(|| SlabKey::from_parts(parts))
-        }
-    };
-}
-
-mod cell;
+pub mod cell;
 mod core;
-mod key;
+pub mod key;
 mod pending;
-
-pub use cell::CellSlab;
-pub use key::{SlabGeneration, SlabKey, SlabKeyParts};
+pub mod pin;
 
 use core::{Exclusive, SlabCore, Ticket};
+use key::{SlabGeneration, SlabKey, SlabKeyParts};
 use pending::Pending;
 
 pub(crate) trait GenerationState: Copy + Eq {
@@ -65,7 +23,42 @@ pub struct Slab<T, Tag = (), const MAX: u32 = { u32::MAX }> {
 }
 
 impl<T, Tag, const MAX: u32> Slab<T, Tag, MAX> {
-    impl_slab_common!();
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            core: SlabCore::with_capacity(capacity),
+            tag: PhantomData,
+        }
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.core.capacity()
+    }
+
+    pub fn grow_to(&mut self, capacity: usize) {
+        self.core.grow_to(capacity);
+    }
+
+    pub fn len(&self) -> usize {
+        self.core.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn contains_key(&self, key: SlabKey<Tag, MAX>) -> bool {
+        self.contains_parts(key.parts())
+    }
+
+    pub fn contains_parts(&self, parts: SlabKeyParts<MAX>) -> bool {
+        self.core.contains(parts.index(), parts.generation())
+    }
+
+    pub fn resolve(&self, parts: SlabKeyParts<MAX>) -> Option<SlabKey<Tag, MAX>> {
+        self.contains_parts(parts)
+            .then(|| SlabKey::from_parts(parts))
+    }
 
     pub fn is_full(&self) -> bool {
         self.core.is_full()
@@ -169,13 +162,13 @@ impl<T, Tag, const MAX: u32> Slab<T, Tag, MAX> {
 
     pub fn get_index(&self, index: u32) -> Option<(&T, SlabKey<Tag, MAX>)> {
         self.core
-            .get_index(index)
+            .index(index)
             .map(|(value, generation)| (value, SlabKey::new(index, generation)))
     }
 
     pub fn get_index_mut(&mut self, index: u32) -> Option<(&mut T, SlabKey<Tag, MAX>)> {
         self.core
-            .get_index_mut(index)
+            .index_mut(index)
             .map(|(value, generation)| (value, SlabKey::new(index, generation)))
     }
 

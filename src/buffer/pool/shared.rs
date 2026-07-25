@@ -1,12 +1,17 @@
-use std::alloc::{Layout, alloc, alloc_zeroed, dealloc, handle_alloc_error};
-use std::cell::Cell;
-use std::marker::PhantomData;
-use std::num::NonZeroU32;
-use std::ptr::NonNull;
-use std::slice;
+use std::{
+    alloc::{Layout, alloc, alloc_zeroed, dealloc, handle_alloc_error},
+    cell::Cell,
+    marker::PhantomData,
+    mem::ManuallyDrop,
+    num::NonZeroU32,
+    ptr::NonNull,
+    slice,
+};
 
-use super::ref_count::LocalRefCount;
-use super::{PoolLayoutError, SpareWriter};
+use super::{
+    super::{CapacityError, SpareWriter, refs::LocalRefCount},
+    PoolLayoutError,
+};
 
 const NONE: u32 = u32::MAX;
 
@@ -195,11 +200,8 @@ impl SharedPool {
     }
 
     /// Creates a pool with the requested fixed layout.
-    ///
     /// # Panics
-    ///
-    /// Panics when `capacity` is zero or the requested allocation cannot be
-    /// represented. Use [`SharedPool::try_new`] for runtime configuration.
+    /// Panics when the requested layout cannot be represented.
     #[track_caller]
     pub fn new(slots: usize, capacity: usize) -> Self {
         match Self::try_new(slots, capacity) {
@@ -243,11 +245,9 @@ impl Drop for SharedPool {
     }
 }
 
-/// A fixed shared pool whose complete data region is initialized.
+/// A shared pool whose entire data region is initialized once.
 ///
-/// Unlike [`SharedPool`], this pool may safely expose unused slot capacity as
-/// `&mut [u8]`. Initialization happens once when the backing group is
-/// allocated; releasing and reacquiring a slot does not clear it.
+/// Reacquired slots retain bytes and may expose unused capacity as `&mut [u8]`.
 #[repr(transparent)]
 pub struct InitializedSharedPool {
     group: NonNull<Group>,
@@ -266,12 +266,8 @@ impl InitializedSharedPool {
     }
 
     /// Creates an initialized pool with the requested fixed layout.
-    ///
     /// # Panics
-    ///
-    /// Panics when `capacity` is zero or the requested allocation cannot be
-    /// represented. Use [`InitializedSharedPool::try_new`] for runtime
-    /// configuration.
+    /// Panics when the requested layout cannot be represented.
     #[track_caller]
     pub fn new(slots: usize, capacity: usize) -> Self {
         match Self::try_new(slots, capacity) {
@@ -322,24 +318,18 @@ pub struct SharedLease {
     marker: PhantomData<*mut ()>,
 }
 
-macro_rules! impl_shared_access {
-    () => {
-        pub fn len(&self) -> usize {
-            self.len as usize
-        }
-
-        pub fn is_empty(&self) -> bool {
-            self.len == 0
-        }
-
-        pub fn as_slice(&self) -> &[u8] {
-            unsafe { slice::from_raw_parts(Group::data(self.group, self.index), self.len as usize) }
-        }
-    };
-}
-
 impl SharedLease {
-    impl_shared_access!();
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(Group::data(self.group, self.index), self.len as usize) }
+    }
 
     pub fn capacity(&self) -> usize {
         unsafe { self.group.as_ref() }.capacity as usize
@@ -363,7 +353,7 @@ impl SharedLease {
     }
 
     pub fn freeze(self) -> Pooled {
-        let this = std::mem::ManuallyDrop::new(self);
+        let this = ManuallyDrop::new(self);
         Pooled {
             group: this.group,
             index: this.index,
@@ -388,7 +378,17 @@ pub struct InitializedSharedLease {
 }
 
 impl InitializedSharedLease {
-    impl_shared_access!();
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(Group::data(self.group, self.index), self.len as usize) }
+    }
 
     pub fn capacity(&self) -> usize {
         unsafe { self.group.as_ref() }.capacity as usize
@@ -404,10 +404,9 @@ impl InitializedSharedLease {
         unsafe { slice::from_raw_parts_mut(Group::data(self.group, self.index), self.len()) }
     }
 
-    /// Returns all initialized capacity following the current logical end.
+    /// Returns initialized capacity after the logical end.
     ///
-    /// A newly acquired slot has a logical length of zero, but its bytes retain
-    /// the values written during allocation or a previous lease.
+    /// Reacquired slots retain values written by their previous lease.
     pub fn spare_mut(&mut self) -> &mut [u8] {
         let len = self.len();
         let remaining = self.capacity() - len;
@@ -417,21 +416,21 @@ impl InitializedSharedLease {
     }
 
     /// Extends the logical length into the initialized spare capacity.
-    pub fn try_advance(&mut self, additional: usize) -> Result<(), super::CapacityError> {
+    pub fn try_advance(&mut self, additional: usize) -> Result<(), CapacityError> {
         let len = self.len();
         let capacity = self.capacity();
         let attempted = len
             .checked_add(additional)
-            .ok_or_else(|| super::CapacityError::new(usize::MAX, capacity))?;
+            .ok_or_else(|| CapacityError::new(usize::MAX, capacity))?;
         if attempted > capacity {
-            return Err(super::CapacityError::new(attempted, capacity));
+            return Err(CapacityError::new(attempted, capacity));
         }
         self.len = attempted as u32;
         Ok(())
     }
 
     pub fn freeze(self) -> Pooled {
-        let this = std::mem::ManuallyDrop::new(self);
+        let this = ManuallyDrop::new(self);
         Pooled {
             group: this.group,
             index: this.index,
@@ -455,7 +454,17 @@ pub struct Pooled {
 }
 
 impl Pooled {
-    impl_shared_access!();
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(Group::data(self.group, self.index), self.len as usize) }
+    }
 }
 
 impl Clone for Pooled {

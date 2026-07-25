@@ -1,13 +1,14 @@
-use std::cell::Cell;
-use std::marker::{PhantomData, PhantomPinned};
-use std::mem::MaybeUninit;
-use std::pin::Pin;
-use std::ptr::{self, NonNull};
-use std::slice;
+use std::{
+    cell::Cell,
+    marker::{PhantomData, PhantomPinned},
+    mem::MaybeUninit,
+    pin::Pin,
+    ptr::{self, NonNull},
+    slice,
+};
 
+use super::super::{CapacityError, SpareWriter, compact, consume};
 use crate::marker::ThreadBound;
-
-use super::{CapacityError, SpareWriter};
 
 const BLOCK_CAPACITY: u32 = 64 * 1024;
 const _: () = assert!(
@@ -191,7 +192,7 @@ impl BlockLease<'_> {
 
     pub fn consume(&mut self, amount: usize) {
         assert!(amount <= self.len(), "buffer pool lease consume overflow");
-        unsafe { super::consume(&mut self.head, &mut self.tail, amount) };
+        unsafe { consume(&mut self.head, &mut self.tail, amount) };
     }
 
     pub fn truncate(&mut self, len: usize) {
@@ -207,7 +208,7 @@ impl BlockLease<'_> {
 
     #[cold]
     fn compact(&mut self) {
-        unsafe { super::compact(self.data.as_ptr().cast(), &mut self.head, &mut self.tail) };
+        unsafe { compact(self.data.as_ptr().cast(), &mut self.head, &mut self.tail) };
     }
 
     pub fn as_ptr(&self) -> *const u8 {

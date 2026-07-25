@@ -2,7 +2,9 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 
-use super::{Pooled, RangeExt, Shared};
+use super::RangeExt;
+use super::pool::shared::Pooled;
+use super::shared::Shared;
 
 pub(super) mod sealed {
     pub trait Storage {
@@ -52,12 +54,10 @@ pub struct Retained {
 pub trait ByteSpan: sealed::ByteSpan {
     fn as_slice(&self) -> &[u8];
 
-    #[inline]
     fn len(&self) -> usize {
         self.as_slice().len()
     }
 
-    #[inline]
     fn is_empty(&self) -> bool {
         self.as_slice().is_empty()
     }
@@ -72,7 +72,6 @@ pub trait RetainBytes: ByteSpan + sealed::RetainBytes + Sized {
 impl<'a> Bytes<Borrowed<'a>> {
     /// # Panics
     /// Panics if `range` is reversed or out of bounds.
-    #[inline]
     #[track_caller]
     #[must_use]
     pub fn slice(self, range: Range<usize>) -> Self {
@@ -92,7 +91,6 @@ impl Bytes<Shared> {
 
     /// # Panics
     /// Panics if `range` is reversed or out of bounds.
-    #[inline]
     #[track_caller]
     #[must_use]
     pub fn slice(mut self, range: Range<usize>) -> Self {
@@ -122,7 +120,6 @@ impl Bytes<Retained> {
 
     /// # Panics
     /// Panics if `range` is reversed or out of bounds.
-    #[inline]
     #[track_caller]
     #[must_use]
     pub fn slice(mut self, range: Range<usize>) -> Self {
@@ -135,7 +132,6 @@ impl Bytes<Retained> {
 
     /// # Panics
     /// Panics if `n` exceeds the remaining length.
-    #[inline]
     #[track_caller]
     pub fn advance(&mut self, n: usize) {
         let len = self.storage.len();
@@ -154,7 +150,6 @@ impl Retained {
         }
     }
 
-    #[inline]
     fn try_slice_in_place(&mut self, range: Range<usize>) -> bool {
         match &mut self.repr {
             RetainedRepr::Leased { start, len, .. } => {
@@ -175,17 +170,14 @@ impl Retained {
 }
 
 impl<S: sealed::Storage> Bytes<S> {
-    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         self.storage.as_slice()
     }
 
-    #[inline]
     pub fn len(&self) -> usize {
         self.as_slice().len()
     }
 
-    #[inline]
     pub fn is_empty(&self) -> bool {
         self.as_slice().is_empty()
     }
@@ -202,28 +194,26 @@ where
 }
 
 impl sealed::Storage for Borrowed<'_> {
-    #[inline]
     fn as_slice(&self) -> &[u8] {
         self.slice
     }
 }
 
 impl sealed::Storage for Leased {
-    #[inline]
     fn as_slice(&self) -> &[u8] {
         self.pooled.as_slice()
     }
 }
 
 impl sealed::Storage for Shared {
-    #[inline]
     fn as_slice(&self) -> &[u8] {
-        Shared::as_slice(self)
+        let slice = Shared::as_slice(self);
+        debug_assert_eq!(slice.len(), self.len());
+        slice
     }
 }
 
 impl sealed::Storage for Retained {
-    #[inline]
     fn as_slice(&self) -> &[u8] {
         match &self.repr {
             RetainedRepr::Leased { pooled, start, len } => {
@@ -237,16 +227,16 @@ impl sealed::Storage for Retained {
 impl<S: sealed::Storage> sealed::ByteSpan for Bytes<S> {}
 
 impl<S: sealed::Storage> ByteSpan for Bytes<S> {
-    #[inline]
     fn as_slice(&self) -> &[u8] {
-        Self::as_slice(self)
+        let slice = self.storage.as_slice();
+        debug_assert_eq!(slice.len(), self.len());
+        slice
     }
 }
 
 impl sealed::RetainBytes for Bytes<Borrowed<'_>> {}
 
 impl RetainBytes for Bytes<Borrowed<'_>> {
-    #[inline]
     fn into_retained(self) -> Bytes<Retained> {
         Bytes::<Retained>::copy_from_slice(self.as_slice())
     }
@@ -255,7 +245,6 @@ impl RetainBytes for Bytes<Borrowed<'_>> {
 impl sealed::RetainBytes for Bytes<Leased> {}
 
 impl RetainBytes for Bytes<Leased> {
-    #[inline]
     fn into_retained(self) -> Bytes<Retained> {
         Bytes::<Retained>::from(self.storage.pooled)
     }
@@ -264,7 +253,6 @@ impl RetainBytes for Bytes<Leased> {
 impl sealed::RetainBytes for Bytes<Shared> {}
 
 impl RetainBytes for Bytes<Shared> {
-    #[inline]
     fn into_retained(self) -> Bytes<Retained> {
         Bytes::<Retained>::from(self.storage)
     }
@@ -273,7 +261,6 @@ impl RetainBytes for Bytes<Shared> {
 impl sealed::RetainBytes for Bytes<Retained> {}
 
 impl RetainBytes for Bytes<Retained> {
-    #[inline]
     fn into_retained(self) -> Bytes<Retained> {
         self
     }

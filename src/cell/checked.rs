@@ -2,10 +2,9 @@ use std::cell::{Cell, UnsafeCell};
 
 use crate::marker::ThreadBound;
 
-/// Single-threaded interior storage with checked exclusive access.
+/// Single-threaded storage whose exclusive callback rejects reentry.
 ///
-/// The borrow flag prevents a synchronous callback from reentering the cell
-/// while its value is mutably borrowed. It is restored during unwinding.
+/// Its borrow flag is restored during unwinding.
 #[repr(C)]
 pub struct CheckedCell<T> {
     value: UnsafeCell<T>,
@@ -22,7 +21,6 @@ impl<T> CheckedCell<T> {
         }
     }
 
-    #[inline]
     pub fn with_mut<R>(&self, operation: impl for<'a> FnOnce(&'a mut T) -> R) -> R {
         assert!(!self.active.replace(true), "reentrant checked cell access");
         let _access = Access(&self.active);
