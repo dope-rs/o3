@@ -91,6 +91,17 @@ impl<T> SlotQueue<T> {
         Ok(())
     }
 
+    pub fn refresh_back(&mut self, index: usize, value: T) -> Result<(), T> {
+        let Some(entry) = self.entries.get(index) else {
+            return Err(value);
+        };
+        if entry.prev != index as u32 {
+            drop(unsafe { self.remove_unchecked(index) });
+        }
+        unsafe { self.push_back_unchecked(index, value) };
+        Ok(())
+    }
+
     /// # Safety
     /// `index` is in bounds and vacant.
     unsafe fn push_front_unchecked(&mut self, index: usize, value: T) {

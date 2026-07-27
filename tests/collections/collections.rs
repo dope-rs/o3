@@ -109,6 +109,23 @@ fn slot_queue_preserves_index_order_and_membership() {
 }
 
 #[test]
+fn slot_queue_refreshes_an_entry_at_the_back() {
+    let mut queue = SlotQueue::with_capacity(2);
+    assert_eq!(queue.push_back(0, "old"), Ok(()));
+    assert_eq!(queue.push_back(1, "one"), Ok(()));
+
+    assert_eq!(queue.refresh_back(1, "tail"), Ok(()));
+    assert_eq!(queue.front_key_value(), Some((0, &"old")));
+    assert_eq!(queue.refresh_back(0, "new"), Ok(()));
+    assert_eq!(queue.front_key_value(), Some((1, &"tail")));
+    assert_eq!(queue.pop_front_key_value(), Some((1, "tail")));
+    assert_eq!(queue.pop_front_key_value(), Some((0, "new")));
+    assert_eq!(queue.refresh_back(0, "vacant"), Ok(()));
+    assert_eq!(queue.pop_front_key_value(), Some((0, "vacant")));
+    assert_eq!(queue.refresh_back(2, "outside"), Err("outside"));
+}
+
+#[test]
 fn indexed_heap_growth_preserves_live_order_and_positions() {
     let mut heap = IndexedMinHeap::with_capacity(2);
     assert_eq!(heap.insert(0, 30), Ok(()));
