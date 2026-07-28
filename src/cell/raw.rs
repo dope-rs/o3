@@ -17,9 +17,12 @@ impl<T> RawCell<T> {
         }
     }
 
-    /// # Safety
-    /// No mutable reference to the stored value may be live while `f` runs.
-    pub unsafe fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+    /// Temporarily lends shared access to the stored value.
+    #[inline(always)]
+    pub fn with<R>(&self, f: impl for<'a> FnOnce(&'a T) -> R) -> R {
+        // SAFETY: `get_mut` requires exclusive access to this cell, while
+        // shared-reference mutation is unsafe and must exclude this borrow.
+        // The higher-ranked callback prevents the reference from escaping.
         f(unsafe { &*self.value.get() })
     }
 
