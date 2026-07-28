@@ -91,9 +91,9 @@ fn raw_cell_mutates_without_layout_overhead() {
         })
     };
     assert_eq!(value, 2);
-    assert_eq!(unsafe { cell.with(|value| *value) }, 2);
+    assert_eq!(cell.with(|value| *value), 2);
     *cell.get_mut() += 1;
-    assert_eq!(unsafe { cell.with(|value| *value) }, 3);
+    assert_eq!(cell.with(|value| *value), 3);
     assert_eq!(std::mem::size_of_val(&cell), std::mem::size_of::<u64>());
 }
 

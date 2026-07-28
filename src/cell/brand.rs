@@ -1,3 +1,9 @@
+//! GhostCell-inspired branded cells.
+//!
+//! Original design: Joshua Yanovski, Hoang-Hai Dang, Ralf Jung, Derek Dreyer.
+//! o3 extensions: tagged permissions, thread confinement, pin-aware borrowing.
+//! Paper: <https://plv.mpi-sws.org/rustbelt/ghostcell/>
+
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::pin::Pin;
