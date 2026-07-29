@@ -15,7 +15,7 @@ pub use heap::{FixedHeap, IndexedMinHeap, IndexedMinHeapVacantEntry};
 pub use queue::cell::CellQueue;
 pub use queue::fixed::{FixedQueue, FixedQueueVacantEntry};
 pub use queue::round::RoundRobinSet;
-pub use queue::slot::{SlotQueue, SlotQueueVacantEntry};
+pub use queue::slot::{CellSlotQueue, SlotQueue, SlotQueueVacantEntry};
 pub use slab::cell::CellSlab;
 pub use slab::key::{SlabGeneration, SlabKey, SlabKeyParts};
 pub use slab::pin::fixed::{FixedPinSlab, FixedPinSlabVacantEntry};
