@@ -1,3 +1,3 @@
 mod avl;
 
-pub use avl::{AvlNode, AvlTree};
+pub use avl::{AvlAdapter, AvlNode, AvlTree};
