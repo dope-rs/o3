@@ -4,7 +4,7 @@ use o3::buffer::{
     RollingBuffer, Shared, SharedStr, SnapshotBuf, SpareWriter,
 };
 use o3::cell::{BrandCell, BrandToken, CheckedCell, RawCell};
-use o3::collections::{CellQueue, FixedQueue, RoundRobinSet, SlotQueue};
+use o3::collections::{CellQueue, CellSlotQueue, FixedQueue, RoundRobinSet, SlotQueue};
 use o3::collections::{FixedHashTable, IndexedMinHeap};
 use o3::collections::{
     FixedPinSlab, FixedPinSlabVacantEntry, PinSlab, PinSlabVacantEntry, Slab, SlabGeneration,
@@ -16,6 +16,7 @@ use o3::mem::{ByteBudget, ByteBudgetHandle, ByteLease, FairCredits};
 
 assert_confined!(FixedQueue<u8>);
 assert_confined!(CellQueue<u8>);
+assert_confined!(CellSlotQueue<u8>);
 assert_confined!(SlotQueue<u8>);
 assert_confined!(RoundRobinSet);
 assert_confined!(IndexedMinHeap<u8>);

@@ -1,6 +1,7 @@
 use o3::collections::Slab;
 use o3::collections::{
-    CellQueue, FixedHashTable, FixedQueue, IndexedMinHeap, LinkedArena, RoundRobinSet, SlotQueue,
+    CellQueue, CellSlotQueue, FixedHashTable, FixedQueue, IndexedMinHeap, LinkedArena,
+    RoundRobinSet, SlotQueue,
 };
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -123,6 +124,39 @@ fn slot_queue_refreshes_an_entry_at_the_back() {
     assert_eq!(queue.refresh_back(0, "vacant"), Ok(()));
     assert_eq!(queue.pop_front_key_value(), Some((0, "vacant")));
     assert_eq!(queue.refresh_back(2, "outside"), Err("outside"));
+}
+
+#[test]
+fn cell_slot_queue_preserves_shared_index_order_and_membership() {
+    let mut queue = CellSlotQueue::with_capacity(2);
+    assert_eq!(queue.push_back(1, 11), Ok(()));
+    assert_eq!(queue.push_back(1, 12), Err(12));
+    assert_eq!(queue.push_back(2, 20), Err(20));
+    assert_eq!(queue.push_front(0, 10), Ok(()));
+    assert_eq!(queue.front_key_value(), Some((0, 10)));
+    assert_eq!(queue.remove(1), Some(11));
+    assert!(!queue.contains_key(1));
+    assert_eq!(queue.pop_front_key_value(), Some((0, 10)));
+    assert!(queue.is_empty());
+
+    assert_eq!(queue.push_back(1, 11), Ok(()));
+    assert_eq!(queue.push_front(0, 10), Ok(()));
+    queue.grow_to(4);
+    assert_eq!(queue.capacity(), 4);
+    assert_eq!(queue.pop_front_key_value(), Some((0, 10)));
+    assert_eq!(queue.pop_front_key_value(), Some((1, 11)));
+}
+
+#[test]
+fn cell_slot_queue_refreshes_an_entry_at_the_back() {
+    let queue = CellSlotQueue::with_capacity(2);
+    assert_eq!(queue.push_back(0, 10), Ok(()));
+    assert_eq!(queue.push_back(1, 11), Ok(()));
+    assert_eq!(queue.refresh_back(0, 12), Ok(()));
+    assert_eq!(queue.front_key_value(), Some((1, 11)));
+    assert_eq!(queue.pop_front(), Some(11));
+    assert_eq!(queue.pop_front(), Some(12));
+    assert_eq!(queue.refresh_back(2, 20), Err(20));
 }
 
 #[test]
