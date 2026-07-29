@@ -31,33 +31,59 @@ impl Default for AvlNode {
     }
 }
 
-pub struct AvlTree {
+/// Maps one intrusive node field to its pinned owner.
+///
+/// # Safety
+/// `node` must always project the same structurally pinned node from `Value`.
+/// `from_node` must be its exact inverse for every node returned by `node`,
+/// preserving pointer provenance and owner identity.
+pub unsafe trait AvlAdapter {
+    type Value;
+
+    fn node(value: Pin<&Self::Value>) -> Pin<&AvlNode>;
+
+    /// # Safety
+    /// `node` must have been obtained from this adapter's `node` projection
+    /// and its owner must still be live at the original pinned address.
+    unsafe fn from_node(node: NonNull<AvlNode>) -> NonNull<Self::Value>;
+}
+
+pub struct AvlTree<A: AvlAdapter> {
     root: Cell<Option<NonNull<AvlNode>>>,
     first: Cell<Option<NonNull<AvlNode>>>,
     _marker: PhantomData<*mut ()>,
+    _adapter: PhantomData<fn(A) -> A>,
 }
 
-impl AvlTree {
+impl<A: AvlAdapter> AvlTree<A> {
     pub const fn new() -> Self {
         Self {
             root: Cell::new(None),
             first: Cell::new(None),
             _marker: PhantomData,
+            _adapter: PhantomData,
         }
     }
 
-    pub fn first(&self) -> Option<NonNull<AvlNode>> {
-        self.first.get()
+    pub fn first(&self) -> Option<Pin<&A::Value>> {
+        self.first.get().map(|node| {
+            // SAFETY: only `A::node` values can enter this typed tree, and
+            // insertion requires their owners to stay pinned while linked.
+            unsafe { Pin::new_unchecked(self.value(node)) }
+        })
     }
 
     /// # Safety
-    /// `node` must be unlinked and pinned until removal; `before` must stay stable.
+    /// `value`'s node must be unlinked and its owner must stay pinned and live
+    /// until removal or until this tree can no longer be accessed. `before`
+    /// must define a stable strict ordering for the whole linked interval.
     pub unsafe fn insert(
         &self,
-        node: Pin<&AvlNode>,
-        mut before: impl FnMut(NonNull<AvlNode>, NonNull<AvlNode>) -> bool,
+        value: Pin<&A::Value>,
+        mut before: impl FnMut(&A::Value, &A::Value) -> bool,
     ) {
-        let node = NonNull::from(node.get_ref());
+        let value_ref = value.get_ref();
+        let node = NonNull::from(A::node(value).get_ref());
         let node_ref = unsafe { node.as_ref() };
         debug_assert!(node_ref.left.get().is_none());
         debug_assert!(node_ref.right.get().is_none());
@@ -68,7 +94,7 @@ impl AvlTree {
         let mut left = false;
         while let Some(existing) = current {
             parent = Some(existing);
-            left = before(node, existing);
+            left = before(value_ref, unsafe { self.value(existing) });
             current = if left {
                 unsafe { existing.as_ref() }.left.get()
             } else {
@@ -93,8 +119,10 @@ impl AvlTree {
     }
 
     /// # Safety
-    /// `node` must be live and linked here, and cannot be removed twice.
-    pub unsafe fn remove(&self, node: NonNull<AvlNode>) {
+    /// `value`'s node must be live and linked in this exact tree, and cannot be
+    /// removed twice.
+    pub unsafe fn remove(&self, value: Pin<&A::Value>) {
+        let node = NonNull::from(A::node(value).get_ref());
         let node_ref = unsafe { node.as_ref() };
         debug_assert_ne!(node_ref.height.get(), 0);
         let left = node_ref.left.get();
@@ -145,6 +173,10 @@ impl AvlTree {
         if was_first {
             self.first.set(next_first);
         }
+    }
+
+    unsafe fn value(&self, node: NonNull<AvlNode>) -> &A::Value {
+        unsafe { A::from_node(node).as_ref() }
     }
 
     fn height(node: Option<NonNull<AvlNode>>) -> u8 {
@@ -264,7 +296,7 @@ impl AvlTree {
     }
 }
 
-impl Default for AvlTree {
+impl<A: AvlAdapter> Default for AvlTree<A> {
     fn default() -> Self {
         Self::new()
     }
