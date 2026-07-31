@@ -1,8 +1,10 @@
 use std::mem::MaybeUninit;
+use std::num::NonZeroUsize;
 use std::ptr::copy_nonoverlapping;
 use std::slice::from_raw_parts;
 
-use super::CapacityError;
+use super::super::prefix::consume_prefix_api;
+use super::super::{CapacityError, PrefixLength, checked_append_len};
 use crate::marker::ThreadBound;
 
 macro_rules! wrap {
@@ -25,10 +27,16 @@ pub struct ByteRing {
 }
 
 impl ByteRing {
-    pub fn with_capacity(capacity: usize) -> Self {
-        assert!(capacity > 0, "byte ring capacity must be positive");
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, CapacityError> {
+        let capacity =
+            NonZeroUsize::new(capacity).ok_or_else(|| CapacityError::new(1, capacity))?;
+        Ok(Self::with_capacity(capacity))
+    }
+
+    #[must_use]
+    pub fn with_capacity(capacity: NonZeroUsize) -> Self {
         Self {
-            buf: Box::<[u8]>::new_uninit_slice(capacity),
+            buf: Box::<[u8]>::new_uninit_slice(capacity.get()),
             head: 0,
             len: 0,
             _thread: ThreadBound::NEW,
@@ -88,30 +96,38 @@ impl ByteRing {
     }
 
     pub fn try_extend_from_slice(&mut self, src: &[u8]) -> Result<(), CapacityError> {
-        if src.len() > self.remaining() {
-            return Err(CapacityError::new(
-                self.len.saturating_add(src.len()),
-                self.capacity(),
-            ));
-        }
-        let tail = wrap!(self.head + self.len, self.capacity());
-        let first_len = src.len().min(self.capacity() - tail);
-        unsafe {
-            copy_nonoverlapping(
-                src.as_ptr(),
-                self.buf.as_mut_ptr().add(tail).cast(),
-                first_len,
-            );
-            let second_len = src.len() - first_len;
-            if second_len != 0 {
+        self.try_extend_from_slices([src])
+    }
+
+    /// Appends every slice after validating their aggregate length.
+    ///
+    /// On failure, the ring and its logical length are unchanged.
+    pub fn try_extend_from_slices<const N: usize>(
+        &mut self,
+        slices: [&[u8]; N],
+    ) -> Result<(), CapacityError> {
+        let end = checked_append_len(self.len, self.capacity(), &slices)?;
+        let mut tail = wrap!(self.head + self.len, self.capacity());
+        for src in slices {
+            let first_len = src.len().min(self.capacity() - tail);
+            unsafe {
                 copy_nonoverlapping(
-                    src.as_ptr().add(first_len),
-                    self.buf.as_mut_ptr().cast(),
-                    second_len,
+                    src.as_ptr(),
+                    self.buf.as_mut_ptr().add(tail).cast(),
+                    first_len,
                 );
+                let second_len = src.len() - first_len;
+                if second_len != 0 {
+                    copy_nonoverlapping(
+                        src.as_ptr().add(first_len),
+                        self.buf.as_mut_ptr().cast(),
+                        second_len,
+                    );
+                }
             }
+            tail = wrap!(tail + src.len(), self.capacity());
         }
-        self.len += src.len();
+        self.len = end;
         Ok(())
     }
 
@@ -125,12 +141,28 @@ impl ByteRing {
         Ok(())
     }
 
-    pub fn consume(&mut self, amount: usize) {
-        assert!(amount <= self.len, "byte ring consume past end");
+    pub fn try_consume(&mut self, amount: usize) -> Result<(), CapacityError> {
+        if amount > self.len {
+            return Err(CapacityError::new(amount, self.len));
+        }
+        self.consume_valid(amount);
+        Ok(())
+    }
+
+    fn consume_valid(&mut self, amount: usize) {
+        debug_assert!(amount <= self.len);
         self.head = wrap!(self.head + amount, self.capacity());
         self.len -= amount;
         if self.len == 0 {
             self.head = 0;
         }
+    }
+
+    consume_prefix_api!(Self::consume_valid);
+}
+
+impl PrefixLength for ByteRing {
+    fn prefix_len(&self) -> usize {
+        self.len()
     }
 }

@@ -2,7 +2,7 @@ use crate::marker::ThreadBound;
 use std::mem::MaybeUninit;
 use std::ptr::{addr_of_mut, copy_nonoverlapping};
 
-use super::SpareWriter;
+use super::super::{CapacityError, PrefixLength, SpareWriter, compact, consume};
 
 pub struct RollingBuffer<const CAP: usize> {
     buf: [MaybeUninit<u8>; CAP],
@@ -89,15 +89,18 @@ impl<const CAP: usize> RollingBuffer<CAP> {
         unsafe { SpareWriter::new(ptr, CAP - t, &mut self.tail) }
     }
 
-    pub fn extend_from_slice(&mut self, src: &[u8]) {
+    pub fn try_extend_from_slice(&mut self, src: &[u8]) -> Result<(), CapacityError> {
         let need = src.len();
         if need == 0 {
-            return;
+            return Ok(());
         }
-        assert!(
-            need <= self.spare_capacity(),
-            "buffer::RollingBuffer push overflow: need={need} cap={CAP}"
-        );
+        let len = self.len();
+        let attempted = len
+            .checked_add(need)
+            .ok_or_else(|| CapacityError::new(usize::MAX, CAP))?;
+        if attempted > CAP {
+            return Err(CapacityError::new(attempted, CAP));
+        }
         let tail_room = CAP - self.tail as usize;
         if need > tail_room {
             self.compact();
@@ -107,15 +110,33 @@ impl<const CAP: usize> RollingBuffer<CAP> {
             copy_nonoverlapping(src.as_ptr(), self.buf.as_mut_ptr().add(tail).cast(), need);
         }
         self.tail = (tail + need) as u32;
+        Ok(())
     }
 
-    pub fn consume(&mut self, n: usize) {
-        assert!(n <= self.len(), "buffer::RollingBuffer::consume past end");
-        unsafe { super::consume(&mut self.head, &mut self.tail, n) };
+    pub fn try_consume(&mut self, n: usize) -> Result<(), CapacityError> {
+        let len = self.len();
+        if n > len {
+            return Err(CapacityError::new(n, len));
+        }
+        self.consume_valid(n);
+        Ok(())
     }
+
+    fn consume_valid(&mut self, amount: usize) {
+        debug_assert!(amount <= self.len());
+        unsafe { consume(&mut self.head, &mut self.tail, amount) };
+    }
+
+    super::super::prefix::consume_prefix_api!(Self::consume_valid);
 
     #[cold]
     fn compact(&mut self) {
-        unsafe { super::compact(self.buf.as_mut_ptr(), &mut self.head, &mut self.tail) };
+        unsafe { compact(self.buf.as_mut_ptr(), &mut self.head, &mut self.tail) };
+    }
+}
+
+impl<const CAP: usize> PrefixLength for RollingBuffer<CAP> {
+    fn prefix_len(&self) -> usize {
+        self.len()
     }
 }

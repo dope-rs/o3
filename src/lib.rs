@@ -4,6 +4,7 @@ const _: () = assert!(
 );
 
 pub mod marker;
+pub mod num;
 
 pub mod buffer;
 pub mod cell;

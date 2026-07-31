@@ -8,9 +8,9 @@ use std::slice::from_raw_parts;
 pub mod snapshot;
 pub mod strings;
 
-use super::RangeExt;
-use super::block::{Block, Owned};
-use super::raw::{Owner, RawSpan};
+use super::owned::Owned;
+use super::storage::{Owner, RawSpan};
+use super::{PrefixLength, RangeExt};
 
 const VEC_ZERO_COPY_MIN: usize = 512;
 
@@ -99,34 +99,30 @@ impl Shared {
         unsafe { from_raw_parts(self.ptr, self.len) }
     }
 
-    /// # Panics
-    /// Panics if `range` is reversed or out of bounds.
-    #[track_caller]
     #[must_use]
-    pub fn slice(&self, range: impl RangeBounds<usize>) -> Self {
+    pub fn get(&self, range: impl RangeBounds<usize>) -> Option<Self> {
         let start = match range.start_bound() {
             Bound::Included(&n) => n,
-            Bound::Excluded(&n) => n.saturating_add(1),
+            Bound::Excluded(&n) => n.checked_add(1)?,
             Bound::Unbounded => 0,
         };
         let end = match range.end_bound() {
-            Bound::Included(&n) => n.saturating_add(1),
+            Bound::Included(&n) => n.checked_add(1)?,
             Bound::Excluded(&n) => n,
             Bound::Unbounded => self.len,
         };
         let range = start..end;
-        assert!(
-            range.is_within(self.len),
-            "buffer::Shared::slice: range out of bounds"
-        );
-        if range.is_empty() {
-            return Self::new();
+        if !range.is_within(self.len) {
+            return None;
         }
-        Self {
+        if range.is_empty() {
+            return Some(Self::new());
+        }
+        Some(Self {
             ptr: unsafe { self.ptr.add(range.start) },
             len: range.len(),
             owner: self.owner.clone(),
-        }
+        })
     }
 
     pub(super) fn try_slice_in_place(&mut self, range: Range<usize>) -> bool {
@@ -142,16 +138,22 @@ impl Shared {
         true
     }
 
-    /// # Panics
-    /// Panics if `n` exceeds the remaining length.
-    #[track_caller]
-    pub fn advance(&mut self, n: usize) {
+    pub fn try_advance(&mut self, n: usize) -> bool {
         let len = self.len;
-        assert!(
-            self.try_slice_in_place(n..len),
-            "buffer::Shared::advance: out of bounds"
-        );
+        self.try_slice_in_place(n..len)
     }
+
+    pub(super) fn consume_valid(&mut self, amount: usize) {
+        debug_assert!(amount <= self.len);
+        if amount == self.len {
+            self.clear();
+            return;
+        }
+        self.ptr = unsafe { self.ptr.add(amount) };
+        self.len -= amount;
+    }
+
+    super::prefix::consume_prefix_api!(Self::consume_valid);
 
     pub fn clear(&mut self) {
         *self = Self::new();
@@ -173,6 +175,12 @@ impl Default for Shared {
 impl AsRef<[u8]> for Shared {
     fn as_ref(&self) -> &[u8] {
         self.as_slice()
+    }
+}
+
+impl PrefixLength for Shared {
+    fn prefix_len(&self) -> usize {
+        self.len()
     }
 }
 
@@ -202,14 +210,8 @@ impl From<Vec<u8>> for Shared {
     }
 }
 
-impl From<Owned> for Shared {
-    fn from(value: Owned) -> Self {
-        value.freeze()
-    }
-}
-
-impl From<Block> for Shared {
-    fn from(value: Block) -> Self {
+impl<const CAP: u32> From<Owned<CAP>> for Shared {
+    fn from(value: Owned<CAP>) -> Self {
         value.freeze()
     }
 }

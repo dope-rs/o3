@@ -10,7 +10,9 @@ use std::slice::{from_raw_parts, from_raw_parts_mut};
 use crate::marker::ThreadBound;
 
 use super::SpareWriter;
-use super::refs::LocalRefCount;
+pub(super) mod refs;
+
+use refs::LocalRefCount;
 
 #[repr(C)]
 struct Header {
@@ -75,11 +77,6 @@ pub(super) struct RawMut {
 }
 
 impl RawMut {
-    pub(super) fn with_capacity(capacity: usize) -> Self {
-        assert!(u32::try_from(capacity).is_ok(), "buffer capacity overflow");
-        Self::with_capacity_u32(capacity as u32)
-    }
-
     pub(super) fn with_capacity_u32(capacity: u32) -> Self {
         Self {
             ptr: Header::allocate(capacity),

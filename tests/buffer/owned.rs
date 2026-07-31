@@ -1,19 +1,30 @@
-use o3::buffer::{Block, Owned, Shared, SnapshotBuf};
+use o3::buffer::{BLOCK_CAPACITY, Owned, Shared, SnapshotBuf};
+
+type FixedOwned = Owned<BLOCK_CAPACITY>;
 
 #[cfg(target_pointer_width = "64")]
 #[test]
 fn buffer_handles_stay_thin() {
     assert_eq!(size_of::<Owned>(), 16);
-    assert_eq!(size_of::<Block>(), 16);
+    assert_eq!(size_of::<FixedOwned>(), 16);
     assert_eq!(size_of::<Shared>(), 24);
     assert_eq!(size_of::<SnapshotBuf<1_048_576>>(), 24);
 }
 
 #[test]
-fn block_is_one_reusable_fixed_allocation() {
-    assert_eq!(Block::CAPACITY, 64 * 1024);
+fn capacity_policies_preserve_public_identity() {
+    let owned = Owned::try_with_capacity(5).unwrap();
+    let block = FixedOwned::new();
 
-    let mut owned = Block::new();
+    assert_eq!(format!("{owned:?}"), "Owned { len: 0, capacity: 5 }");
+    assert_eq!(format!("{block:?}"), "Owned { len: 0, capacity: 65536 }");
+}
+
+#[test]
+fn fixed_owner_is_one_reusable_allocation() {
+    assert_eq!(FixedOwned::CAPACITY, 64 * 1024);
+
+    let mut owned = FixedOwned::new();
     assert!(owned.is_empty());
     let ptr = owned.as_ptr();
 
@@ -38,8 +49,8 @@ fn block_is_one_reusable_fixed_allocation() {
 }
 
 #[test]
-fn clone_copies_and_freeze_transfers_the_fixed_block() {
-    let mut owned = Block::new();
+fn clone_copies_and_freeze_transfers_the_fixed_allocation() {
+    let mut owned = FixedOwned::new();
     owned
         .try_extend_from_slice(b"fixed block")
         .expect("payload must fit the fixed block");
@@ -62,7 +73,7 @@ fn large_vec_transfers_and_shares_its_allocation() {
     let shared = Shared::from(payload);
     assert_eq!(shared.as_ptr(), ptr);
 
-    let slice = shared.slice(1024..3072);
+    let slice = shared.get(1024..3072).unwrap();
     drop(shared);
     assert_eq!(slice.as_slice(), &[b'x'; 2048]);
     assert_eq!(slice.as_ptr(), ptr.wrapping_add(1024));
@@ -70,9 +81,9 @@ fn large_vec_transfers_and_shares_its_allocation() {
 
 #[test]
 fn spare_writer_commits_initialized_storage() {
-    let mut owned = Block::new();
+    let mut owned = FixedOwned::new();
     let mut spare = owned.spare_writer();
-    assert_eq!(spare.capacity(), Block::CAPACITY);
+    assert_eq!(spare.capacity(), FixedOwned::CAPACITY);
     spare
         .try_extend_from_slice(b"xyz")
         .expect("small write must fit the fixed block");
@@ -91,41 +102,41 @@ fn spare_writer_commits_initialized_storage() {
 }
 
 #[test]
-fn fixed_capacity_accepts_exactly_one_block() {
-    let bytes = vec![b'x'; Block::CAPACITY];
-    let mut owned = Block::new();
+fn fixed_capacity_accepts_exactly_its_capacity() {
+    let bytes = vec![b'x'; FixedOwned::CAPACITY];
+    let mut owned = FixedOwned::new();
     owned
         .try_extend_from_slice(&bytes)
         .expect("one complete block must fit");
-    assert_eq!(owned.len(), Block::CAPACITY);
+    assert_eq!(owned.len(), FixedOwned::CAPACITY);
 
     let error = owned
         .try_push(b'y')
         .expect_err("a full block must reject another byte");
-    assert_eq!(error.attempted(), Block::CAPACITY + 1);
-    assert_eq!(error.capacity(), Block::CAPACITY);
+    assert_eq!(error.attempted(), FixedOwned::CAPACITY + 1);
+    assert_eq!(error.capacity(), FixedOwned::CAPACITY);
     assert_eq!(owned.as_slice(), bytes);
 }
 
 #[test]
-fn oversized_write_leaves_the_block_unchanged() {
-    let mut owned = Block::new();
+fn oversized_write_leaves_the_fixed_owner_unchanged() {
+    let mut owned = FixedOwned::new();
     owned
         .try_extend_from_slice(b"prefix")
         .expect("prefix must fit");
-    let oversized = vec![0; Block::CAPACITY];
+    let oversized = vec![0; FixedOwned::CAPACITY];
 
     let error = owned
         .try_extend_from_slice(&oversized)
         .expect_err("combined payload must exceed the block");
-    assert_eq!(error.attempted(), Block::CAPACITY + b"prefix".len());
-    assert_eq!(error.capacity(), Block::CAPACITY);
+    assert_eq!(error.attempted(), FixedOwned::CAPACITY + b"prefix".len());
+    assert_eq!(error.capacity(), FixedOwned::CAPACITY);
     assert_eq!(owned.as_slice(), b"prefix");
 }
 
 #[test]
 fn owned_has_an_exact_runtime_capacity_without_growth() {
-    let mut owned = Owned::with_capacity(5);
+    let mut owned = Owned::try_with_capacity(5).unwrap();
     assert_eq!(owned.capacity(), 5);
     owned
         .try_extend_from_slice(b"exact")
@@ -136,7 +147,7 @@ fn owned_has_an_exact_runtime_capacity_without_growth() {
 
 #[test]
 fn owned_fills_its_exact_allocation() {
-    let owned = Owned::filled(4, b'x');
+    let owned = Owned::try_filled(4, b'x').unwrap();
     assert_eq!(owned.capacity(), 4);
     assert_eq!(owned.as_slice(), b"xxxx");
 }

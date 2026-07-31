@@ -1,5 +1,6 @@
 mod cellslab_reentrancy;
 mod collections;
+mod lease_slab;
 mod pin_slab;
 mod retire;
 mod slab;

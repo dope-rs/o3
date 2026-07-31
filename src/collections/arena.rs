@@ -75,6 +75,14 @@ impl<T> NodePool<T> {
         Some(unsafe { &*node.value.get().cast::<T>() })
     }
 
+    fn front_mut<'a>(&'a mut self, state: &ChainState) -> Option<&'a mut T> {
+        if state.head == NONE {
+            return None;
+        }
+        let node = unsafe { self.nodes.get_unchecked_mut(state.head as usize) };
+        Some(unsafe { node.value.get_mut().assume_init_mut() })
+    }
+
     fn push_back(&self, state: &mut ChainState, value: T) -> Result<(), T> {
         if self.is_full() {
             return Err(value);
@@ -144,7 +152,6 @@ impl<T> NodePool<T> {
 
 impl<T> LinkedArena<T> {
     pub fn with_capacity(capacity: usize, lanes: usize) -> Self {
-        assert!(lanes > 0, "linked arena lane count must be positive");
         Self {
             nodes: NodePool::with_capacity(capacity),
             lanes: vec![ChainState::EMPTY; lanes].into_boxed_slice(),
@@ -155,28 +162,50 @@ impl<T> LinkedArena<T> {
         self.nodes.is_full()
     }
 
+    pub fn capacity(&self) -> usize {
+        self.nodes.nodes.len()
+    }
+
+    pub fn available(&self) -> usize {
+        self.nodes.available.get()
+    }
+
+    pub fn lane_count(&self) -> usize {
+        self.lanes.len()
+    }
+
     pub fn lane_len(&self, lane: usize) -> usize {
         self.lanes[lane].len
     }
 
     pub fn lane_is_empty(&self, lane: usize) -> bool {
-        self.lanes[lane].len == 0
+        self.lanes.get(lane).is_none_or(|state| state.len == 0)
     }
 
     pub fn front(&self, lane: usize) -> Option<&T> {
-        self.nodes.front(&self.lanes[lane])
+        self.nodes.front(self.lanes.get(lane)?)
+    }
+
+    pub fn front_mut(&mut self, lane: usize) -> Option<&mut T> {
+        self.nodes.front_mut(self.lanes.get(lane)?)
     }
 
     pub fn push_back(&mut self, lane: usize, value: T) -> Result<(), T> {
-        self.nodes.push_back(&mut self.lanes[lane], value)
+        let Some(state) = self.lanes.get_mut(lane) else {
+            return Err(value);
+        };
+        self.nodes.push_back(state, value)
     }
 
     pub fn push_front(&mut self, lane: usize, value: T) -> Result<(), T> {
-        self.nodes.push_front(&mut self.lanes[lane], value)
+        let Some(state) = self.lanes.get_mut(lane) else {
+            return Err(value);
+        };
+        self.nodes.push_front(state, value)
     }
 
     pub fn pop_front(&mut self, lane: usize) -> Option<T> {
-        self.nodes.pop_front(&mut self.lanes[lane])
+        self.nodes.pop_front(self.lanes.get_mut(lane)?)
     }
 
     fn clear(&mut self) {

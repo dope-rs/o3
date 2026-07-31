@@ -1,5 +1,5 @@
-use super::super::CapacityError;
-use super::super::raw::{RawMut, RawSpan};
+use super::super::storage::{RawMut, RawSpan};
+use super::super::{CapacityError, PrefixLength};
 use super::Shared;
 
 pub struct SnapshotBuf<const MAX_CAPACITY: usize> {
@@ -10,15 +10,39 @@ pub struct SnapshotBuf<const MAX_CAPACITY: usize> {
 }
 
 impl<const MAX_CAPACITY: usize> SnapshotBuf<MAX_CAPACITY> {
-    pub fn with_capacity(capacity: usize) -> Self {
-        assert!(
-            MAX_CAPACITY <= u32::MAX as usize,
-            "MAX_CAPACITY must fit u32"
-        );
-        assert!(capacity != 0, "initial capacity must be nonzero");
-        assert!(capacity <= MAX_CAPACITY, "initial capacity exceeds maximum");
+    const VALID: () = assert!(
+        MAX_CAPACITY <= u32::MAX as usize,
+        "SnapshotBuf MAX_CAPACITY must fit u32"
+    );
+
+    #[must_use]
+    pub fn new() -> Self {
+        let () = Self::VALID;
         Self {
-            buf: RawMut::with_capacity(capacity),
+            buf: RawMut::with_capacity_u32(0),
+            cap: 0,
+            head: 0,
+            tail: 0,
+        }
+    }
+
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, CapacityError> {
+        let () = Self::VALID;
+        if capacity > MAX_CAPACITY {
+            return Err(CapacityError::new(capacity, MAX_CAPACITY));
+        }
+        Ok(Self::with_valid_capacity(capacity))
+    }
+
+    #[must_use]
+    pub fn with_capacity_up_to(requested: usize) -> Self {
+        let () = Self::VALID;
+        Self::with_valid_capacity(requested.min(MAX_CAPACITY))
+    }
+
+    fn with_valid_capacity(capacity: usize) -> Self {
+        Self {
+            buf: RawMut::with_capacity_u32(capacity as u32),
             cap: capacity as u32,
             head: 0,
             tail: 0,
@@ -36,7 +60,7 @@ impl<const MAX_CAPACITY: usize> SnapshotBuf<MAX_CAPACITY> {
 
     #[cold]
     fn grow(&mut self, required: usize) {
-        let mut new_cap = self.cap as usize;
+        let mut new_cap = (self.cap as usize).max(1);
         while new_cap < required {
             new_cap = new_cap.saturating_mul(2).min(MAX_CAPACITY);
         }
@@ -56,7 +80,7 @@ impl<const MAX_CAPACITY: usize> SnapshotBuf<MAX_CAPACITY> {
 
     fn realloc(&mut self, new_cap: usize) {
         let unparsed = (self.head - self.tail) as usize;
-        let mut fresh = RawMut::with_capacity(new_cap);
+        let mut fresh = RawMut::with_capacity_u32(new_cap as u32);
         if unparsed > 0 {
             fresh.copy_from_raw(0, &self.buf, self.tail as usize, unparsed);
         }
@@ -114,10 +138,20 @@ impl<const MAX_CAPACITY: usize> SnapshotBuf<MAX_CAPACITY> {
         (self.head - self.tail) as usize
     }
 
-    pub fn advance(&mut self, n: usize) {
-        assert!(n <= self.len(), "advance out of bounds");
-        self.tail += n as u32;
+    pub fn try_advance(&mut self, n: usize) -> bool {
+        if n > self.len() {
+            return false;
+        }
+        self.consume_valid(n);
+        true
     }
+
+    fn consume_valid(&mut self, amount: usize) {
+        debug_assert!(amount <= self.len());
+        self.tail += amount as u32;
+    }
+
+    super::super::prefix::consume_prefix_api!(Self::consume_valid);
 
     pub fn compact(&mut self) {
         let t = self.tail as usize;
@@ -138,5 +172,17 @@ impl<const MAX_CAPACITY: usize> SnapshotBuf<MAX_CAPACITY> {
         }
         self.head = unparsed as u32;
         self.tail = 0;
+    }
+}
+
+impl<const MAX_CAPACITY: usize> Default for SnapshotBuf<MAX_CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const MAX_CAPACITY: usize> PrefixLength for SnapshotBuf<MAX_CAPACITY> {
+    fn prefix_len(&self) -> usize {
+        self.len()
     }
 }

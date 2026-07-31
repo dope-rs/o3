@@ -9,7 +9,7 @@ use std::{
 };
 
 use super::{
-    super::{CapacityError, SpareWriter, refs::LocalRefCount},
+    super::{CapacityError, LocalRefCount, PrefixLength, SpareWriter},
     PoolLayoutError,
 };
 
@@ -34,15 +34,22 @@ struct Slot {
 
 const _: () = assert!(align_of::<Group>() >= align_of::<Slot>());
 
-struct GroupLayout {
+#[derive(Clone, Copy, Debug)]
+pub struct SharedPoolLayout {
     allocation: Layout,
     slots: u32,
     capacity: NonZeroU32,
     data_offset: usize,
 }
 
-impl GroupLayout {
-    fn new(slots: usize, capacity: usize) -> Result<Self, PoolLayoutError> {
+#[derive(Clone, Copy, Debug)]
+pub struct SharedPoolPlan {
+    max_slots: usize,
+    capacity: usize,
+}
+
+impl SharedPoolLayout {
+    pub fn new(slots: usize, capacity: usize) -> Result<Self, PoolLayoutError> {
         let slots = u32::try_from(slots).map_err(|_| PoolLayoutError::SlotOverflow)?;
         let capacity = u32::try_from(capacity)
             .ok()
@@ -72,15 +79,103 @@ impl GroupLayout {
             data_offset,
         })
     }
+
+    #[must_use]
+    pub fn fixed<const SLOTS: usize, const CAPACITY: usize>() -> Self {
+        const {
+            assert!(SLOTS <= u32::MAX as usize);
+            assert!(CAPACITY != 0);
+            assert!(CAPACITY <= u32::MAX as usize);
+            let slot_bytes = SLOTS as u128 * size_of::<Slot>() as u128;
+            let data_bytes = SLOTS as u128 * CAPACITY as u128;
+            let padding = align_of::<Group>() as u128 + align_of::<Slot>() as u128;
+            let total = size_of::<Group>() as u128 + slot_bytes + data_bytes + padding;
+            assert!(total <= isize::MAX as u128);
+        }
+        // SAFETY: the const proof covers every conversion and Layout size bound.
+        unsafe { Self::new(SLOTS, CAPACITY).unwrap_unchecked() }
+    }
+
+    pub const fn slots(self) -> usize {
+        self.slots as usize
+    }
+
+    pub const fn capacity(self) -> usize {
+        self.capacity.get() as usize
+    }
+}
+
+impl SharedPoolPlan {
+    pub fn new(max_slots: usize, capacity: usize) -> Result<Self, PoolLayoutError> {
+        SharedPoolLayout::new(max_slots, capacity)?;
+        Ok(Self {
+            max_slots,
+            capacity,
+        })
+    }
+
+    #[must_use]
+    pub fn fixed<const MAX_SLOTS: usize, const CAPACITY: usize>() -> Self {
+        let _ = SharedPoolLayout::fixed::<MAX_SLOTS, CAPACITY>();
+        Self {
+            max_slots: MAX_SLOTS,
+            capacity: CAPACITY,
+        }
+    }
+
+    pub fn layout_up_to(self, requested: usize) -> SharedPoolLayout {
+        let slots = requested.min(self.max_slots);
+        // SAFETY: the maximum layout was validated and reducing slots cannot overflow it.
+        unsafe { SharedPoolLayout::new(slots, self.capacity).unwrap_unchecked() }
+    }
+
+    pub fn layout(self) -> SharedPoolLayout {
+        self.layout_up_to(self.max_slots)
+    }
+
+    pub const fn max_slots(self) -> usize {
+        self.max_slots
+    }
+
+    pub const fn capacity(self) -> usize {
+        self.capacity
+    }
+}
+
+#[doc(hidden)]
+pub trait SharedPoolState: private::Sealed {
+    unsafe fn allocate(layout: Layout) -> *mut u8;
+}
+
+mod private {
+    pub trait Sealed {}
+}
+
+#[doc(hidden)]
+pub struct Uninitialized;
+
+impl private::Sealed for Uninitialized {}
+
+impl SharedPoolState for Uninitialized {
+    unsafe fn allocate(layout: Layout) -> *mut u8 {
+        unsafe { alloc(layout) }
+    }
+}
+
+#[doc(hidden)]
+pub struct Initialized;
+
+impl private::Sealed for Initialized {}
+
+impl SharedPoolState for Initialized {
+    unsafe fn allocate(layout: Layout) -> *mut u8 {
+        unsafe { alloc_zeroed(layout) }
+    }
 }
 
 impl Group {
-    fn allocate(layout: GroupLayout, initialized: bool) -> NonNull<Self> {
-        let raw = if initialized {
-            unsafe { alloc_zeroed(layout.allocation) }
-        } else {
-            unsafe { alloc(layout.allocation) }
-        };
+    fn allocate<S: SharedPoolState>(layout: SharedPoolLayout) -> NonNull<Self> {
+        let raw = unsafe { S::allocate(layout.allocation) };
         let ptr = NonNull::new(raw.cast::<Self>())
             .unwrap_or_else(|| handle_alloc_error(layout.allocation));
         unsafe {
@@ -183,34 +278,27 @@ impl Group {
     }
 }
 
-pub struct SharedPool {
+#[repr(transparent)]
+pub struct SharedPool<S: SharedPoolState = Uninitialized> {
     group: NonNull<Group>,
-    marker: PhantomData<*mut ()>,
+    marker: PhantomData<(S, *mut ())>,
 }
 
-impl SharedPool {
-    /// Creates a pool, returning an error when its fixed allocation cannot be
-    /// represented by the pool layout.
-    pub fn try_new(slots: usize, capacity: usize) -> Result<Self, PoolLayoutError> {
-        let layout = GroupLayout::new(slots, capacity)?;
-        Ok(Self {
-            group: Group::allocate(layout, false),
+impl<S: SharedPoolState> SharedPool<S> {
+    pub fn from_layout(layout: SharedPoolLayout) -> Self {
+        Self {
+            group: Group::allocate::<S>(layout),
             marker: PhantomData,
-        })
-    }
-
-    /// Creates a pool with the requested fixed layout.
-    /// # Panics
-    /// Panics when the requested layout cannot be represented.
-    #[track_caller]
-    pub fn new(slots: usize, capacity: usize) -> Self {
-        match Self::try_new(slots, capacity) {
-            Ok(pool) => pool,
-            Err(error) => panic!("invalid shared pool layout: {error}"),
         }
     }
 
-    pub fn try_acquire(&self) -> Option<SharedLease> {
+    /// Creates a pool, returning an error when its fixed allocation cannot be
+    /// represented by the pool layout.
+    pub fn try_new(slots: usize, capacity: usize) -> Result<Self, PoolLayoutError> {
+        Ok(Self::from_layout(SharedPoolLayout::new(slots, capacity)?))
+    }
+
+    pub fn try_acquire(&self) -> Option<SharedLease<S>> {
         let index = unsafe { Group::acquire(self.group) }?;
         Some(SharedLease {
             group: self.group,
@@ -229,7 +317,7 @@ impl SharedPool {
     }
 }
 
-impl Clone for SharedPool {
+impl<S: SharedPoolState> Clone for SharedPool<S> {
     fn clone(&self) -> Self {
         unsafe { Group::retain(self.group) };
         Self {
@@ -239,86 +327,20 @@ impl Clone for SharedPool {
     }
 }
 
-impl Drop for SharedPool {
+impl<S: SharedPoolState> Drop for SharedPool<S> {
     fn drop(&mut self) {
         unsafe { Group::release(self.group) };
     }
 }
 
-/// A shared pool whose entire data region is initialized once.
-///
-/// Reacquired slots retain bytes and may expose unused capacity as `&mut [u8]`.
-#[repr(transparent)]
-pub struct InitializedSharedPool {
-    group: NonNull<Group>,
-    marker: PhantomData<*mut ()>,
-}
-
-impl InitializedSharedPool {
-    /// Creates an initialized pool, returning an error when its fixed
-    /// allocation cannot be represented by the pool layout.
-    pub fn try_new(slots: usize, capacity: usize) -> Result<Self, PoolLayoutError> {
-        let layout = GroupLayout::new(slots, capacity)?;
-        Ok(Self {
-            group: Group::allocate(layout, true),
-            marker: PhantomData,
-        })
-    }
-
-    /// Creates an initialized pool with the requested fixed layout.
-    /// # Panics
-    /// Panics when the requested layout cannot be represented.
-    #[track_caller]
-    pub fn new(slots: usize, capacity: usize) -> Self {
-        match Self::try_new(slots, capacity) {
-            Ok(pool) => pool,
-            Err(error) => panic!("invalid initialized shared pool layout: {error}"),
-        }
-    }
-
-    pub fn try_acquire(&self) -> Option<InitializedSharedLease> {
-        let index = unsafe { Group::acquire(self.group) }?;
-        Some(InitializedSharedLease {
-            group: self.group,
-            index,
-            len: 0,
-            marker: PhantomData,
-        })
-    }
-
-    pub fn capacity(&self) -> usize {
-        unsafe { self.group.as_ref() }.capacity as usize
-    }
-
-    pub fn available(&self) -> usize {
-        unsafe { self.group.as_ref() }.free_len.get() as usize
-    }
-}
-
-impl Clone for InitializedSharedPool {
-    fn clone(&self) -> Self {
-        unsafe { Group::retain(self.group) };
-        Self {
-            group: self.group,
-            marker: PhantomData,
-        }
-    }
-}
-
-impl Drop for InitializedSharedPool {
-    fn drop(&mut self) {
-        unsafe { Group::release(self.group) };
-    }
-}
-
-pub struct SharedLease {
+pub struct SharedLease<S: SharedPoolState = Uninitialized> {
     group: NonNull<Group>,
     index: u32,
     len: u32,
-    marker: PhantomData<*mut ()>,
+    marker: PhantomData<(S, *mut ())>,
 }
 
-impl SharedLease {
+impl<S: SharedPoolState> SharedLease<S> {
     pub fn len(&self) -> usize {
         self.len as usize
     }
@@ -345,13 +367,6 @@ impl SharedLease {
         unsafe { slice::from_raw_parts_mut(Group::data(self.group, self.index), self.len as usize) }
     }
 
-    pub fn spare_writer(&mut self) -> SpareWriter<'_> {
-        let group = unsafe { self.group.as_ref() };
-        let len = self.len as usize;
-        let ptr = unsafe { Group::data(self.group, self.index).add(len).cast() };
-        unsafe { SpareWriter::new(ptr, group.capacity as usize - len, &mut self.len) }
-    }
-
     pub fn freeze(self) -> Pooled {
         let this = ManuallyDrop::new(self);
         Pooled {
@@ -363,47 +378,28 @@ impl SharedLease {
     }
 }
 
-impl Drop for SharedLease {
+impl SharedLease<Uninitialized> {
+    pub fn spare_writer(&mut self) -> SpareWriter<'_> {
+        let group = unsafe { self.group.as_ref() };
+        let len = self.len as usize;
+        let ptr = unsafe { Group::data(self.group, self.index).add(len).cast() };
+        unsafe { SpareWriter::new(ptr, group.capacity as usize - len, &mut self.len) }
+    }
+}
+
+impl<S: SharedPoolState> Drop for SharedLease<S> {
     fn drop(&mut self) {
         unsafe { Group::release_slot(self.group, self.index) };
     }
 }
 
-/// A leased slot whose entire capacity contains initialized bytes.
-pub struct InitializedSharedLease {
-    group: NonNull<Group>,
-    index: u32,
-    len: u32,
-    marker: PhantomData<*mut ()>,
+impl<S: SharedPoolState> PrefixLength for SharedLease<S> {
+    fn prefix_len(&self) -> usize {
+        self.len()
+    }
 }
 
-impl InitializedSharedLease {
-    pub fn len(&self) -> usize {
-        self.len as usize
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    pub fn as_slice(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(Group::data(self.group, self.index), self.len as usize) }
-    }
-
-    pub fn capacity(&self) -> usize {
-        unsafe { self.group.as_ref() }.capacity as usize
-    }
-
-    pub fn truncate(&mut self, len: usize) {
-        if len < self.len() {
-            self.len = len as u32;
-        }
-    }
-
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe { slice::from_raw_parts_mut(Group::data(self.group, self.index), self.len()) }
-    }
-
+impl SharedLease<Initialized> {
     /// Returns initialized capacity after the logical end.
     ///
     /// Reacquired slots retain values written by their previous lease.
@@ -427,22 +423,6 @@ impl InitializedSharedLease {
         }
         self.len = attempted as u32;
         Ok(())
-    }
-
-    pub fn freeze(self) -> Pooled {
-        let this = ManuallyDrop::new(self);
-        Pooled {
-            group: this.group,
-            index: this.index,
-            len: this.len,
-            marker: PhantomData,
-        }
-    }
-}
-
-impl Drop for InitializedSharedLease {
-    fn drop(&mut self) {
-        unsafe { Group::release_slot(self.group, self.index) };
     }
 }
 

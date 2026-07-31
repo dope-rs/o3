@@ -1,11 +1,11 @@
-mod block;
 mod bytes;
+mod inline;
+mod owned;
 mod pool;
-mod raw;
-mod refs;
-mod ring;
-mod rolling;
+mod prefix;
+mod queue;
 mod shared;
+mod storage;
 
 use std::error::Error;
 use std::fmt;
@@ -14,16 +14,20 @@ use std::ops::Range;
 use std::ptr::{self, NonNull, copy_nonoverlapping};
 
 use crate::marker::ThreadBound;
+use refs::LocalRefCount;
+use storage::refs;
 
-pub use block::pool::{BlockLease, BlockPool};
-pub use block::{Block, Owned};
-pub use bytes::{Borrowed, ByteSpan, Bytes, Leased, RetainBytes, Retained};
+pub use bytes::{Borrowed, ByteSink, ByteSpan, Bytes, Leased, RetainBytes, Retained, SliceWriter};
+pub use inline::{INLINE_BYTES_CAPACITY, InlineBytes};
+pub use owned::{BLOCK_CAPACITY, Owned};
 pub use pool::shared::{
-    InitializedSharedLease, InitializedSharedPool, Pooled, SharedLease, SharedPool,
+    Initialized, Pooled, SharedLease, SharedPool, SharedPoolLayout, SharedPoolPlan, Uninitialized,
 };
-pub use pool::{Lease, Pool, PoolLayout, PoolLayoutError};
-pub use ring::ByteRing;
-pub use rolling::RollingBuffer;
+pub use pool::{FixedPoolCapacity, Lease, Pool, PoolLayout, PoolLayoutError, RuntimePoolCapacity};
+pub use prefix::{PrefixLength, ValidatedPrefix};
+pub use queue::ring::ByteRing;
+pub use queue::rolling::RollingBuffer;
+pub use queue::{AdvanceSegment, RetainedSegmentQueue, SegmentQueue};
 pub use shared::Shared;
 pub use shared::snapshot::SnapshotBuf;
 pub use shared::strings::SharedStr;
@@ -71,6 +75,40 @@ impl fmt::Display for CapacityError {
 }
 
 impl Error for CapacityError {}
+
+fn checked_append_len<const N: usize>(
+    start: usize,
+    capacity: usize,
+    slices: &[&[u8]; N],
+) -> Result<usize, CapacityError> {
+    let mut end = start;
+    for slice in slices {
+        end = end
+            .checked_add(slice.len())
+            .ok_or_else(|| CapacityError::new(usize::MAX, capacity))?;
+        if end > capacity {
+            return Err(CapacityError::new(end, capacity));
+        }
+    }
+    Ok(end)
+}
+
+fn write_vec_slices<const N: usize>(out: &mut Vec<u8>, slices: [&[u8]; N]) {
+    let additional = slices
+        .iter()
+        .fold(0usize, |len, slice| len.saturating_add(slice.len()));
+    let start = out.len();
+    out.reserve(additional);
+    let mut offset = start;
+    for slice in slices {
+        // SAFETY: the aggregate reserve covers every copy and safe borrowing
+        // prevents the sources from aliasing this vector.
+        unsafe { copy_nonoverlapping(slice.as_ptr(), out.as_mut_ptr().add(offset), slice.len()) };
+        offset += slice.len();
+    }
+    // SAFETY: every byte in `start..offset` was initialized above.
+    unsafe { out.set_len(offset) };
+}
 
 /// Failure to construct an exact-length [`Owned`] buffer.
 ///
@@ -208,21 +246,29 @@ impl<'a> SpareWriter<'a> {
     }
 
     pub fn try_extend_from_slice(&mut self, src: &[u8]) -> Result<(), CapacityError> {
-        let attempted = self
-            .written
-            .checked_add(src.len())
-            .ok_or_else(|| CapacityError::new(usize::MAX, self.capacity))?;
-        if attempted > self.capacity {
-            return Err(CapacityError::new(attempted, self.capacity));
+        self.try_extend_from_slices([src])
+    }
+
+    /// Appends every slice after validating their aggregate length.
+    ///
+    /// On failure, neither the writer length nor its target length changes.
+    pub fn try_extend_from_slices<const N: usize>(
+        &mut self,
+        slices: [&[u8]; N],
+    ) -> Result<(), CapacityError> {
+        let end = checked_append_len(self.written, self.capacity, &slices)?;
+        let mut offset = self.written;
+        for src in slices {
+            unsafe {
+                copy_nonoverlapping(
+                    src.as_ptr(),
+                    self.ptr.as_ptr().add(offset).cast(),
+                    src.len(),
+                )
+            };
+            offset += src.len();
         }
-        unsafe {
-            copy_nonoverlapping(
-                src.as_ptr(),
-                self.ptr.as_ptr().add(self.written).cast(),
-                src.len(),
-            )
-        };
-        self.written = attempted;
+        self.written = end;
         Ok(())
     }
 
