@@ -1,10 +1,12 @@
 use crate::confined::assert_confined;
 use o3::buffer::{
-    Block, BlockLease, BlockPool, ByteRing, Bytes, CapacityError, Lease, Owned, Pool, Retained,
-    RollingBuffer, Shared, SharedStr, SnapshotBuf, SpareWriter,
+    BLOCK_CAPACITY, ByteRing, Bytes, CapacityError, FixedPoolCapacity, Lease, Owned, Pool,
+    Retained, RollingBuffer, Shared, SharedStr, SnapshotBuf, SpareWriter,
 };
 use o3::cell::{BrandCell, BrandToken, CheckedCell, RawCell};
-use o3::collections::{CellQueue, CellSlotQueue, FixedQueue, RoundRobinSet, SlotQueue};
+use o3::collections::{
+    CellQueue, CellSlotQueue, FixedQueue, LinkedArena, RoundRobinSet, SlotQueue,
+};
 use o3::collections::{FixedHashTable, IndexedMinHeap};
 use o3::collections::{
     FixedPinSlab, FixedPinSlabVacantEntry, PinSlab, PinSlabVacantEntry, Slab, SlabGeneration,
@@ -12,13 +14,17 @@ use o3::collections::{
 };
 use o3::marker::ThreadBound;
 use o3::mem::ScratchVec;
-use o3::mem::{ByteBudget, ByteBudgetHandle, ByteLease, FairCredits};
+use o3::mem::{
+    ByteBudget, ByteBudgetHandle, ByteLease, FairCreditLane, FairCreditPool, FairCreditState,
+    FairCredits,
+};
 
 assert_confined!(FixedQueue<u8>);
 assert_confined!(CellQueue<u8>);
 assert_confined!(CellSlotQueue<u8>);
 assert_confined!(SlotQueue<u8>);
 assert_confined!(RoundRobinSet);
+assert_confined!(LinkedArena<u8>);
 assert_confined!(IndexedMinHeap<u8>);
 assert_confined!(FixedHashTable<u8>);
 assert_confined!(PinSlab<u8>);
@@ -30,7 +36,7 @@ assert_confined!(SlabGeneration);
 assert_confined!(SlabKey);
 assert_confined!(SlabKeyParts);
 assert_confined!(Owned);
-assert_confined!(Block);
+assert_confined!(Owned<BLOCK_CAPACITY>);
 assert_confined!(SpareWriter<'static>);
 assert_confined!(Shared);
 assert_confined!(SharedStr);
@@ -38,14 +44,16 @@ assert_confined!(Bytes<Retained>);
 assert_confined!(SnapshotBuf<16_384>);
 assert_confined!(Pool);
 assert_confined!(Lease<'static>);
-assert_confined!(BlockPool);
-assert_confined!(BlockLease<'static>);
+assert_confined!(Pool<FixedPoolCapacity<BLOCK_CAPACITY>>);
+assert_confined!(Lease<'static, FixedPoolCapacity<BLOCK_CAPACITY>>);
 assert_confined!(RollingBuffer<64>);
 assert_confined!(ByteRing);
 assert_confined!(ByteBudget);
 assert_confined!(ByteBudgetHandle<'static>);
 assert_confined!(ByteLease<'static>);
 assert_confined!(FairCredits);
+assert_confined!(FairCreditPool);
+assert_confined!(FairCreditLane<'static>);
 assert_confined!(ScratchVec<u8>);
 assert_confined!(ThreadBound);
 assert_confined!(BrandToken<'static>);
@@ -74,8 +82,15 @@ fn state_is_confined_and_keys_are_word_sized() {
     assert_eq!(std::mem::size_of::<SlabKey>(), 8);
     assert_eq!(std::mem::size_of::<SlabKeyParts>(), 8);
     assert_eq!(std::mem::size_of::<SlabGeneration>(), 4);
-    assert_eq!(std::mem::size_of::<FairCredits>(), 48);
-    assert_eq!(std::mem::size_of::<FairCredits<2>>(), 80);
+    assert_eq!(std::mem::size_of::<LinkedArena<u8>>(), 48);
+    assert_eq!(std::mem::size_of::<FairCreditPool>(), 8);
+    assert_eq!(std::mem::size_of::<FairCreditPool<2>>(), 16);
+    assert_eq!(std::mem::size_of::<FairCreditState>(), 16);
+    assert_eq!(std::mem::size_of::<FairCreditState<2>>(), 32);
+    assert_eq!(std::mem::size_of::<FairCreditLane<'_>>(), 24);
+    assert_eq!(std::mem::size_of::<FairCreditLane<'_, 2>>(), 32);
+    assert_eq!(std::mem::size_of::<FairCredits>(), 40);
+    assert_eq!(std::mem::size_of::<FairCredits<2>>(), 64);
     assert_eq!(
         std::mem::size_of::<CapacityError>(),
         std::mem::size_of::<usize>() * 2

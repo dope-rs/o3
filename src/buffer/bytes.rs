@@ -1,10 +1,16 @@
+use std::convert::Infallible;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
+use std::slice;
 
-use super::RangeExt;
 use super::pool::shared::Pooled;
+use super::prefix::consume_prefix_api;
 use super::shared::Shared;
+use super::{
+    ByteRing, CapacityError, PrefixLength, RangeExt, SpareWriter, checked_append_len,
+    write_vec_slices,
+};
 
 pub(super) mod sealed {
     pub trait Storage {
@@ -70,16 +76,16 @@ pub trait RetainBytes: ByteSpan + sealed::RetainBytes + Sized {
 }
 
 impl<'a> Bytes<Borrowed<'a>> {
-    /// # Panics
-    /// Panics if `range` is reversed or out of bounds.
-    #[track_caller]
     #[must_use]
-    pub fn slice(self, range: Range<usize>) -> Self {
-        Self {
+    pub fn get(self, range: Range<usize>) -> Option<Self> {
+        if !range.is_within(self.storage.slice.len()) {
+            return None;
+        }
+        Some(Self {
             storage: Borrowed {
                 slice: &self.storage.slice[range],
             },
-        }
+        })
     }
 }
 
@@ -89,16 +95,9 @@ impl Bytes<Shared> {
         self.storage
     }
 
-    /// # Panics
-    /// Panics if `range` is reversed or out of bounds.
-    #[track_caller]
     #[must_use]
-    pub fn slice(mut self, range: Range<usize>) -> Self {
-        assert!(
-            self.storage.try_slice_in_place(range),
-            "shared byte range is out of bounds"
-        );
-        self
+    pub fn get(mut self, range: Range<usize>) -> Option<Self> {
+        self.storage.try_slice_in_place(range).then_some(self)
     }
 }
 
@@ -118,28 +117,32 @@ impl Bytes<Retained> {
         }
     }
 
-    /// # Panics
-    /// Panics if `range` is reversed or out of bounds.
-    #[track_caller]
     #[must_use]
-    pub fn slice(mut self, range: Range<usize>) -> Self {
-        assert!(
-            self.storage.try_slice_in_place(range),
-            "retained byte range is out of bounds"
-        );
-        self
+    pub fn get(mut self, range: Range<usize>) -> Option<Self> {
+        self.storage.try_slice_in_place(range).then_some(self)
     }
 
-    /// # Panics
-    /// Panics if `n` exceeds the remaining length.
-    #[track_caller]
-    pub fn advance(&mut self, n: usize) {
+    pub fn try_advance(&mut self, n: usize) -> bool {
         let len = self.storage.len();
-        assert!(
-            self.storage.try_slice_in_place(n..len),
-            "retained bytes advance is out of bounds"
-        );
+        self.storage.try_slice_in_place(n..len)
     }
+
+    fn consume_valid(&mut self, amount: usize) {
+        debug_assert!(amount <= self.len());
+        if amount == self.storage.len() {
+            self.storage.repr = RetainedRepr::Shared(Shared::new());
+            return;
+        }
+        match &mut self.storage.repr {
+            RetainedRepr::Leased { start, len, .. } => {
+                *start += amount as u32;
+                *len -= amount as u32;
+            }
+            RetainedRepr::Shared(shared) => shared.consume_valid(amount),
+        }
+    }
+
+    consume_prefix_api!(Self::consume_valid);
 }
 
 impl Retained {
@@ -282,6 +285,12 @@ impl<S: sealed::Storage> AsRef<[u8]> for Bytes<S> {
     }
 }
 
+impl<S: sealed::Storage> PrefixLength for Bytes<S> {
+    fn prefix_len(&self) -> usize {
+        self.len()
+    }
+}
+
 impl<S: sealed::Storage> PartialEq for Bytes<S> {
     fn eq(&self, other: &Self) -> bool {
         self.as_slice() == other.as_slice()
@@ -352,5 +361,90 @@ impl From<Pooled> for Bytes<Retained> {
                 },
             },
         }
+    }
+}
+
+/// A byte destination whose individual writes either append completely or
+/// leave its logical output unchanged.
+pub trait ByteSink {
+    type Error;
+
+    fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error>;
+
+    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.write_slices([bytes])
+    }
+
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+        self.write_slices([slice::from_ref(&byte)])
+    }
+}
+
+impl ByteSink for Vec<u8> {
+    type Error = Infallible;
+
+    fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
+        write_vec_slices(self, slices);
+        Ok(())
+    }
+}
+
+impl ByteSink for SpareWriter<'_> {
+    type Error = CapacityError;
+
+    fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
+        self.try_extend_from_slices(slices)
+    }
+}
+
+impl ByteSink for ByteRing {
+    type Error = CapacityError;
+
+    fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
+        self.try_extend_from_slices(slices)
+    }
+}
+
+/// A checked cursor over an initialized output slice.
+pub struct SliceWriter<'a> {
+    out: &'a mut [u8],
+    written: usize,
+}
+
+impl<'a> SliceWriter<'a> {
+    pub fn new(out: &'a mut [u8]) -> Self {
+        Self { out, written: 0 }
+    }
+
+    pub const fn len(&self) -> usize {
+        self.written
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.written == 0
+    }
+
+    pub const fn remaining(&self) -> usize {
+        self.out.len() - self.written
+    }
+
+    pub fn finish(self) -> usize {
+        self.written
+    }
+}
+
+impl ByteSink for SliceWriter<'_> {
+    type Error = CapacityError;
+
+    fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
+        let end = checked_append_len(self.written, self.out.len(), &slices)?;
+        let mut offset = self.written;
+        for src in slices {
+            let next = offset + src.len();
+            self.out[offset..next].copy_from_slice(src);
+            offset = next;
+        }
+        self.written = end;
+        Ok(())
     }
 }

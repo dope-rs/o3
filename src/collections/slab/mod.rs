@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 pub mod cell;
 mod core;
 pub mod key;
+pub mod lease;
 mod pending;
 pub mod pin;
 

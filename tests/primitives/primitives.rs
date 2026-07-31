@@ -1,21 +1,34 @@
 use std::pin::pin;
 
-use o3::buffer::{BlockLease, BlockPool, Pool, PoolLayout, PoolLayoutError, Shared, SharedStr};
+use o3::buffer::{
+    BLOCK_CAPACITY, FixedPoolCapacity, Lease, Pool, PoolLayout, PoolLayoutError, Shared, SharedStr,
+};
 use o3::cell::{BrandCell, BrandToken, RegionCell};
-use o3::mem::{ByteBudget, FairCredits, ScratchVec};
+use o3::mem::{ByteBudget, FairCreditPool, FairCreditState, FairCredits, ScratchVec};
+
+type FixedPool = Pool<FixedPoolCapacity<BLOCK_CAPACITY>>;
+type FixedLease = Lease<'static, FixedPoolCapacity<BLOCK_CAPACITY>>;
+
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn fixed_pool_capacity_adds_no_runtime_state() {
+    assert_eq!(size_of::<Pool>(), 40);
+    assert_eq!(size_of::<FixedPool>(), 32);
+    assert_eq!(size_of::<Lease<'static>>(), 32);
+    assert_eq!(size_of::<FixedLease>(), 32);
+}
 
 #[test]
 fn pooled_buffers_enforce_capacity_and_recycle_leases() {
-    assert_eq!(std::mem::size_of::<BlockLease<'static>>(), 32);
-    let pool = pin!(BlockPool::new(1));
-    let mut buffer = pool.as_ref().try_acquire().unwrap();
-    let block = vec![b'x'; BlockPool::CAPACITY];
+    let pool = FixedPool::new(1);
+    let mut buffer = pool.try_acquire().unwrap();
+    let block = vec![b'x'; FixedPool::CAPACITY];
     buffer.try_extend_from_slice(&block).unwrap();
     let overflow = buffer.try_push(b'e').unwrap_err();
     assert_eq!(buffer.as_ref(), block);
-    assert_eq!(overflow.attempted(), BlockPool::CAPACITY + 1);
-    assert_eq!(overflow.capacity(), BlockPool::CAPACITY);
-    assert!(pool.as_ref().try_acquire().is_none());
+    assert_eq!(overflow.attempted(), FixedPool::CAPACITY + 1);
+    assert_eq!(overflow.capacity(), FixedPool::CAPACITY);
+    assert!(pool.try_acquire().is_none());
     drop(buffer);
     assert_eq!(pool.available(), 1);
 }
@@ -49,7 +62,7 @@ fn byte_budget_returns_capacity() {
 
 #[test]
 fn fair_credits_protect_each_lane_and_share_the_rest() {
-    let mut credits = FairCredits::with_reserve(8, 2, 2);
+    let credits = FairCredits::with_reserve(8, 2, 2);
     assert!(credits.try_acquire(0, 6));
     assert!(!credits.try_acquire(0, 1));
     assert!(credits.try_acquire(1, 2));
@@ -70,7 +83,7 @@ fn fair_credits_protect_each_lane_and_share_the_rest() {
 
 #[test]
 fn fair_credits_acquire_multiple_dimensions_atomically() {
-    let mut credits = FairCredits::from_capacities([8, 80], 2);
+    let credits = FairCredits::from_capacities([8, 80], 2);
 
     assert!(!credits.try_acquire_all(0, [6, 61]));
     assert!(credits.try_acquire_all(0, [6, 60]));
@@ -87,14 +100,31 @@ fn fair_credits_acquire_multiple_dimensions_atomically() {
 }
 
 #[test]
+fn fair_credits_split_exact_total_reserves_without_stranding_remainders() {
+    let pool = FairCreditPool::new([0, 9]);
+    let first = FairCreditState::split_at([3, 21], 2, 0);
+    let second = FairCreditState::split_at([3, 21], 2, 1);
+    let first_credit = pool.bind(&first);
+    let second_credit = pool.bind(&second);
+
+    assert_eq!(first.reserved(), [2, 11]);
+    assert_eq!(second.reserved(), [1, 10]);
+    assert!(second_credit.try_acquire_all([1, 10]));
+    assert!(!second_credit.try_acquire_all([1, 1]));
+    assert!(first_credit.try_acquire_all([2, 11]));
+    first_credit.release_all([2, 11]);
+    assert!(first_credit.try_acquire_all([2, 20]));
+}
+
+#[test]
 fn pooled_buffers_extend_from_slices_with_one_reservation() {
-    let pool = std::pin::pin!(BlockPool::new(1));
-    let mut lease = pool.as_ref().try_acquire().unwrap();
+    let pool = FixedPool::new(1);
+    let mut lease = pool.try_acquire().unwrap();
     lease
         .try_extend_from_slices([&b"ab"[..], &b"cde"[..]])
         .unwrap();
     assert_eq!(lease.as_ref(), b"abcde");
-    let overflow = vec![b'x'; BlockPool::CAPACITY - 4];
+    let overflow = vec![b'x'; FixedPool::CAPACITY - 4];
     assert!(
         lease
             .try_extend_from_slices([overflow.as_slice(), &[]])
@@ -105,13 +135,13 @@ fn pooled_buffers_extend_from_slices_with_one_reservation() {
 
 #[test]
 fn pooled_buffers_reuse_consumed_prefixes() {
-    let pool = std::pin::pin!(BlockPool::new(1));
-    let mut lease = pool.as_ref().try_acquire().unwrap();
+    let pool = FixedPool::new(1);
+    let mut lease = pool.try_acquire().unwrap();
     lease.spare_writer().try_extend_from_slice(b"abcd").unwrap();
-    lease.consume(3);
+    lease.try_consume(3).unwrap();
     lease.try_extend_from_slice(b"efgh").unwrap();
     assert_eq!(lease.as_ref(), b"defgh");
-    let fill = vec![b'x'; BlockPool::CAPACITY - lease.len()];
+    let fill = vec![b'x'; FixedPool::CAPACITY - lease.len()];
     lease.try_extend_from_slice(&fill).unwrap();
     assert!(lease.try_push(b'i').is_err());
     assert_eq!(&lease.as_ref()[..5], b"defgh");
@@ -120,9 +150,8 @@ fn pooled_buffers_reuse_consumed_prefixes() {
 #[test]
 fn runtime_pool_uses_its_configured_slot_capacity() {
     let layout = PoolLayout::new(2, 31).expect("the test pool layout is valid");
-    let pool = pin!(Pool::new(layout));
+    let pool = Pool::from_layout(layout);
     let mut lease = pool
-        .as_ref()
         .try_acquire()
         .expect("the configured pool has two free slots");
     assert_eq!(lease.capacity(), 31);
@@ -141,8 +170,21 @@ fn runtime_pool_layout_rejects_only_invalid_allocation_shapes() {
     );
 
     let empty = PoolLayout::new(0, 1).expect("a zero-slot pool has a valid empty layout");
-    let pool = pin!(Pool::new(empty));
-    assert!(pool.as_ref().try_acquire().is_none());
+    let pool = Pool::from_layout(empty);
+    assert!(pool.try_acquire().is_none());
+}
+
+#[test]
+fn local_pool_owners_are_movable() {
+    fn assert_unpin<T: Unpin>() {}
+
+    assert_unpin::<Pool>();
+    assert_unpin::<FixedPool>();
+
+    let pool = FixedPool::new(1);
+    let lease = pool.try_acquire().expect("movable pool has one slot");
+    drop(lease);
+    assert_eq!(pool.available(), 1);
 }
 
 #[test]

@@ -18,6 +18,7 @@ pub use queue::round::RoundRobinSet;
 pub use queue::slot::{CellSlotQueue, SlotQueue, SlotQueueVacantEntry};
 pub use slab::cell::CellSlab;
 pub use slab::key::{SlabGeneration, SlabKey, SlabKeyParts};
+pub use slab::lease::{LeaseSlab, LeaseSlabError, LeaseSlabVacantEntry, SlabLease};
 pub use slab::pin::fixed::{FixedPinSlab, FixedPinSlabVacantEntry};
 pub use slab::pin::{PinSlab, PinSlabVacantEntry};
 pub use slab::{Slab, SlabVacantEntry};

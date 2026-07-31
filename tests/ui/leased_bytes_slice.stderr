@@ -1,11 +1,10 @@
-error[E0599]: no method named `slice` found for struct `o3::buffer::Bytes<Leased>` in the current scope
+error[E0599]: no method named `get` found for struct `o3::buffer::Bytes<Leased>` in the current scope
  --> tests/ui/leased_bytes_slice.rs:4:19
   |
-4 |     let _ = bytes.slice(0..0);
-  |                   ^^^^^
+4 |     let _ = bytes.get(0..0);
+  |                   ^^^ method not found in `o3::buffer::Bytes<Leased>`
   |
-help: there is a method `as_slice` with a similar name, but with different arguments
- --> src/buffer/bytes.rs
-  |
-  |     pub fn as_slice(&self) -> &[u8] {
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: the method was found for
+          - `o3::buffer::Bytes<Retained>`
+          - `o3::buffer::Bytes<Shared>`
+          - `o3::buffer::Bytes<o3::buffer::Borrowed<'a>>`

@@ -468,3 +468,36 @@ fn collection_drop_finishes_after_one_element_panics() {
         drop(arena);
     });
 }
+
+#[test]
+fn linked_arena_mutates_a_lane_front_without_relinking_it() {
+    let mut arena = LinkedArena::with_capacity(3, 2);
+    arena.push_back(0, String::from("head")).unwrap();
+    arena.push_back(0, String::from("tail")).unwrap();
+    arena.push_back(1, String::from("other")).unwrap();
+
+    let front = arena.front(0).unwrap() as *const String;
+    arena.front_mut(0).unwrap().push_str("-mutated");
+
+    assert_eq!(arena.front(0).unwrap(), "head-mutated");
+    assert_eq!(arena.front(0).unwrap() as *const String, front);
+    assert_eq!(arena.lane_len(0), 2);
+    assert_eq!(arena.lane_len(1), 1);
+    assert_eq!(arena.capacity(), 3);
+    assert_eq!(arena.available(), 0);
+    assert_eq!(arena.lane_count(), 2);
+}
+
+#[test]
+fn linked_arena_represents_an_inert_zero_lane_configuration_without_allocation() {
+    let mut arena = LinkedArena::<u8>::with_capacity(0, 0);
+
+    assert_eq!(arena.capacity(), 0);
+    assert_eq!(arena.available(), 0);
+    assert_eq!(arena.lane_count(), 0);
+    assert!(arena.is_full());
+    assert!(arena.push_back(0, 1).is_err());
+    assert!(arena.pop_front(0).is_none());
+    assert!(arena.front(0).is_none());
+    assert!(arena.front_mut(0).is_none());
+}
