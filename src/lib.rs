@@ -5,6 +5,7 @@ const _: () = assert!(
 
 pub mod marker;
 pub mod num;
+pub mod permit;
 
 pub mod buffer;
 pub mod cell;

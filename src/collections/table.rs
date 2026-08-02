@@ -1,4 +1,6 @@
+use std::alloc::Layout;
 use std::fmt;
+use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 
 use crate::collections::ClearGuard;
@@ -10,6 +12,48 @@ enum Probe {
     Occupied(usize),
     Vacant(usize),
     Full,
+}
+
+pub struct FixedHashTablePlan<V> {
+    capacity: usize,
+    marker: PhantomData<fn() -> V>,
+}
+
+impl<V> Copy for FixedHashTablePlan<V> {}
+
+impl<V> Clone for FixedHashTablePlan<V> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<V> fmt::Debug for FixedHashTablePlan<V> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FixedHashTablePlan")
+            .field("capacity", &self.capacity)
+            .finish()
+    }
+}
+
+impl<V> FixedHashTablePlan<V> {
+    pub fn new(capacity: usize) -> Option<Self> {
+        if capacity > 1 << (usize::BITS - 2) {
+            return None;
+        }
+        let buckets = (capacity * 2).next_power_of_two();
+        (Layout::array::<u8>(buckets).is_ok()
+            && Layout::array::<u64>(buckets).is_ok()
+            && Layout::array::<V>(buckets).is_ok())
+        .then_some(Self {
+            capacity,
+            marker: PhantomData,
+        })
+    }
+
+    pub fn capacity(self) -> usize {
+        self.capacity
+    }
 }
 
 pub struct FixedHashTable<V> {
@@ -51,11 +95,17 @@ impl<V: fmt::Debug> fmt::Debug for FixedHashTable<V> {
 }
 
 impl<V> FixedHashTable<V> {
+    pub fn capacity_fits(capacity: usize) -> bool {
+        FixedHashTablePlan::<V>::new(capacity).is_some()
+    }
+
     pub fn with_capacity(capacity: usize) -> Self {
-        assert!(
-            capacity <= 1 << (usize::BITS - 2),
-            "hash table capacity overflow"
-        );
+        let plan = FixedHashTablePlan::new(capacity).expect("hash table capacity overflow");
+        Self::from_plan(plan)
+    }
+
+    pub fn from_plan(plan: FixedHashTablePlan<V>) -> Self {
+        let capacity = plan.capacity();
         let buckets = (capacity * 2).next_power_of_two();
         Self {
             controls: vec![EMPTY; buckets].into_boxed_slice(),
@@ -149,6 +199,12 @@ impl<V> FixedHashTable<V> {
             .filter_map(move |(index, value)| {
                 (controls[index] != EMPTY).then(|| unsafe { value.assume_init_mut() })
             })
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.values.iter().enumerate().filter_map(|(index, value)| {
+            (self.controls[index] != EMPTY).then(|| unsafe { value.assume_init_ref() })
+        })
     }
 
     pub fn clear(&mut self) {
