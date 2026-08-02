@@ -22,7 +22,7 @@ pub use slab::lease::{LeaseSlab, LeaseSlabError, LeaseSlabVacantEntry, SlabLease
 pub use slab::pin::fixed::{FixedPinSlab, FixedPinSlabVacantEntry};
 pub use slab::pin::{PinSlab, PinSlabVacantEntry};
 pub use slab::{Slab, SlabVacantEntry};
-pub use table::FixedHashTable;
+pub use table::{FixedHashTable, FixedHashTablePlan};
 
 pub(crate) mod index {
     pub trait Sealed {}

@@ -1,10 +1,11 @@
 use o3::collections::Slab;
 use o3::collections::{
-    CellQueue, CellSlotQueue, FixedHashTable, FixedQueue, IndexedMinHeap, LinkedArena,
-    RoundRobinSet, SlotQueue,
+    CellQueue, CellSlotQueue, FixedHashTable, FixedHashTablePlan, FixedQueue, IndexedMinHeap,
+    LinkedArena, RoundRobinSet, SlotQueue,
 };
 use std::cell::Cell;
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 
 use crate::support::PanicDrop;
 
@@ -195,13 +196,18 @@ fn indexed_collections_reject_reused_slab_keys() {
 #[test]
 fn bounded_queues_are_fifo() {
     let mut queue = FixedQueue::with_capacity(3);
+    assert!(queue.is_empty());
     assert!(queue.push_back(1).is_ok());
     assert!(queue.push_back(2).is_ok());
+    assert_eq!(queue.len(), 2);
     assert!(queue.contains(&1));
     assert_eq!(queue.pop_front(), Some(1));
     assert!(!queue.contains(&1));
     assert!(queue.push_back(3).is_ok());
     assert!(queue.push_back(4).is_ok());
+    assert!(queue.is_full());
+    assert_eq!(queue.len(), 3);
+    assert_eq!(queue.push_back(5), Err(5));
     assert_eq!(queue.pop_front(), Some(2));
     assert_eq!(queue.pop_front(), Some(3));
     assert_eq!(queue.pop_front(), Some(4));
@@ -239,7 +245,11 @@ fn round_robin_set_rotates_and_unlinks() {
 
 #[test]
 fn fixed_hash_table_reuses_wrapped_clusters() {
-    let mut table: FixedHashTable<(u32, u32)> = FixedHashTable::with_capacity(8);
+    assert!(FixedHashTable::<u8>::capacity_fits(8));
+    assert!(!FixedHashTable::<u8>::capacity_fits(usize::MAX));
+    let plan = FixedHashTablePlan::new(8).unwrap();
+    assert_eq!(plan.capacity(), 8);
+    let mut table: FixedHashTable<(u32, u32)> = FixedHashTable::from_plan(plan);
     for epoch in 0..256u32 {
         for key in 0..8u32 {
             assert_eq!(
@@ -273,6 +283,10 @@ fn fixed_hash_table_owns_non_copy_values() {
     for value in table.values_mut() {
         value.push('!');
     }
+    assert_eq!(
+        table.values().map(String::as_str).collect::<Vec<_>>(),
+        ["first value!"]
+    );
     assert_eq!(
         table.insert(7, String::from("second"), |value| value == "first value!"),
         Ok(Some(String::from("first value!")))
@@ -319,6 +333,54 @@ fn fixed_queue_wrap_math_handles_zst_capacity() {
     assert_eq!(queue.len(), 2);
     assert_eq!(queue.pop_front(), Some(()));
     assert_eq!(queue.pop_front(), Some(()));
+}
+
+#[test]
+fn fixed_queue_matches_vec_deque_under_mixed_wraparound() {
+    let mut fixed = FixedQueue::with_capacity(17);
+    let mut model = VecDeque::with_capacity(17);
+    let mut state = 1u64;
+    for _ in 0..10_000 {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        match state >> 61 {
+            0 | 1 => {
+                let value = state as u32;
+                let actual = fixed.push_back(value);
+                let expected = if model.len() == 17 {
+                    Err(value)
+                } else {
+                    model.push_back(value);
+                    Ok(())
+                };
+                assert_eq!(actual, expected);
+            }
+            2 | 3 => {
+                let value = state as u32;
+                let actual = fixed.push_front(value);
+                let expected = if model.len() == 17 {
+                    Err(value)
+                } else {
+                    model.push_front(value);
+                    Ok(())
+                };
+                assert_eq!(actual, expected);
+            }
+            4 | 5 => assert_eq!(fixed.pop_front(), model.pop_front()),
+            _ => {
+                let parity = state as u32 & 1;
+                fixed.retain(|value| value & 1 == parity);
+                model.retain(|value| value & 1 == parity);
+            }
+        }
+        assert_eq!(fixed.len(), model.len());
+        assert_eq!(
+            fixed.iter().copied().collect::<Vec<_>>(),
+            model.iter().copied().collect::<Vec<_>>()
+        );
+        assert_eq!(fixed.front(), model.front());
+        assert_eq!(fixed.is_empty(), model.is_empty());
+        assert_eq!(fixed.is_full(), model.len() == 17);
+    }
 }
 
 #[test]
@@ -398,6 +460,7 @@ fn heap_holes_close_when_comparison_panics() {
 #[test]
 fn fixed_collections_keep_their_thin_layouts() {
     assert_eq!(std::mem::size_of::<FixedQueue<u64>>(), 32);
+    assert_eq!(std::mem::size_of::<FixedHashTable<u64>>(), 64);
     assert_eq!(std::mem::size_of::<SlotQueue<u64>>(), 32);
     assert_eq!(std::mem::size_of::<Slab<u64>>(), 40);
     assert_eq!(std::mem::size_of::<RoundRobinSet>(), 32);

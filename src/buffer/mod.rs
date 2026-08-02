@@ -187,6 +187,14 @@ impl<'a> SpareWriter<'a> {
         self.written == 0
     }
 
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr().cast(), self.written) }
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        self.written = self.written.min(len);
+    }
+
     pub fn remaining(&self) -> usize {
         self.capacity - self.written
     }

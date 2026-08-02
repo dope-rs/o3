@@ -14,6 +14,7 @@ fn type_boundaries_do_not_compile() {
     t.compile_fail("tests/ui/pin_slab_take.rs");
     t.compile_fail("tests/ui/prefix_target_mutation.rs");
     t.compile_fail("tests/ui/region_permission_domain.rs");
+    t.compile_fail("tests/ui/return_permit_borrow.rs");
     t.compile_fail("tests/ui/uninitialized_shared_pool_spare.rs");
     t.compile_fail("tests/ui/zero_generation_limit.rs");
 }
