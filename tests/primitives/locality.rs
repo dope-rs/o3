@@ -5,7 +5,8 @@ use o3::buffer::{
 };
 use o3::cell::{BrandCell, BrandToken, CheckedCell, RawCell};
 use o3::collections::{
-    CellQueue, CellSlotQueue, FixedQueue, LinkedArena, RoundRobinSet, SlotQueue,
+    CellQueue, CellSlotQueue, FixedIndexTable, FixedQueue, LinkedArena, RoundRobinSet, SlotQueue,
+    StackArena,
 };
 use o3::collections::{FixedHashTable, IndexedMinHeap};
 use o3::collections::{
@@ -64,6 +65,8 @@ assert_confined!(RawCell<u8>);
 const _: fn() = || {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<CapacityError>();
+    assert_send_sync::<FixedIndexTable<u8>>();
+    assert_send_sync::<StackArena<u8>>();
 };
 
 const _: fn() = || {
@@ -83,6 +86,7 @@ fn state_is_confined_and_keys_are_word_sized() {
     assert_eq!(std::mem::size_of::<SlabKeyParts>(), 8);
     assert_eq!(std::mem::size_of::<SlabGeneration>(), 4);
     assert_eq!(std::mem::size_of::<LinkedArena<u8>>(), 48);
+    assert_eq!(std::mem::size_of::<StackArena<u8>>(), 48);
     assert_eq!(std::mem::size_of::<FairCreditPool>(), 8);
     assert_eq!(std::mem::size_of::<FairCreditPool<2>>(), 16);
     assert_eq!(std::mem::size_of::<FairCreditState>(), 16);

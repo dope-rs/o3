@@ -31,6 +31,72 @@ impl Default for AvlNode {
     }
 }
 
+/// A structurally pinned AVL node and its owner.
+#[repr(C)]
+pub struct AvlEntry<T> {
+    node: AvlNode,
+    value: T,
+}
+
+impl<T> AvlEntry<T> {
+    pub const fn new(value: T) -> Self {
+        Self {
+            node: AvlNode::new(),
+            value,
+        }
+    }
+
+    pub fn value(self: Pin<&Self>) -> &T {
+        &Pin::get_ref(self).value
+    }
+
+    pub fn is_linked(self: Pin<&Self>) -> bool {
+        Pin::get_ref(self).node.height.get() != 0
+    }
+}
+
+#[doc(hidden)]
+pub struct AvlEntryAdapter<T>(PhantomData<fn(T) -> T>);
+
+// SAFETY: `AvlEntry` is repr(C) with `node` at offset zero. The projection is
+// structurally pinned, and casting that node address back is its exact inverse.
+unsafe impl<T> AvlAdapter for AvlEntryAdapter<T> {
+    type Value = AvlEntry<T>;
+
+    fn node(value: Pin<&Self::Value>) -> Pin<&AvlNode> {
+        // SAFETY: `node` is a structurally pinned field of `AvlEntry`.
+        unsafe { value.map_unchecked(|entry| &entry.node) }
+    }
+
+    unsafe fn from_node(node: NonNull<AvlNode>) -> NonNull<Self::Value> {
+        node.cast()
+    }
+}
+
+pub type AvlEntryTree<T> = AvlTree<AvlEntryAdapter<T>>;
+
+impl<T> AvlEntryTree<T> {
+    pub fn first_entry(&self) -> Option<Pin<&AvlEntry<T>>> {
+        self.first()
+    }
+
+    /// # Safety
+    /// Entry stays pinned, live, unlinked, and strictly ordered while linked.
+    pub unsafe fn insert_entry(
+        &self,
+        entry: Pin<&AvlEntry<T>>,
+        mut before: impl FnMut(&T, &T) -> bool,
+    ) {
+        unsafe { self.insert(entry, |left, right| before(&left.value, &right.value)) };
+    }
+
+    /// # Safety
+    /// Entry is linked in this tree exactly once.
+    pub unsafe fn remove_entry(&self, entry: Pin<&AvlEntry<T>>) {
+        unsafe { self.remove(entry) };
+    }
+}
+
 /// Maps one intrusive node field to its pinned owner.
 ///
 /// # Safety

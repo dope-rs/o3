@@ -1,4 +1,3 @@
-use std::cell::{Cell, UnsafeCell};
 use std::mem::MaybeUninit;
 
 use crate::marker::ThreadBound;
@@ -8,22 +7,22 @@ use super::ClearGuard;
 const NONE: u32 = u32::MAX;
 
 struct Node<T> {
-    value: UnsafeCell<MaybeUninit<T>>,
-    next: Cell<u32>,
+    value: MaybeUninit<T>,
+    next: u32,
 }
 
 struct NodePool<T> {
-    nodes: Box<[Node<T>]>,
-    free: Cell<u32>,
-    available: Cell<usize>,
-    _thread: ThreadBound,
+    nodes: Box<[MaybeUninit<Node<T>>]>,
+    free: u32,
+    initialized: u32,
+    live: u32,
 }
 
 #[derive(Clone, Copy)]
 struct ChainState {
     head: u32,
     tail: u32,
-    len: usize,
+    len: u32,
 }
 
 impl ChainState {
@@ -38,6 +37,24 @@ impl ChainState {
 pub struct LinkedArena<T> {
     nodes: NodePool<T>,
     lanes: Box<[ChainState]>,
+    _thread: ThreadBound,
+}
+
+/// Fixed node storage shared by persistent LIFO lanes.
+///
+/// Nodes are initialized only when first used. Moving a value between lanes or
+/// returning it to the pool never allocates.
+pub struct StackArena<T> {
+    nodes: NodePool<T>,
+    lanes: Box<[u32]>,
+}
+
+/// Values removed from one [`StackArena`] lane.
+///
+/// Dropping the iterator releases every value that has not yet been yielded.
+pub struct StackDrain<'a, T> {
+    arena: &'a mut StackArena<T>,
+    lane: usize,
 }
 
 impl<T> NodePool<T> {
@@ -47,65 +64,65 @@ impl<T> NodePool<T> {
             "linked node capacity overflow"
         );
         Self {
-            nodes: (0..capacity)
-                .map(|index| Node {
-                    value: UnsafeCell::new(MaybeUninit::uninit()),
-                    next: Cell::new(if index + 1 == capacity {
-                        NONE
-                    } else {
-                        index as u32 + 1
-                    }),
-                })
-                .collect(),
-            free: Cell::new(if capacity == 0 { NONE } else { 0 }),
-            available: Cell::new(capacity),
-            _thread: ThreadBound::NEW,
+            nodes: Box::<[Node<T>]>::new_uninit_slice(capacity),
+            free: NONE,
+            initialized: 0,
+            live: 0,
         }
     }
 
     fn is_full(&self) -> bool {
-        self.available.get() == 0
+        self.live as usize == self.nodes.len()
+    }
+
+    fn capacity(&self) -> usize {
+        self.nodes.len()
+    }
+
+    fn available(&self) -> usize {
+        self.nodes.len() - self.live as usize
     }
 
     fn front<'a>(&'a self, state: &ChainState) -> Option<&'a T> {
-        if state.head == NONE {
-            return None;
-        }
-        let node = unsafe { self.nodes.get_unchecked(state.head as usize) };
-        Some(unsafe { &*node.value.get().cast::<T>() })
+        self.value(state.head)
     }
 
     fn front_mut<'a>(&'a mut self, state: &ChainState) -> Option<&'a mut T> {
-        if state.head == NONE {
-            return None;
-        }
-        let node = unsafe { self.nodes.get_unchecked_mut(state.head as usize) };
-        Some(unsafe { node.value.get_mut().assume_init_mut() })
+        self.value_mut(state.head)
     }
 
-    fn push_back(&self, state: &mut ChainState, value: T) -> Result<(), T> {
-        if self.is_full() {
-            return Err(value);
+    fn value(&self, index: u32) -> Option<&T> {
+        if index == NONE {
+            return None;
         }
-        let index = self.allocate(value);
+        let node = unsafe { self.node(index) };
+        Some(unsafe { node.value.assume_init_ref() })
+    }
+
+    fn value_mut(&mut self, index: u32) -> Option<&mut T> {
+        if index == NONE {
+            return None;
+        }
+        let node = unsafe { self.node_mut(index) };
+        Some(unsafe { node.value.assume_init_mut() })
+    }
+
+    fn push_back(&mut self, state: &mut ChainState, value: T) -> Result<(), T> {
+        let index = self.allocate(value)?;
         if state.tail == NONE {
             state.head = index;
         } else {
-            let node = unsafe { self.nodes.get_unchecked(state.tail as usize) };
-            node.next.set(index);
+            unsafe { self.node_mut(state.tail) }.next = index;
         }
         state.tail = index;
         state.len += 1;
         Ok(())
     }
 
-    fn push_front(&self, state: &mut ChainState, value: T) -> Result<(), T> {
-        if self.is_full() {
-            return Err(value);
-        }
-        let index = self.allocate(value);
-        let node = unsafe { self.nodes.get_unchecked(index as usize) };
-        node.next.set(state.head);
+    fn push_front(&mut self, state: &mut ChainState, value: T) -> Result<(), T> {
+        let head = state.head;
+        let index = self.allocate(value)?;
+        unsafe { self.node_mut(index) }.next = head;
         state.head = index;
         if state.tail == NONE {
             state.tail = index;
@@ -114,39 +131,92 @@ impl<T> NodePool<T> {
         Ok(())
     }
 
-    fn pop_front(&self, state: &mut ChainState) -> Option<T> {
+    fn pop_front(&mut self, state: &mut ChainState) -> Option<T> {
         let index = state.head;
         if index == NONE {
             return None;
         }
-        let node = unsafe { self.nodes.get_unchecked(index as usize) };
-        let next = node.next.get();
+        let next = unsafe { self.node(index) }.next;
         state.head = next;
         state.len -= 1;
         if next == NONE {
             state.tail = NONE;
         }
-        Some(self.release(index))
+        Some(unsafe { self.release(index) })
     }
 
-    fn allocate(&self, value: T) -> u32 {
-        let index = self.free.get();
-        debug_assert_ne!(index, NONE);
-        let node = unsafe { self.nodes.get_unchecked(index as usize) };
-        self.free.set(node.next.get());
-        self.available.set(self.available.get() - 1);
-        node.next.set(NONE);
-        unsafe { (*node.value.get()).write(value) };
-        index
+    fn push(&mut self, head: &mut u32, value: T) -> Result<(), T> {
+        let previous = *head;
+        let index = self.allocate(value)?;
+        unsafe { self.node_mut(index) }.next = previous;
+        *head = index;
+        Ok(())
     }
 
-    fn release(&self, index: u32) -> T {
-        let node = unsafe { self.nodes.get_unchecked(index as usize) };
-        let value = unsafe { (*node.value.get()).assume_init_read() };
-        node.next.set(self.free.get());
-        self.free.set(index);
-        self.available.set(self.available.get() + 1);
+    fn pop(&mut self, head: &mut u32) -> Option<T> {
+        let index = *head;
+        if index == NONE {
+            return None;
+        }
+        *head = unsafe { self.node(index) }.next;
+        Some(unsafe { self.release(index) })
+    }
+
+    fn allocate(&mut self, value: T) -> Result<u32, T> {
+        if self.is_full() {
+            return Err(value);
+        }
+        let index = if self.free == NONE {
+            let index = self.initialized;
+            debug_assert!((index as usize) < self.nodes.len());
+            self.initialized += 1;
+            self.nodes[index as usize].write(Node {
+                value: MaybeUninit::new(value),
+                next: NONE,
+            });
+            index
+        } else {
+            let index = self.free;
+            let next = {
+                let node = unsafe { self.node_mut(index) };
+                let next = node.next;
+                node.value.write(value);
+                node.next = NONE;
+                next
+            };
+            self.free = next;
+            index
+        };
+        self.live += 1;
+        Ok(index)
+    }
+
+    /// The caller has unlinked `index`, so its value is initialized and the
+    /// node can be returned to this pool before the value is dropped.
+    unsafe fn release(&mut self, index: u32) -> T {
+        let free = self.free;
+        let node = unsafe { self.node_mut(index) };
+        let value = unsafe { node.value.assume_init_read() };
+        node.next = free;
+        self.free = index;
+        self.live -= 1;
         value
+    }
+
+    /// Indices below `initialized` contain initialized `Node<T>` metadata.
+    unsafe fn node(&self, index: u32) -> &Node<T> {
+        debug_assert!(index < self.initialized);
+        unsafe { self.nodes.get_unchecked(index as usize).assume_init_ref() }
+    }
+
+    /// Exclusive arena access prevents aliases to node metadata or values.
+    unsafe fn node_mut(&mut self, index: u32) -> &mut Node<T> {
+        debug_assert!(index < self.initialized);
+        unsafe {
+            self.nodes
+                .get_unchecked_mut(index as usize)
+                .assume_init_mut()
+        }
     }
 }
 
@@ -155,6 +225,7 @@ impl<T> LinkedArena<T> {
         Self {
             nodes: NodePool::with_capacity(capacity),
             lanes: vec![ChainState::EMPTY; lanes].into_boxed_slice(),
+            _thread: ThreadBound::NEW,
         }
     }
 
@@ -163,11 +234,11 @@ impl<T> LinkedArena<T> {
     }
 
     pub fn capacity(&self) -> usize {
-        self.nodes.nodes.len()
+        self.nodes.capacity()
     }
 
     pub fn available(&self) -> usize {
-        self.nodes.available.get()
+        self.nodes.available()
     }
 
     pub fn lane_count(&self) -> usize {
@@ -175,7 +246,7 @@ impl<T> LinkedArena<T> {
     }
 
     pub fn lane_len(&self, lane: usize) -> usize {
-        self.lanes[lane].len
+        self.lanes[lane].len as usize
     }
 
     pub fn lane_is_empty(&self, lane: usize) -> bool {
@@ -224,5 +295,89 @@ impl<T> LinkedArena<T> {
 impl<T> Drop for LinkedArena<T> {
     fn drop(&mut self) {
         self.clear();
+    }
+}
+
+impl<T> StackArena<T> {
+    pub fn with_capacity(capacity: usize, lanes: usize) -> Self {
+        Self {
+            nodes: NodePool::with_capacity(capacity),
+            lanes: vec![NONE; lanes].into_boxed_slice(),
+        }
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.nodes.is_full()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.nodes.capacity()
+    }
+
+    pub fn available(&self) -> usize {
+        self.nodes.available()
+    }
+
+    pub fn lane_count(&self) -> usize {
+        self.lanes.len()
+    }
+
+    pub fn lane_is_empty(&self, lane: usize) -> bool {
+        self.lanes.get(lane).is_none_or(|head| *head == NONE)
+    }
+
+    pub fn push(&mut self, lane: usize, value: T) -> Result<(), T> {
+        let Some(head) = self.lanes.get_mut(lane) else {
+            return Err(value);
+        };
+        self.nodes.push(head, value)
+    }
+
+    pub fn pop(&mut self, lane: usize) -> Option<T> {
+        self.nodes.pop(self.lanes.get_mut(lane)?)
+    }
+
+    pub fn drain(&mut self, lane: usize) -> StackDrain<'_, T> {
+        StackDrain { arena: self, lane }
+    }
+
+    fn clear(&mut self) {
+        ClearGuard::run(self, Self::clear_remaining);
+    }
+
+    fn clear_remaining(&mut self) {
+        for lane in 0..self.lanes.len() {
+            while let Some(value) = self.pop(lane) {
+                drop(value);
+            }
+        }
+    }
+}
+
+impl<T> Drop for StackArena<T> {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
+impl<T> Iterator for StackDrain<'_, T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.arena.pop(self.lane)
+    }
+}
+
+impl<T> Drop for StackDrain<'_, T> {
+    fn drop(&mut self) {
+        ClearGuard::run(self, Self::clear_remaining);
+    }
+}
+
+impl<T> StackDrain<'_, T> {
+    fn clear_remaining(&mut self) {
+        for value in self.by_ref() {
+            drop(value);
+        }
     }
 }

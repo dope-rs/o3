@@ -1,7 +1,7 @@
 use o3::collections::Slab;
 use o3::collections::{
-    CellQueue, CellSlotQueue, FixedHashTable, FixedHashTablePlan, FixedQueue, IndexedMinHeap,
-    LinkedArena, RoundRobinSet, SlotQueue,
+    ArrayVec, CellQueue, CellSlotQueue, CopyArrayVec, FixedHashTable, FixedHashTablePlan,
+    FixedIndexTable, FixedQueue, IndexedMinHeap, LinkedArena, RoundRobinSet, SlotQueue, StackArena,
 };
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -64,6 +64,26 @@ fn assert_panicking_drop_finishes<'a>(
 fn push_pair<T>(first: T, second: T, mut push: impl FnMut(T)) {
     push(first);
     push(second);
+}
+
+#[test]
+fn array_vec_borrows_only_its_initialized_prefix() {
+    let mut values = ArrayVec::<u64, 4>::new();
+    assert!(values.as_slice().is_empty());
+    assert_eq!(values.push(3), Ok(()));
+    assert_eq!(values.push(5), Ok(()));
+    values.as_mut_slice()[0] = 2;
+    assert_eq!(values.as_slice(), [2, 5]);
+}
+
+#[test]
+fn copy_array_vec_has_no_drop_glue() {
+    let mut values = CopyArrayVec::<u64, 4>::from_fn(2, |index| index as u64 + 1);
+    assert!(!std::mem::needs_drop::<CopyArrayVec<u64, 4>>());
+    assert_eq!(values.as_slice(), [1, 2]);
+    values.as_mut_slice()[1] = 3;
+    assert_eq!(values.pop(), Some(3));
+    assert_eq!(values.as_slice(), [1]);
 }
 
 enum DropQueue<T> {
@@ -326,6 +346,59 @@ fn fixed_hash_table_clear_restores_state_after_drop_panics() {
 }
 
 #[test]
+fn fixed_index_table_addresses_sparse_values_without_probing() {
+    let mut table = FixedIndexTable::with_capacity(130);
+    assert_eq!(table.try_insert(0, String::from("zero")), Ok(()));
+    assert_eq!(table.try_insert(64, String::from("sixty-four")), Ok(()));
+    assert_eq!(table.try_insert(129, String::from("last")), Ok(()));
+    assert_eq!(
+        table.try_insert(130, String::from("outside")),
+        Err(String::from("outside"))
+    );
+    assert_eq!(
+        table.try_insert(64, String::from("occupied")),
+        Err(String::from("occupied"))
+    );
+
+    table.get_mut(64).unwrap().push('!');
+    assert_eq!(table.get(64).map(String::as_str), Some("sixty-four!"));
+    assert_eq!(table.indices().collect::<Vec<_>>(), [0, 64, 129]);
+    assert_eq!(
+        table.entries().map(|(index, _)| index).collect::<Vec<_>>(),
+        [0, 64, 129]
+    );
+    assert_eq!(
+        table.insert(64, String::from("replacement")),
+        Ok(Some(String::from("sixty-four!")))
+    );
+
+    let mut drained = Vec::new();
+    table.drain_where(|value| value != "zero", |value| drained.push(value));
+    assert_eq!(drained, ["replacement", "last"]);
+    assert_eq!(table.remove(0), Some(String::from("zero")));
+    assert!(table.is_empty());
+}
+
+#[test]
+fn fixed_index_table_clear_restores_state_after_drop_panics() {
+    let drops = Cell::new(0);
+    let panic_once = Cell::new(true);
+    let mut table = FixedIndexTable::with_capacity(65);
+    table
+        .try_insert(0, PanicDrop::new(0, &drops, &panic_once))
+        .ok();
+    table
+        .try_insert(64, PanicDrop::new(1, &drops, &panic_once))
+        .ok();
+
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| table.clear()));
+    assert!(caught.is_err());
+    assert_eq!(table.len(), 1);
+    assert!(table.remove(0).is_some() || table.remove(64).is_some());
+    assert!(table.is_empty());
+}
+
+#[test]
 fn fixed_queue_wrap_math_handles_zst_capacity() {
     let mut queue = FixedQueue::with_capacity(usize::MAX);
     queue.push_front(()).unwrap();
@@ -461,6 +534,7 @@ fn heap_holes_close_when_comparison_panics() {
 fn fixed_collections_keep_their_thin_layouts() {
     assert_eq!(std::mem::size_of::<FixedQueue<u64>>(), 32);
     assert_eq!(std::mem::size_of::<FixedHashTable<u64>>(), 64);
+    assert_eq!(std::mem::size_of::<FixedIndexTable<u64>>(), 40);
     assert_eq!(std::mem::size_of::<SlotQueue<u64>>(), 32);
     assert_eq!(std::mem::size_of::<Slab<u64>>(), 40);
     assert_eq!(std::mem::size_of::<RoundRobinSet>(), 32);
@@ -530,6 +604,18 @@ fn collection_drop_finishes_after_one_element_panics() {
         arena.push_back(0, second).ok();
         drop(arena);
     });
+    assert_panicking_drop_finishes(&drops, &panic_once, |first, second| {
+        let mut arena = StackArena::with_capacity(2, 1);
+        arena.push(0, first).ok();
+        arena.push(0, second).ok();
+        drop(arena);
+    });
+    assert_panicking_drop_finishes(&drops, &panic_once, |first, second| {
+        let mut table = FixedIndexTable::with_capacity(2);
+        table.try_insert(0, first).ok();
+        table.try_insert(1, second).ok();
+        drop(table);
+    });
 }
 
 #[test]
@@ -563,4 +649,21 @@ fn linked_arena_represents_an_inert_zero_lane_configuration_without_allocation()
     assert!(arena.pop_front(0).is_none());
     assert!(arena.front(0).is_none());
     assert!(arena.front_mut(0).is_none());
+}
+
+#[test]
+fn stack_arena_shares_capacity_and_dropped_drains_reclaim_the_lane() {
+    let mut arena = StackArena::with_capacity(3, 2);
+    arena.push(0, String::from("first")).unwrap();
+    arena.push(0, String::from("second")).unwrap();
+    arena.push(1, String::from("other")).unwrap();
+    assert!(arena.is_full());
+
+    let mut drain = arena.drain(0);
+    assert_eq!(drain.next().as_deref(), Some("second"));
+    drop(drain);
+    assert!(arena.lane_is_empty(0));
+    assert_eq!(arena.available(), 2);
+    assert_eq!(arena.pop(1).as_deref(), Some("other"));
+    assert_eq!(arena.available(), 3);
 }

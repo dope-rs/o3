@@ -45,6 +45,12 @@ pub struct BatchSet {
     _thread: ThreadBound,
 }
 
+/// A fixed-capacity [`BatchSet`] carrying one value for each bound index.
+pub struct BatchMap<T: Copy> {
+    ready: BatchSet,
+    values: Box<[Cell<Option<T>>]>,
+}
+
 enum Words {
     Empty,
     Inline(Cell<usize>),
@@ -305,10 +311,77 @@ impl BatchSet {
     }
 }
 
+impl<T: Copy> BatchMap<T> {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            ready: BatchSet::with_capacity(capacity),
+            values: (0..capacity).map(|_| Cell::new(None)).collect(),
+        }
+    }
+
+    /// Initializes one vacant value slot.
+    ///
+    /// # Safety
+    /// `index` must be in bounds and vacant.
+    #[doc(hidden)]
+    pub unsafe fn bind_unchecked(&self, index: usize, value: T) {
+        unsafe { self.values.get_unchecked(index).set(Some(value)) }
+    }
+
+    /// Clears one bound value slot after its ready bit is removed.
+    ///
+    /// # Safety
+    /// `index` must be in bounds, bound, and absent from the ready set.
+    #[doc(hidden)]
+    pub unsafe fn clear_unchecked(&self, index: usize) {
+        unsafe { self.values.get_unchecked(index).set(None) }
+    }
+
+    /// Returns the underlying ready set for a binding that maintains values.
+    ///
+    /// # Safety
+    /// Every inserted index must stay bound until it is removed from the set.
+    #[doc(hidden)]
+    pub unsafe fn ready_set(&self) -> &BatchSet {
+        &self.ready
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ready.is_empty()
+    }
+
+    pub fn drain_batch(&self) -> Option<BatchMapDrain<'_, T>> {
+        Some(BatchMapDrain {
+            map: self,
+            drain: self.ready.drain_batch()?,
+        })
+    }
+
+    fn target(&self, index: usize) -> T {
+        // SAFETY: ready-set access retains each value until its ready bit is
+        // removed, then clear_unchecked clears it.
+        unsafe { self.values.get_unchecked(index).get().unwrap_unchecked() }
+    }
+}
+
 /// A consuming iterator over one stable [`BatchSet`] batch.
 pub struct BatchDrain<'a> {
     set: &'a BatchSet,
     side: Side,
+}
+
+/// A consuming iterator over one stable [`BatchMap`] batch.
+pub struct BatchMapDrain<'a, T: Copy> {
+    map: &'a BatchMap<T>,
+    drain: BatchDrain<'a>,
+}
+
+impl<T: Copy> Iterator for BatchMapDrain<'_, T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.drain.next().map(|index| self.map.target(index))
+    }
 }
 
 impl Iterator for BatchDrain<'_> {

@@ -2,6 +2,7 @@
 fn type_boundaries_do_not_compile() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/avl_adapter_mismatch.rs");
+    t.compile_fail("tests/ui/branded_cell_borrow_mut.rs");
     t.compile_fail("tests/ui/checked_cell_borrow_escape.rs");
     t.compile_fail("tests/ui/custom_index_key.rs");
     t.compile_fail("tests/ui/key_fabrication.rs");
