@@ -1,6 +1,8 @@
 mod arena;
+mod array;
 mod batch;
 mod heap;
+mod indexed;
 pub mod intrusive;
 mod queue;
 mod slab;
@@ -9,9 +11,11 @@ mod table;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 
-pub use arena::LinkedArena;
+pub use arena::{LinkedArena, StackArena, StackDrain};
+pub use array::{ArrayVec, ArrayVecIntoIter, CopyArrayVec};
 pub use batch::{BatchDrain, BatchSet};
 pub use heap::{FixedHeap, IndexedMinHeap, IndexedMinHeapVacantEntry};
+pub use indexed::FixedIndexTable;
 pub use queue::cell::CellQueue;
 pub use queue::fixed::{FixedQueue, FixedQueueVacantEntry};
 pub use queue::round::RoundRobinSet;
@@ -23,6 +27,11 @@ pub use slab::pin::fixed::{FixedPinSlab, FixedPinSlabVacantEntry};
 pub use slab::pin::{PinSlab, PinSlabVacantEntry};
 pub use slab::{Slab, SlabVacantEntry};
 pub use table::{FixedHashTable, FixedHashTablePlan};
+
+#[doc(hidden)]
+pub mod __private {
+    pub use super::batch::{BatchMap, BatchMapDrain};
+}
 
 pub(crate) mod index {
     pub trait Sealed {}

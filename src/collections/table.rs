@@ -202,9 +202,14 @@ impl<V> FixedHashTable<V> {
     }
 
     pub fn values(&self) -> impl Iterator<Item = &V> {
-        self.values.iter().enumerate().filter_map(|(index, value)| {
-            (self.controls[index] != EMPTY).then(|| unsafe { value.assume_init_ref() })
-        })
+        self.values
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| self.controls[*index] != EMPTY)
+            .map(|(_, value)| {
+                // SAFETY: non-empty control bytes identify initialized slots.
+                unsafe { value.assume_init_ref() }
+            })
     }
 
     pub fn clear(&mut self) {
