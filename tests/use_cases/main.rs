@@ -4,5 +4,6 @@ mod owned_capacity_modes;
 mod protocol_segment_queues;
 mod quic_packet_journal;
 mod sark_inline_wire_prefix;
+mod sark_json_decode;
 mod sark_qpack_field_block;
 mod sark_wire_encoding;

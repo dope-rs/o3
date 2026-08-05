@@ -210,7 +210,20 @@ impl<'a> SpareWriter<'a> {
         }
     }
 
-    pub fn try_fill<E, F>(&mut self, fill: F) -> Result<(), SpareFillError<E>>
+    /// Commits a prefix initialized through direct access to spare storage.
+    ///
+    /// Prefer [`try_push`](Self::try_push) or
+    /// [`try_extend_from_slice`](Self::try_extend_from_slice). They retain the
+    /// initialization proof inside `SpareWriter`. This escape hatch exists for
+    /// encoders that write directly into the allocation.
+    ///
+    /// # Safety
+    ///
+    /// The slice returned by `fill` must start at this writer's current spare
+    /// pointer, be no longer than its remaining capacity, and contain only
+    /// initialized bytes. The pointer and length are checked before commit;
+    /// initialization cannot be checked by Rust and is the caller's proof.
+    pub unsafe fn try_fill<E, F>(&mut self, fill: F) -> Result<(), SpareFillError<E>>
     where
         F: for<'b> FnOnce(&'b mut [MaybeUninit<u8>]) -> Result<&'b mut [u8], E>,
     {
@@ -227,7 +240,21 @@ impl<'a> SpareWriter<'a> {
         Ok(())
     }
 
-    pub fn try_commit_initialized(&mut self, initialized: &[u8]) -> Result<(), CapacityError> {
+    /// Commits bytes initialized through [`as_mut_ptr`](Self::as_mut_ptr) or
+    /// [`spare_capacity_mut`](Self::spare_capacity_mut).
+    ///
+    /// Prefer the checked write methods when the encoder can express its work
+    /// as byte or slice writes.
+    ///
+    /// # Safety
+    ///
+    /// `initialized` must start at this writer's current spare pointer and
+    /// every byte in it must have been initialized. The pointer and capacity
+    /// are checked before commit; initialization is the caller's proof.
+    pub unsafe fn try_commit_initialized(
+        &mut self,
+        initialized: &[u8],
+    ) -> Result<(), CapacityError> {
         let attempted = self
             .written
             .checked_add(initialized.len())
