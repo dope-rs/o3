@@ -1,4 +1,4 @@
-use o3::buffer::{BLOCK_CAPACITY, Owned, Shared, SnapshotBuf};
+use o3::buffer::{BLOCK_CAPACITY, CapacityError, Owned, Shared, SnapshotBuf};
 
 type FixedOwned = Owned<BLOCK_CAPACITY>;
 
@@ -94,9 +94,13 @@ fn spare_writer_commits_initialized_storage() {
     let ptr = writer.as_mut_ptr();
     unsafe { std::ptr::copy_nonoverlapping(b"raw".as_ptr(), ptr, 3) };
     let initialized = unsafe { std::slice::from_raw_parts(ptr, 3) };
-    writer
-        .try_commit_initialized(initialized)
-        .expect("initialized bytes came from this writer");
+    // SAFETY: the three bytes were copied into the writer's current spare
+    // storage immediately above, and `initialized` covers exactly that range.
+    unsafe {
+        writer
+            .try_commit_initialized(initialized)
+            .expect("initialized bytes came from this writer");
+    }
     assert_eq!(writer.finish(), 3);
     assert_eq!(owned.as_slice(), b"xyzraw");
 }
@@ -150,4 +154,17 @@ fn owned_fills_its_exact_allocation() {
     let owned = Owned::try_filled(4, b'x').unwrap();
     assert_eq!(owned.capacity(), 4);
     assert_eq!(owned.as_slice(), b"xxxx");
+}
+
+#[test]
+fn exact_build_keeps_initialization_inside_the_safe_writer() {
+    let owned = Owned::try_build_exact(4, |out| {
+        for byte in b"safe" {
+            out.try_push(*byte)?;
+        }
+        Ok::<_, CapacityError>(())
+    })
+    .expect("checked byte writes fill the exact allocation");
+
+    assert_eq!(owned.as_slice(), b"safe");
 }
