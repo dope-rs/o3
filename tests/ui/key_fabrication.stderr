@@ -6,5 +6,5 @@ error[E0624]: associated function `from_parts` is private
   |
  ::: src/collections/slab/key.rs
   |
-  |     pub(crate) const fn from_parts(parts: SlabKeyParts<MAX>) -> Self {
+  |     pub(super) const fn from_parts(parts: SlabKeyParts<MAX>) -> Self {
   |     ---------------------------------------------------------------- private associated function defined here

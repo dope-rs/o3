@@ -1,5 +1,7 @@
-use super::GenerationState;
-use super::core::{Mode, SlabCore, Ticket};
+use crate::collections::slab::{
+    GenerationState,
+    core::{Mode, Reservations, SlabCore, Ticket},
+};
 
 pub(super) struct Pending<'a, T, G: GenerationState, M: Mode> {
     core: &'a SlabCore<T, G, M>,

@@ -1,15 +1,16 @@
-use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
-use std::marker::PhantomData;
-use std::mem::forget;
-use std::num::NonZeroUsize;
-use std::ops::Range;
-use std::ptr::{NonNull, copy, copy_nonoverlapping};
-use std::rc::Rc;
-use std::slice::{from_raw_parts, from_raw_parts_mut};
+use std::{
+    alloc::{Layout, alloc, dealloc, handle_alloc_error},
+    marker::PhantomData,
+    mem::forget,
+    num::NonZeroUsize,
+    ops::Range,
+    ptr::{NonNull, copy, copy_nonoverlapping},
+    rc::Rc,
+    slice::{from_raw_parts, from_raw_parts_mut},
+};
 
-use crate::marker::ThreadBound;
+use crate::{ThreadBound, buffer::SpareWriter};
 
-use super::SpareWriter;
 pub(super) mod refs;
 
 use refs::LocalRefCount;
@@ -69,14 +70,23 @@ impl Header {
         let layout = Header::layout(header.capacity);
         unsafe { dealloc(ptr.as_ptr().cast(), layout) };
     }
+
+    fn data_ptr(ptr: NonNull<Header>) -> *const u8 {
+        unsafe { ptr.as_ptr().cast::<u8>().add(DATA_OFFSET) }
+    }
+
+    fn data_mut_ptr(ptr: NonNull<Header>) -> *mut u8 {
+        debug_assert!(unsafe { ptr.as_ref() }.refs.is_unique());
+        unsafe { ptr.as_ptr().cast::<u8>().add(DATA_OFFSET) }
+    }
 }
 
-pub(super) struct RawMut {
+pub(super) struct StorageMut {
     ptr: NonNull<Header>,
     marker: PhantomData<*mut ()>,
 }
 
-impl RawMut {
+impl StorageMut {
     pub(super) fn with_capacity_u32(capacity: u32) -> Self {
         Self {
             ptr: Header::allocate(capacity),
@@ -88,39 +98,32 @@ impl RawMut {
         unsafe { self.ptr.as_ref() }.capacity as usize
     }
 
-    pub(super) fn data_ptr(&self) -> *const u8 {
-        unsafe { self.ptr.as_ptr().cast::<u8>().add(DATA_OFFSET) }
-    }
-
-    pub(super) fn data_mut_ptr(&mut self) -> *mut u8 {
-        debug_assert!(unsafe { self.ptr.as_ref() }.refs.is_unique());
-        unsafe { self.ptr.as_ptr().cast::<u8>().add(DATA_OFFSET) }
-    }
-
     pub(super) fn initialized(&self, len: usize) -> &[u8] {
         debug_assert!(len <= self.capacity());
-        unsafe { from_raw_parts(self.data_ptr(), len) }
+        unsafe { from_raw_parts(Header::data_ptr(self.ptr), len) }
     }
 
     pub(super) fn initialized_mut(&mut self, len: usize) -> &mut [u8] {
         debug_assert!(len <= self.capacity());
-        unsafe { from_raw_parts_mut(self.data_mut_ptr(), len) }
+        unsafe { from_raw_parts_mut(Header::data_mut_ptr(self.ptr), len) }
     }
 
     pub(super) fn write_byte(&mut self, offset: usize, byte: u8) {
         debug_assert!(offset < self.capacity());
-        unsafe { self.data_mut_ptr().add(offset).write(byte) };
+        unsafe { Header::data_mut_ptr(self.ptr).add(offset).write(byte) };
     }
 
     pub(super) fn fill(&mut self, byte: u8) {
-        unsafe { self.data_mut_ptr().write_bytes(byte, self.capacity()) };
+        unsafe {
+            Header::data_mut_ptr(self.ptr).write_bytes(byte, self.capacity());
+        };
     }
 
     pub(super) fn spare_writer<'a>(&'a mut self, target: &'a mut u32) -> SpareWriter<'a> {
         let len = *target as usize;
         let capacity = self.capacity();
         debug_assert!(len <= capacity);
-        let ptr = unsafe { self.data_mut_ptr().add(len).cast() };
+        let ptr = unsafe { Header::data_mut_ptr(self.ptr).add(len).cast() };
         unsafe { SpareWriter::new(ptr, capacity - len, target) }
     }
 
@@ -128,21 +131,21 @@ impl RawMut {
         unsafe { self.ptr.as_ref() }.refs.is_unique()
     }
 
-    pub(super) fn share(&self) -> Raw {
+    pub(super) fn share(&self) -> Storage {
         unsafe { Header::retain(self.ptr) };
-        Raw {
+        Storage {
             ptr: self.ptr,
             marker: PhantomData,
         }
     }
 
-    pub(super) fn freeze(self) -> Raw {
-        let raw = Raw {
+    pub(super) fn freeze(self) -> Storage {
+        let storage = Storage {
             ptr: self.ptr,
             marker: PhantomData,
         };
         forget(self);
-        raw
+        storage
     }
 
     pub(super) fn detach_range(&mut self, src: Range<usize>, dest: usize) -> bool {
@@ -160,7 +163,7 @@ impl RawMut {
         if !src.is_empty() {
             unsafe {
                 copy_nonoverlapping(
-                    self.data_ptr().add(src.start),
+                    Header::data_ptr(self.ptr).add(src.start),
                     ptr.as_ptr().cast::<u8>().add(DATA_OFFSET + dest),
                     src.len(),
                 );
@@ -173,7 +176,11 @@ impl RawMut {
     pub(super) fn copy_from_slice(&mut self, offset: usize, src: &[u8]) {
         debug_assert!(is_span_in_bounds(offset, src.len(), self.capacity()));
         unsafe {
-            copy_nonoverlapping(src.as_ptr(), self.data_mut_ptr().add(offset), src.len());
+            copy_nonoverlapping(
+                src.as_ptr(),
+                Header::data_mut_ptr(self.ptr).add(offset),
+                src.len(),
+            );
         }
     }
 
@@ -190,7 +197,7 @@ impl RawMut {
         }
     }
 
-    pub(super) fn copy_from_raw(
+    pub(super) fn copy_from_storage(
         &mut self,
         offset: usize,
         src: &Self,
@@ -203,8 +210,8 @@ impl RawMut {
         );
         unsafe {
             copy_nonoverlapping(
-                src.data_ptr().add(src_offset),
-                self.data_mut_ptr().add(offset),
+                Header::data_ptr(src.ptr).add(src_offset),
+                Header::data_mut_ptr(self.ptr).add(offset),
                 len,
             );
         }
@@ -213,34 +220,34 @@ impl RawMut {
     pub(super) fn copy_within(&mut self, src: Range<usize>, dest: usize) {
         debug_assert!(is_range_in_bounds(&src, dest, self.capacity()));
         unsafe {
-            let data = self.data_mut_ptr();
+            let data = Header::data_mut_ptr(self.ptr);
             copy(data.add(src.start), data.add(dest), src.len());
         }
     }
 }
 
-impl Drop for RawMut {
+impl Drop for StorageMut {
     fn drop(&mut self) {
         unsafe { Header::release(self.ptr) };
     }
 }
 
-pub(super) struct Raw {
+pub(super) struct Storage {
     ptr: NonNull<Header>,
     marker: PhantomData<*mut ()>,
 }
 
-/// A typed, provenance-carrying pointer to a live raw allocation owner.
-struct RawOwner(NonNull<Header>);
+/// A typed, provenance-carrying pointer to a live storage allocation owner.
+struct StorageOwner(NonNull<Header>);
 
-impl RawOwner {
+impl StorageOwner {
     fn erase(self) -> NonNull<()> {
         self.0.cast()
     }
 
     /// # Safety
-    /// `ptr` must have been returned by [`RawOwner::erase`] and still denote a
-    /// live raw allocation.
+    /// `ptr` must have been returned by [`StorageOwner::erase`] and still denote a
+    /// live storage allocation.
     unsafe fn from_erased(ptr: NonNull<()>) -> Self {
         Self(ptr.cast())
     }
@@ -263,13 +270,13 @@ impl RawOwner {
 struct TaggedOwner(NonNull<()>);
 
 enum OwnerPtr {
-    Raw(RawOwner),
+    Storage(StorageOwner),
     Vec(NonNull<Vec<u8>>),
 }
 
 impl TaggedOwner {
-    fn from_raw(raw: Raw) -> Self {
-        Self(raw.into_owner().erase())
+    fn from_storage(storage: Storage) -> Self {
+        Self(storage.into_owner().erase())
     }
 
     fn from_vec(buf: Rc<Vec<u8>>) -> Self {
@@ -290,21 +297,21 @@ impl TaggedOwner {
         if tagged {
             OwnerPtr::Vec(ptr.cast())
         } else {
-            // SAFETY: the untagged constructor is exclusively `from_raw`.
-            OwnerPtr::Raw(unsafe { RawOwner::from_erased(ptr) })
+            // SAFETY: the untagged constructor is exclusively `from_storage`.
+            OwnerPtr::Storage(unsafe { StorageOwner::from_erased(ptr) })
         }
     }
 
     fn retain(self) {
         match self.decode() {
-            OwnerPtr::Raw(owner) => unsafe { owner.retain() },
+            OwnerPtr::Storage(owner) => unsafe { owner.retain() },
             OwnerPtr::Vec(ptr) => unsafe { Rc::increment_strong_count(ptr.as_ptr()) },
         }
     }
 
     fn release(self) {
         match self.decode() {
-            OwnerPtr::Raw(owner) => unsafe { owner.release() },
+            OwnerPtr::Storage(owner) => unsafe { owner.release() },
             OwnerPtr::Vec(ptr) => unsafe { Rc::decrement_strong_count(ptr.as_ptr()) },
         }
     }
@@ -323,9 +330,9 @@ impl Owner {
         _thread: ThreadBound::NEW,
     };
 
-    pub(super) fn from_raw(raw: Raw) -> Self {
+    pub(super) fn from_storage(storage: Storage) -> Self {
         Self {
-            tagged: Some(TaggedOwner::from_raw(raw)),
+            tagged: Some(TaggedOwner::from_storage(storage)),
             _thread: ThreadBound::NEW,
         }
     }
@@ -358,25 +365,25 @@ impl Drop for Owner {
     }
 }
 
-pub(super) struct RawSpan {
-    raw: Raw,
+pub(super) struct StorageSpan {
+    storage: Storage,
     ptr: *const u8,
     len: usize,
 }
 
-impl RawSpan {
+impl StorageSpan {
     /// # Safety
-    /// `start..start + len` must be in bounds of `raw`.
-    pub(super) unsafe fn new_unchecked(raw: Raw, start: u32, len: u32) -> Self {
+    /// `start..start + len` must be in bounds of `storage`.
+    pub(super) unsafe fn new_unchecked(storage: Storage, start: u32, len: u32) -> Self {
         debug_assert!(
             start
                 .checked_add(len)
-                .is_some_and(|end| end as usize <= raw.capacity())
+                .is_some_and(|end| end as usize <= storage.capacity())
         );
         Self {
-            ptr: unsafe { raw.data_ptr().add(start as usize) },
+            ptr: unsafe { Header::data_ptr(storage.ptr).add(start as usize) },
             len: len as usize,
-            raw,
+            storage,
         }
     }
 
@@ -384,34 +391,30 @@ impl RawSpan {
         let Ok(len) = u32::try_from(slice.len()) else {
             return None;
         };
-        let mut raw = RawMut::with_capacity_u32(len);
-        raw.copy_from_slice(0, slice);
+        let mut storage = StorageMut::with_capacity_u32(len);
+        storage.copy_from_slice(0, slice);
         // SAFETY: the allocation capacity is exactly `len`.
-        Some(unsafe { Self::new_unchecked(raw.freeze(), 0, len) })
+        Some(unsafe { Self::new_unchecked(storage.freeze(), 0, len) })
     }
 
-    pub(super) fn into_parts(self) -> (Raw, *const u8, usize) {
-        (self.raw, self.ptr, self.len)
+    pub(super) fn into_parts(self) -> (Storage, *const u8, usize) {
+        (self.storage, self.ptr, self.len)
     }
 }
 
-impl Raw {
-    pub(super) fn data_ptr(&self) -> *const u8 {
-        unsafe { self.ptr.as_ptr().cast::<u8>().add(DATA_OFFSET) }
-    }
-
+impl Storage {
     pub(super) fn capacity(&self) -> usize {
         unsafe { self.ptr.as_ref() }.capacity as usize
     }
 
-    fn into_owner(self) -> RawOwner {
-        let owner = RawOwner(self.ptr);
+    fn into_owner(self) -> StorageOwner {
+        let owner = StorageOwner(self.ptr);
         forget(self);
         owner
     }
 }
 
-impl Clone for Raw {
+impl Clone for Storage {
     fn clone(&self) -> Self {
         unsafe { Header::retain(self.ptr) };
         Self {
@@ -421,7 +424,7 @@ impl Clone for Raw {
     }
 }
 
-impl Drop for Raw {
+impl Drop for Storage {
     fn drop(&mut self) {
         unsafe { Header::release(self.ptr) };
     }

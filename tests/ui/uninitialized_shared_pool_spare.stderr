@@ -1,7 +1,7 @@
-error[E0599]: no method named `spare_mut` found for struct `SharedLease` in the current scope
+error[E0599]: no method named `spare_mut` found for struct `o3::buffer::Lease` in the current scope
  --> tests/ui/uninitialized_shared_pool_spare.rs:6:19
   |
 6 |     let _ = lease.spare_mut();
-  |                   ^^^^^^^^^ method not found in `SharedLease`
+  |                   ^^^^^^^^^ method not found in `o3::buffer::Lease`
   |
-  = note: the method was found for `SharedLease<o3::buffer::Initialized>`
+  = note: the method was found for `o3::buffer::Lease<o3::buffer::Initialized, C>`

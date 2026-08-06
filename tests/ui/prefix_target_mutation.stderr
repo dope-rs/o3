@@ -1,17 +1,17 @@
 error[E0506]: cannot assign to `cursor.len` because it is borrowed
-  --> tests/ui/prefix_target_mutation.rs:20:5
+  --> tests/ui/prefix_target_mutation.rs:22:5
    |
-19 |     let prefix = ValidatedPrefix::try_new(&mut cursor, 4, commit).unwrap();
-   |                                           ----------- `cursor.len` is borrowed here
-20 |     cursor.len = 2;
+21 |     let prefix = cursor.try_consume_prefix(4).unwrap();
+   |                  ------ `cursor.len` is borrowed here
+22 |     cursor.len = 2;
    |     ^^^^^^^^^^^^^^ `cursor.len` is assigned to here but it was already borrowed
-21 |     prefix.commit();
+23 |     prefix.commit();
    |     ------ borrow later used here
 
 warning: value assigned to `cursor` is never read
-  --> tests/ui/prefix_target_mutation.rs:20:5
+  --> tests/ui/prefix_target_mutation.rs:22:5
    |
-20 |     cursor.len = 2;
+22 |     cursor.len = 2;
    |     ^^^^^^^^^^^^^^
    |
    = help: maybe it is overwritten before being read?

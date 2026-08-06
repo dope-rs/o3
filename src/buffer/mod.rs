@@ -1,36 +1,133 @@
 mod bytes;
-mod inline;
+pub mod inline;
 mod owned;
 mod pool;
-mod prefix;
-mod queue;
+pub mod queue;
 mod shared;
 mod storage;
+pub mod view;
 
-use std::error::Error;
-use std::fmt;
-use std::mem::MaybeUninit;
-use std::ops::Range;
-use std::ptr::{self, NonNull, copy_nonoverlapping};
-
-use crate::marker::ThreadBound;
-use refs::LocalRefCount;
-use storage::refs;
-
-pub use bytes::{Borrowed, ByteSink, ByteSpan, Bytes, Leased, RetainBytes, Retained, SliceWriter};
-pub use inline::{INLINE_BYTES_CAPACITY, InlineBytes};
-pub use owned::{BLOCK_CAPACITY, Owned};
-pub use pool::shared::{
-    Initialized, Pooled, SharedLease, SharedPool, SharedPoolLayout, SharedPoolPlan, Uninitialized,
+use std::{
+    error::Error,
+    fmt,
+    mem::MaybeUninit,
+    ops::Range,
+    ptr::{self, NonNull, copy_nonoverlapping},
+    slice,
 };
-pub use pool::{FixedPoolCapacity, Lease, Pool, PoolLayout, PoolLayoutError, RuntimePoolCapacity};
-pub use prefix::{PrefixLength, ValidatedPrefix};
-pub use queue::ring::ByteRing;
-pub use queue::rolling::RollingBuffer;
-pub use queue::{AdvanceSegment, RetainedSegmentQueue, SegmentQueue};
-pub use shared::Shared;
-pub use shared::snapshot::SnapshotBuf;
-pub use shared::strings::SharedStr;
+
+pub use bytes::{Borrowed, ByteSink, Bytes, RetainBytes, Retained, SliceWriter};
+pub use owned::Owned;
+pub use pool::{
+    Cursor, FixedPoolCapacity, Frozen, Initialized, Layout, Lease, Plan, Pool, PoolCapacity,
+    RuntimePoolCapacity, State, Uninitialized,
+};
+pub use shared::{Shared, strings::SharedStr};
+use storage::refs::LocalRefCount;
+
+use crate::ThreadBound;
+
+/// Reports the logical byte prefix that an exclusive owner may consume.
+pub trait PrefixLength {
+    fn prefix_len(&self) -> usize;
+}
+
+/// Owns a logical byte prefix that can be consumed after it is proven to fit.
+/// Only [`ValidatedPrefix`] can construct the proof passed to this method.
+pub trait PrefixConsumer: PrefixLength {
+    fn consume_validated_prefix(&mut self, proof: PrefixProof);
+
+    fn try_consume_prefix(
+        &mut self,
+        amount: usize,
+    ) -> Result<ValidatedPrefix<'_, Self>, CapacityError> {
+        ValidatedPrefix::try_new(self, amount)
+    }
+
+    fn consume_prefix_up_to(&mut self, requested: usize) -> usize {
+        let prefix = ValidatedPrefix::up_to(self, requested);
+        let amount = prefix.len();
+        prefix.commit();
+        amount
+    }
+}
+
+/// An unforgeable proof that one prefix fits its exclusively borrowed owner.
+#[doc(hidden)]
+pub struct PrefixProof {
+    amount: usize,
+}
+
+impl PrefixProof {
+    fn new(amount: usize) -> Self {
+        Self { amount }
+    }
+
+    pub const fn amount(&self) -> usize {
+        self.amount
+    }
+}
+
+/// Proof that `amount` fits one exclusively borrowed target prefix.
+#[must_use]
+pub struct ValidatedPrefix<'a, T: PrefixConsumer + ?Sized> {
+    target: &'a mut T,
+    proof: PrefixProof,
+}
+
+impl<'a, T: PrefixConsumer + ?Sized> ValidatedPrefix<'a, T> {
+    fn try_new(target: &'a mut T, amount: usize) -> Result<Self, CapacityError> {
+        let available = target.prefix_len();
+        if amount > available {
+            return Err(CapacityError::new(amount, available));
+        }
+        Ok(Self {
+            target,
+            proof: PrefixProof::new(amount),
+        })
+    }
+
+    /// Proves the largest prefix no longer than `requested`.
+    fn up_to(target: &'a mut T, requested: usize) -> Self {
+        let amount = requested.min(target.prefix_len());
+        Self {
+            target,
+            proof: PrefixProof::new(amount),
+        }
+    }
+
+    const fn len(&self) -> usize {
+        self.proof.amount()
+    }
+}
+
+impl<T: PrefixConsumer + ?Sized> ValidatedPrefix<'_, T> {
+    /// Applies the validated mutation exactly once.
+    pub fn commit(self) {
+        self.target.consume_validated_prefix(self.proof);
+    }
+}
+
+pub const BLOCK_CAPACITY: u32 = 64 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoolLayoutError {
+    ZeroCapacity,
+    SlotOverflow,
+    CapacityOverflow,
+}
+
+impl fmt::Display for PoolLayoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroCapacity => f.write_str("buffer pool capacity must be positive"),
+            Self::SlotOverflow => f.write_str("buffer pool slot count overflow"),
+            Self::CapacityOverflow => f.write_str("buffer pool allocation size overflow"),
+        }
+    }
+}
+
+impl Error for PoolLayoutError {}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct CapacityError {
@@ -39,19 +136,11 @@ pub struct CapacityError {
 }
 
 impl CapacityError {
-    pub(crate) const fn new(attempted: usize, capacity: usize) -> Self {
+    const fn new(attempted: usize, capacity: usize) -> Self {
         Self {
             attempted,
             capacity,
         }
-    }
-
-    pub const fn attempted(self) -> usize {
-        self.attempted
-    }
-
-    pub const fn capacity(self) -> usize {
-        self.capacity
     }
 }
 
@@ -159,9 +248,32 @@ pub struct SpareWriter<'a> {
     _thread: ThreadBound,
 }
 
-pub enum SpareFillError<E> {
-    Fill(E),
-    Capacity,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExactWriteError {
+    expected: usize,
+    actual: usize,
+}
+
+impl fmt::Display for ExactWriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "exact write incomplete: expected {}, wrote {}",
+            self.expected, self.actual
+        )
+    }
+}
+
+impl Error for ExactWriteError {}
+
+/// An exact-length write reservation that rolls back unless committed.
+/// Safe writes are confined to the reserved extent.
+#[must_use = "dropping a write transaction rolls its bytes back"]
+pub struct WriteTxn<'writer, 'target> {
+    writer: &'writer mut SpareWriter<'target>,
+    start: usize,
+    end: usize,
+    committed: bool,
 }
 
 trait RangeExt {
@@ -175,10 +287,6 @@ impl RangeExt for Range<usize> {
 }
 
 impl<'a> SpareWriter<'a> {
-    pub fn capacity(&self) -> usize {
-        self.capacity
-    }
-
     pub fn len(&self) -> usize {
         self.written
     }
@@ -188,82 +296,28 @@ impl<'a> SpareWriter<'a> {
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr().cast(), self.written) }
+        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr().cast(), self.written) }
     }
 
     pub fn truncate(&mut self, len: usize) {
         self.written = self.written.min(len);
     }
 
-    pub fn remaining(&self) -> usize {
-        self.capacity - self.written
-    }
-
-    pub fn as_mut_ptr(&mut self) -> *mut u8 {
-        unsafe { self.ptr.as_ptr().add(self.written).cast() }
-    }
-
-    pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        unsafe {
-            use std::slice::from_raw_parts_mut;
-            from_raw_parts_mut(self.ptr.as_ptr().add(self.written), self.remaining())
-        }
-    }
-
-    /// Commits a prefix initialized through direct access to spare storage.
-    ///
-    /// Prefer [`try_push`](Self::try_push) or
-    /// [`try_extend_from_slice`](Self::try_extend_from_slice). They retain the
-    /// initialization proof inside `SpareWriter`. This escape hatch exists for
-    /// encoders that write directly into the allocation.
-    ///
-    /// # Safety
-    ///
-    /// The slice returned by `fill` must start at this writer's current spare
-    /// pointer, be no longer than its remaining capacity, and contain only
-    /// initialized bytes. The pointer and length are checked before commit;
-    /// initialization cannot be checked by Rust and is the caller's proof.
-    pub unsafe fn try_fill<E, F>(&mut self, fill: F) -> Result<(), SpareFillError<E>>
-    where
-        F: for<'b> FnOnce(&'b mut [MaybeUninit<u8>]) -> Result<&'b mut [u8], E>,
-    {
-        let expected = self.as_mut_ptr();
-        let remaining = self.remaining();
-        let (initialized, len) = {
-            let initialized = fill(self.spare_capacity_mut()).map_err(SpareFillError::Fill)?;
-            (initialized.as_ptr(), initialized.len())
-        };
-        if initialized != expected || len > remaining {
-            return Err(SpareFillError::Capacity);
-        }
-        self.written += len;
-        Ok(())
-    }
-
-    /// Commits bytes initialized through [`as_mut_ptr`](Self::as_mut_ptr) or
-    /// [`spare_capacity_mut`](Self::spare_capacity_mut).
-    ///
-    /// Prefer the checked write methods when the encoder can express its work
-    /// as byte or slice writes.
-    ///
-    /// # Safety
-    ///
-    /// `initialized` must start at this writer's current spare pointer and
-    /// every byte in it must have been initialized. The pointer and capacity
-    /// are checked before commit; initialization is the caller's proof.
-    pub unsafe fn try_commit_initialized(
-        &mut self,
-        initialized: &[u8],
-    ) -> Result<(), CapacityError> {
-        let attempted = self
+    /// Reserves exactly `len` bytes for an all-or-nothing safe write.
+    pub fn try_transaction(&mut self, len: usize) -> Result<WriteTxn<'_, 'a>, CapacityError> {
+        let end = self
             .written
-            .checked_add(initialized.len())
+            .checked_add(len)
             .ok_or_else(|| CapacityError::new(usize::MAX, self.capacity))?;
-        if initialized.as_ptr() != self.as_mut_ptr() || attempted > self.capacity {
-            return Err(CapacityError::new(attempted, self.capacity));
+        if end > self.capacity {
+            return Err(CapacityError::new(end, self.capacity));
         }
-        self.written = attempted;
-        Ok(())
+        Ok(WriteTxn {
+            start: self.written,
+            end,
+            writer: self,
+            committed: false,
+        })
     }
 
     pub fn try_push(&mut self, byte: u8) -> Result<(), CapacityError> {
@@ -280,8 +334,24 @@ impl<'a> SpareWriter<'a> {
         Ok(())
     }
 
-    pub fn try_extend_from_slice(&mut self, src: &[u8]) -> Result<(), CapacityError> {
-        self.try_extend_from_slices([src])
+    /// Appends one contiguous slice after validating its complete length.
+    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), CapacityError> {
+        let end = self
+            .written
+            .checked_add(src.len())
+            .ok_or_else(|| CapacityError::new(usize::MAX, self.capacity))?;
+        if end > self.capacity {
+            return Err(CapacityError::new(end, self.capacity));
+        }
+        unsafe {
+            copy_nonoverlapping(
+                src.as_ptr(),
+                self.ptr.as_ptr().add(self.written).cast(),
+                src.len(),
+            )
+        };
+        self.written = end;
+        Ok(())
     }
 
     /// Appends every slice after validating their aggregate length.
@@ -323,8 +393,55 @@ impl<'a> SpareWriter<'a> {
     }
 
     fn commit(&mut self) {
+        if self.is_empty() {
+            return;
+        }
         *self.target = self.target.wrapping_add(self.written as u32);
         self.written = 0;
+    }
+}
+
+impl WriteTxn<'_, '_> {
+    fn written(&self) -> usize {
+        self.writer.written - self.start
+    }
+
+    pub fn remaining(&self) -> usize {
+        self.end - self.writer.written
+    }
+
+    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), CapacityError> {
+        if src.len() > self.remaining() {
+            return Err(CapacityError::new(
+                self.written().saturating_add(src.len()),
+                self.end - self.start,
+            ));
+        }
+        self.writer.try_extend(src)
+    }
+
+    /// Returns the initialized portion of this transaction for in-place work.
+    pub fn initialized_mut(&mut self) -> &mut [u8] {
+        &mut self.writer.as_mut_slice()[self.start..]
+    }
+
+    /// Makes the exact initialized reservation visible in the parent writer.
+    pub fn commit(mut self) -> Result<(), ExactWriteError> {
+        let actual = self.written();
+        let expected = self.end - self.start;
+        if actual != expected {
+            return Err(ExactWriteError { expected, actual });
+        }
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for WriteTxn<'_, '_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.writer.truncate(self.start);
+        }
     }
 }
 

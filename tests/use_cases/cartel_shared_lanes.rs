@@ -1,12 +1,14 @@
 #![forbid(unsafe_code)]
 
-use o3::cell::{RegionCell, RegionToken};
-use o3::collections::{LinkedArena, Slab, SlabKey};
-use o3::mem::FairCredits;
+use o3::{
+    cell::{Region, RegionToken},
+    collections::{Slab, SlabCapacity, SlabKey, arena::Linked},
+    mem::fair::Credits,
+};
 
 struct State<T> {
-    items: LinkedArena<(T, usize)>,
-    credits: FairCredits,
+    items: Linked<(T, usize)>,
+    credits: Credits,
     weights: Box<[usize]>,
 }
 
@@ -15,8 +17,8 @@ impl<T> State<T> {
         assert!(lanes > 0);
         assert!(capacity >= lanes);
         Self {
-            items: LinkedArena::with_capacity(capacity, lanes),
-            credits: FairCredits::with_reserve(capacity, lanes, 1),
+            items: Linked::with_capacity(capacity, lanes),
+            credits: Credits::with_reserve(capacity, lanes, 1),
             weights: vec![0; lanes].into_boxed_slice(),
         }
     }
@@ -52,7 +54,7 @@ impl<T> State<T> {
 }
 
 struct ReplyCredits {
-    resources: FairCredits<2>,
+    resources: Credits<2>,
 }
 
 enum ReplyEntryTag {}
@@ -64,16 +66,18 @@ struct ReplyEntry {
 
 struct ReplyStore<T> {
     entries: Slab<ReplyEntry, ReplyEntryTag>,
-    items: LinkedArena<T>,
-    order: LinkedArena<SlabKey<ReplyEntryTag>>,
+    items: Linked<T>,
+    order: Linked<SlabKey<ReplyEntryTag>>,
 }
 
 impl<T> ReplyStore<T> {
     fn with_capacity(capacity: usize, lanes: usize) -> Self {
         Self {
-            entries: Slab::with_capacity(capacity),
-            items: LinkedArena::with_capacity(capacity, capacity),
-            order: LinkedArena::with_capacity(capacity, lanes),
+            entries: Slab::with_capacity(
+                SlabCapacity::try_from(capacity).expect("test capacity fits slab indices"),
+            ),
+            items: Linked::with_capacity(capacity, capacity),
+            order: Linked::with_capacity(capacity, lanes),
         }
     }
 
@@ -128,7 +132,7 @@ impl<T> ReplyStore<T> {
 impl ReplyCredits {
     fn new(rows: usize, bytes: usize, lanes: usize) -> Self {
         Self {
-            resources: FairCredits::from_capacities([rows, bytes], lanes),
+            resources: Credits::from_capacities([rows, bytes], lanes),
         }
     }
 
@@ -142,14 +146,14 @@ impl ReplyCredits {
 }
 
 struct QueueArena<'region, T> {
-    state: RegionCell<'region, State<T>>,
+    state: Region<'region, State<T>>,
     lanes: usize,
 }
 
 impl<'region, T: Unpin> QueueArena<'region, T> {
     fn with_capacity(capacity: usize, lanes: usize) -> Self {
         Self {
-            state: RegionCell::new(State::<T>::with_capacity(capacity, lanes)),
+            state: Region::new(State::<T>::with_capacity(capacity, lanes)),
             lanes,
         }
     }

@@ -9,9 +9,9 @@ fn push_field(
 ) -> Result<(), CapacityError> {
     let start = writer.len();
     let written = (|| {
-        writer.try_extend_from_slice(&[0; 8])?;
-        writer.try_extend_from_slice(name)?;
-        writer.try_extend_from_slice(value)?;
+        writer.try_extend(&[0; 8])?;
+        writer.try_extend(name)?;
+        writer.try_extend(value)?;
         Ok::<_, CapacityError>(())
     })();
     if let Err(error) = written {

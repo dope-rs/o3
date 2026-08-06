@@ -1,5 +1,6 @@
-use o3::collections::{Slab, SlabKey};
 use std::collections::{BTreeSet, HashMap};
+
+use o3::collections::{Slab, SlabCapacity, SlabKey};
 
 struct Lcg(u64);
 impl Lcg {
@@ -15,7 +16,7 @@ impl Lcg {
 #[test]
 fn free_list_matches_a_reference_set() {
     const CAP: u32 = if cfg!(miri) { 128 } else { 5000 };
-    let mut s: Slab<u32> = Slab::with_capacity(CAP as usize);
+    let mut s: Slab<u32> = Slab::with_capacity(SlabCapacity::new(CAP));
     let mut free: BTreeSet<u32> = (0..CAP).collect();
     let mut live: HashMap<u32, SlabKey> = HashMap::new();
     let mut rng = Lcg(0x1234_5678_9abc_def0);
@@ -26,11 +27,11 @@ fn free_list_matches_a_reference_set() {
         &[0, 63, 64, 127, 4095, 4096, 4999]
     };
     for &index in boundaries {
-        let first = s.insert_at_with(index, |_| 2).unwrap();
+        let first = s.vacant_entry_at(index).unwrap().insert(2);
         assert!(free.remove(&index));
         assert_eq!(s.remove(first), Some(2));
         free.insert(index);
-        let replacement = s.insert_at_with(index, |_| 2).unwrap();
+        let replacement = s.vacant_entry_at(index).unwrap().insert(2);
         assert_ne!(first, replacement);
         assert!(free.remove(&index));
         assert!(live.insert(index, replacement).is_none());
@@ -50,11 +51,11 @@ fn free_list_matches_a_reference_set() {
             },
             1 => {
                 let idx = (rng.next() as u32) % CAP;
-                let placed = s.insert_at_with(idx, |_| 2);
+                let placed = s.vacant_entry_at(idx).map(|entry| entry.insert(2));
                 assert_eq!(
                     placed.is_some(),
                     free.contains(&idx),
-                    "insert_at_with({idx}) disagreed with model"
+                    "vacant_entry_at({idx}) disagreed with model"
                 );
                 if let Some(key) = placed {
                     free.remove(&idx);

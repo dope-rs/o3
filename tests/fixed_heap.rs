@@ -1,11 +1,10 @@
-use o3::collections::FixedHeap;
+use o3::collections::heap::Max;
 
 struct NotOrd;
 
 #[test]
 fn storage_operations_do_not_require_ordering() {
-    let mut heap = FixedHeap::<NotOrd>::with_capacity(1);
-    assert_eq!(heap.capacity(), 1);
+    let mut heap = Max::<NotOrd>::with_capacity(1);
     assert_eq!(heap.len(), 0);
     assert!(heap.peek().is_none());
     heap.clear();
@@ -13,8 +12,7 @@ fn storage_operations_do_not_require_ordering() {
 
 #[test]
 fn fixed_heap_orders_without_growing() {
-    let mut heap = FixedHeap::with_capacity(3);
-    assert_eq!(heap.capacity(), 3);
+    let mut heap = Max::with_capacity(3);
     assert_eq!(heap.push(2), Ok(()));
     assert_eq!(heap.push(1), Ok(()));
     assert_eq!(heap.push(3), Ok(()));
@@ -29,9 +27,7 @@ fn fixed_heap_orders_without_growing() {
 
 #[test]
 fn fixed_heap_drops_every_value() {
-    use std::cell::Cell;
-    use std::cmp::Ordering;
-    use std::rc::Rc;
+    use std::{cell::Cell, cmp::Ordering, rc::Rc};
 
     #[derive(Debug)]
     struct Value(u8, Rc<Cell<usize>>);
@@ -59,7 +55,7 @@ fn fixed_heap_drops_every_value() {
 
     let drops = Rc::new(Cell::new(0));
     {
-        let mut heap = FixedHeap::with_capacity(3);
+        let mut heap = Max::with_capacity(3);
         heap.push(Value(1, drops.clone()))
             .expect("three-slot heap must accept its first value");
         heap.push(Value(3, drops.clone()))

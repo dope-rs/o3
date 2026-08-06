@@ -1,8 +1,8 @@
-use o3::collections::{LeaseSlab, SlabLease};
+use o3::collections::{LeaseSlab, SlabCapacity, SlabLease};
 
 fn escape() -> SlabLease<'static, u8> {
-    let slab = LeaseSlab::try_with_capacity(1).unwrap();
-    slab.insert(1).unwrap()
+    let slab = LeaseSlab::with_capacity(SlabCapacity::new(1));
+    slab.vacant_entry().unwrap().insert(1)
 }
 
 fn main() {

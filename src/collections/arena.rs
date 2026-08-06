@@ -1,8 +1,6 @@
 use std::mem::MaybeUninit;
 
-use crate::marker::ThreadBound;
-
-use super::ClearGuard;
+use crate::{ThreadBound, collections::ClearGuard};
 
 const NONE: u32 = u32::MAX;
 
@@ -34,26 +32,24 @@ impl ChainState {
 }
 
 /// Fixed node storage and persistent FIFO lanes under one movable owner.
-pub struct LinkedArena<T> {
+pub struct Linked<T> {
     nodes: NodePool<T>,
     lanes: Box<[ChainState]>,
     _thread: ThreadBound,
 }
 
 /// Fixed node storage shared by persistent LIFO lanes.
-///
-/// Nodes are initialized only when first used. Moving a value between lanes or
-/// returning it to the pool never allocates.
-pub struct StackArena<T> {
+/// Nodes initialize on first use and move between lanes without allocation.
+pub struct Stack<T> {
     nodes: NodePool<T>,
     lanes: Box<[u32]>,
 }
 
-/// Values removed from one [`StackArena`] lane.
+/// Values removed from one [`Stack`] lane.
 ///
 /// Dropping the iterator releases every value that has not yet been yielded.
 pub struct StackDrain<'a, T> {
-    arena: &'a mut StackArena<T>,
+    arena: &'a mut Stack<T>,
     lane: usize,
 }
 
@@ -73,10 +69,6 @@ impl<T> NodePool<T> {
 
     fn is_full(&self) -> bool {
         self.live as usize == self.nodes.len()
-    }
-
-    fn capacity(&self) -> usize {
-        self.nodes.len()
     }
 
     fn available(&self) -> usize {
@@ -220,7 +212,7 @@ impl<T> NodePool<T> {
     }
 }
 
-impl<T> LinkedArena<T> {
+impl<T> Linked<T> {
     pub fn with_capacity(capacity: usize, lanes: usize) -> Self {
         Self {
             nodes: NodePool::with_capacity(capacity),
@@ -231,18 +223,6 @@ impl<T> LinkedArena<T> {
 
     pub fn is_full(&self) -> bool {
         self.nodes.is_full()
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.nodes.capacity()
-    }
-
-    pub fn available(&self) -> usize {
-        self.nodes.available()
-    }
-
-    pub fn lane_count(&self) -> usize {
-        self.lanes.len()
     }
 
     pub fn lane_len(&self, lane: usize) -> usize {
@@ -292,13 +272,13 @@ impl<T> LinkedArena<T> {
     }
 }
 
-impl<T> Drop for LinkedArena<T> {
+impl<T> Drop for Linked<T> {
     fn drop(&mut self) {
         self.clear();
     }
 }
 
-impl<T> StackArena<T> {
+impl<T> Stack<T> {
     pub fn with_capacity(capacity: usize, lanes: usize) -> Self {
         Self {
             nodes: NodePool::with_capacity(capacity),
@@ -306,20 +286,8 @@ impl<T> StackArena<T> {
         }
     }
 
-    pub fn is_full(&self) -> bool {
-        self.nodes.is_full()
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.nodes.capacity()
-    }
-
     pub fn available(&self) -> usize {
         self.nodes.available()
-    }
-
-    pub fn lane_count(&self) -> usize {
-        self.lanes.len()
     }
 
     pub fn lane_is_empty(&self, lane: usize) -> bool {
@@ -354,7 +322,7 @@ impl<T> StackArena<T> {
     }
 }
 
-impl<T> Drop for StackArena<T> {
+impl<T> Drop for Stack<T> {
     fn drop(&mut self) {
         self.clear();
     }

@@ -1,18 +1,20 @@
-use std::cell::Cell;
-use std::marker::{PhantomData, PhantomPinned};
-use std::pin::Pin;
-use std::ptr::NonNull;
+use std::{
+    cell::Cell,
+    marker::{PhantomData, PhantomPinned},
+    pin::Pin,
+    ptr::NonNull,
+};
 
-use crate::marker::ThreadBound;
+use crate::ThreadBound;
 
-pub struct ByteBudget {
+pub struct Bytes {
     limit: usize,
     used: Cell<usize>,
     _pin: PhantomPinned,
     _thread: ThreadBound,
 }
 
-impl ByteBudget {
+impl Bytes {
     pub fn new(limit: usize) -> Self {
         Self {
             limit,
@@ -22,47 +24,27 @@ impl ByteBudget {
         }
     }
 
-    pub fn limit(&self) -> usize {
-        self.limit
-    }
-
-    pub fn used(&self) -> usize {
-        self.used.get()
-    }
-
-    pub fn handle<'d>(self: Pin<&'d Self>) -> ByteBudgetHandle<'d> {
-        ByteBudgetHandle(NonNull::from(self.get_ref()), PhantomData)
-    }
-
-    pub fn try_acquire(self: Pin<&Self>, amount: usize) -> Option<ByteLease<'_>> {
-        self.handle().try_acquire(amount)
+    pub fn handle<'d>(self: Pin<&'d Self>) -> Handle<'d> {
+        Handle(NonNull::from(self.get_ref()), PhantomData)
     }
 }
 
 #[derive(Clone, Copy)]
-pub struct ByteBudgetHandle<'d>(NonNull<ByteBudget>, PhantomData<&'d ByteBudget>);
+pub struct Handle<'d>(NonNull<Bytes>, PhantomData<&'d Bytes>);
 
-impl<'d> ByteBudgetHandle<'d> {
-    fn budget(self) -> &'d ByteBudget {
+impl<'d> Handle<'d> {
+    fn budget(self) -> &'d Bytes {
         unsafe { self.0.as_ref() }
     }
 
-    pub fn limit(self) -> usize {
-        self.budget().limit
-    }
-
-    pub fn used(self) -> usize {
-        self.budget().used.get()
-    }
-
-    pub fn try_acquire(self, amount: usize) -> Option<ByteLease<'d>> {
+    pub fn try_acquire(self, amount: usize) -> Option<Lease<'d>> {
         let budget = self.budget();
         let used = budget.used.get().checked_add(amount)?;
         if used > budget.limit {
             return None;
         }
         budget.used.set(used);
-        Some(ByteLease {
+        Some(Lease {
             budget: self,
             amount,
         })
@@ -75,24 +57,12 @@ impl<'d> ByteBudgetHandle<'d> {
     }
 }
 
-pub struct ByteLease<'d> {
-    budget: ByteBudgetHandle<'d>,
+pub struct Lease<'d> {
+    budget: Handle<'d>,
     amount: usize,
 }
 
-impl ByteLease<'_> {
-    pub fn amount(&self) -> usize {
-        self.amount
-    }
-
-    pub fn shrink(&mut self, amount: usize) {
-        assert!(amount <= self.amount, "byte lease underflow");
-        self.amount -= amount;
-        self.budget.release(amount);
-    }
-}
-
-impl Drop for ByteLease<'_> {
+impl Drop for Lease<'_> {
     fn drop(&mut self) {
         self.budget.release(self.amount);
     }

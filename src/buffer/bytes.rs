@@ -1,25 +1,20 @@
-use std::convert::Infallible;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::ops::Range;
-use std::slice;
-
-use super::pool::shared::Pooled;
-use super::prefix::consume_prefix_api;
-use super::shared::Shared;
-use super::{
-    ByteRing, CapacityError, PrefixLength, RangeExt, SpareWriter, checked_append_len,
-    write_vec_slices,
+use std::{
+    convert::Infallible,
+    fmt,
+    hash::{Hash, Hasher},
+    ops::Range,
 };
 
-pub(super) mod sealed {
-    pub trait Storage {
-        fn as_slice(&self) -> &[u8];
-    }
+use crate::buffer::{
+    CapacityError, Frozen, PrefixConsumer, PrefixLength, PrefixProof, RangeExt, SpareWriter,
+    checked_append_len, queue::Ring, shared::Shared, write_vec_slices,
+};
 
-    pub trait ByteSpan {}
-    pub trait RetainBytes {}
+pub trait Storage {
+    fn as_slice(&self) -> &[u8];
 }
+
+pub trait RetainBytesSealed {}
 
 /// Bytes with a statically selected storage policy and no wrapper overhead.
 #[repr(transparent)]
@@ -34,16 +29,10 @@ pub struct Borrowed<'a> {
     slice: &'a [u8],
 }
 
-/// Immutable bytes holding one pooled slot until they are consumed or retained.
-#[repr(transparent)]
-pub struct Leased {
-    pooled: Pooled,
-}
-
 #[derive(Clone)]
 enum RetainedRepr {
-    Leased {
-        pooled: Pooled,
+    Frozen {
+        frozen: Frozen,
         start: u32,
         len: u32,
     },
@@ -56,21 +45,15 @@ pub struct Retained {
     repr: RetainedRepr,
 }
 
-/// Read-only access shared by all byte storage policies.
-pub trait ByteSpan: sealed::ByteSpan {
+/// Read-only bytes that can be retained beyond their current callback.
+pub trait RetainBytes: RetainBytesSealed + Sized {
     fn as_slice(&self) -> &[u8];
-
-    fn len(&self) -> usize {
-        self.as_slice().len()
-    }
 
     fn is_empty(&self) -> bool {
         self.as_slice().is_empty()
     }
-}
 
-/// Promotes borrowed bytes by copying and owned bytes by transferring ownership.
-pub trait RetainBytes: ByteSpan + sealed::RetainBytes + Sized {
+    /// Promotes borrowed bytes by copying and owned bytes by transferring ownership.
     #[must_use]
     fn into_retained(self) -> Bytes<Retained>;
 }
@@ -89,18 +72,6 @@ impl<'a> Bytes<Borrowed<'a>> {
     }
 }
 
-impl Bytes<Shared> {
-    #[must_use]
-    pub fn into_shared(self) -> Shared {
-        self.storage
-    }
-
-    #[must_use]
-    pub fn get(mut self, range: Range<usize>) -> Option<Self> {
-        self.storage.try_slice_in_place(range).then_some(self)
-    }
-}
-
 impl Bytes<Retained> {
     #[must_use]
     pub fn copy_from_slice(slice: &[u8]) -> Self {
@@ -110,8 +81,8 @@ impl Bytes<Retained> {
     #[must_use]
     pub fn into_shared(self) -> Shared {
         match self.storage.repr {
-            RetainedRepr::Leased { pooled, start, len } => {
-                Shared::copy_from_slice(&pooled.as_slice()[start as usize..(start + len) as usize])
+            RetainedRepr::Frozen { frozen, start, len } => {
+                Shared::copy_from_slice(&frozen.as_slice()[start as usize..(start + len) as usize])
             }
             RetainedRepr::Shared(shared) => shared,
         }
@@ -134,28 +105,32 @@ impl Bytes<Retained> {
             return;
         }
         match &mut self.storage.repr {
-            RetainedRepr::Leased { start, len, .. } => {
+            RetainedRepr::Frozen { start, len, .. } => {
                 *start += amount as u32;
                 *len -= amount as u32;
             }
             RetainedRepr::Shared(shared) => shared.consume_valid(amount),
         }
     }
+}
 
-    consume_prefix_api!(Self::consume_valid);
+impl PrefixConsumer for Bytes<Retained> {
+    fn consume_validated_prefix(&mut self, proof: PrefixProof) {
+        self.consume_valid(proof.amount());
+    }
 }
 
 impl Retained {
     fn len(&self) -> usize {
         match &self.repr {
-            RetainedRepr::Leased { len, .. } => *len as usize,
+            RetainedRepr::Frozen { len, .. } => *len as usize,
             RetainedRepr::Shared(shared) => shared.len(),
         }
     }
 
     fn try_slice_in_place(&mut self, range: Range<usize>) -> bool {
         match &mut self.repr {
-            RetainedRepr::Leased { start, len, .. } => {
+            RetainedRepr::Frozen { start, len, .. } => {
                 if !range.is_within(*len as usize) {
                     return false;
                 }
@@ -172,7 +147,7 @@ impl Retained {
     }
 }
 
-impl<S: sealed::Storage> Bytes<S> {
+impl<S: Storage> Bytes<S> {
     pub fn as_slice(&self) -> &[u8] {
         self.storage.as_slice()
     }
@@ -196,76 +171,67 @@ where
     }
 }
 
-impl sealed::Storage for Borrowed<'_> {
+impl Storage for Borrowed<'_> {
     fn as_slice(&self) -> &[u8] {
         self.slice
     }
 }
 
-impl sealed::Storage for Leased {
-    fn as_slice(&self) -> &[u8] {
-        self.pooled.as_slice()
-    }
-}
-
-impl sealed::Storage for Shared {
-    fn as_slice(&self) -> &[u8] {
-        let slice = Shared::as_slice(self);
-        debug_assert_eq!(slice.len(), self.len());
-        slice
-    }
-}
-
-impl sealed::Storage for Retained {
+impl Storage for Retained {
     fn as_slice(&self) -> &[u8] {
         match &self.repr {
-            RetainedRepr::Leased { pooled, start, len } => {
-                &pooled.as_slice()[*start as usize..(*start + *len) as usize]
+            RetainedRepr::Frozen { frozen, start, len } => {
+                &frozen.as_slice()[*start as usize..(*start + *len) as usize]
             }
             RetainedRepr::Shared(shared) => shared.as_slice(),
         }
     }
 }
 
-impl<S: sealed::Storage> sealed::ByteSpan for Bytes<S> {}
-
-impl<S: sealed::Storage> ByteSpan for Bytes<S> {
-    fn as_slice(&self) -> &[u8] {
-        let slice = self.storage.as_slice();
-        debug_assert_eq!(slice.len(), self.len());
-        slice
-    }
-}
-
-impl sealed::RetainBytes for Bytes<Borrowed<'_>> {}
+impl RetainBytesSealed for Bytes<Borrowed<'_>> {}
 
 impl RetainBytes for Bytes<Borrowed<'_>> {
+    fn as_slice(&self) -> &[u8] {
+        Bytes::as_slice(self)
+    }
+
     fn into_retained(self) -> Bytes<Retained> {
         Bytes::<Retained>::copy_from_slice(self.as_slice())
     }
 }
 
-impl sealed::RetainBytes for Bytes<Leased> {}
-
-impl RetainBytes for Bytes<Leased> {
-    fn into_retained(self) -> Bytes<Retained> {
-        Bytes::<Retained>::from(self.storage.pooled)
-    }
-}
-
-impl sealed::RetainBytes for Bytes<Shared> {}
-
-impl RetainBytes for Bytes<Shared> {
-    fn into_retained(self) -> Bytes<Retained> {
-        Bytes::<Retained>::from(self.storage)
-    }
-}
-
-impl sealed::RetainBytes for Bytes<Retained> {}
+impl RetainBytesSealed for Bytes<Retained> {}
 
 impl RetainBytes for Bytes<Retained> {
+    fn as_slice(&self) -> &[u8] {
+        Bytes::as_slice(self)
+    }
+
+    fn is_empty(&self) -> bool {
+        match &self.storage.repr {
+            RetainedRepr::Frozen { frozen, len, .. } => frozen.is_empty() || *len == 0,
+            RetainedRepr::Shared(shared) => shared.is_empty(),
+        }
+    }
+
     fn into_retained(self) -> Bytes<Retained> {
         self
+    }
+}
+
+impl RetainBytesSealed for Shared {}
+
+impl RetainBytes for Shared {
+    fn as_slice(&self) -> &[u8] {
+        Shared::as_slice(self)
+    }
+
+    fn into_retained(self) -> Bytes<Retained> {
+        Bytes {
+            storage: Retained {
+                repr: RetainedRepr::Shared(self),
+            },
+        }
     }
 }
 
@@ -279,33 +245,33 @@ impl<S: Clone> Clone for Bytes<S> {
 
 impl<S: Copy> Copy for Bytes<S> {}
 
-impl<S: sealed::Storage> AsRef<[u8]> for Bytes<S> {
+impl<S: Storage> AsRef<[u8]> for Bytes<S> {
     fn as_ref(&self) -> &[u8] {
         self.as_slice()
     }
 }
 
-impl<S: sealed::Storage> PrefixLength for Bytes<S> {
+impl<S: Storage> PrefixLength for Bytes<S> {
     fn prefix_len(&self) -> usize {
         self.len()
     }
 }
 
-impl<S: sealed::Storage> PartialEq for Bytes<S> {
+impl<S: Storage> PartialEq for Bytes<S> {
     fn eq(&self, other: &Self) -> bool {
         self.as_slice() == other.as_slice()
     }
 }
 
-impl<S: sealed::Storage> Eq for Bytes<S> {}
+impl<S: Storage> Eq for Bytes<S> {}
 
-impl<S: sealed::Storage> Hash for Bytes<S> {
+impl<S: Storage> Hash for Bytes<S> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.as_slice().hash(state);
     }
 }
 
-impl<S: sealed::Storage> fmt::Debug for Bytes<S> {
+impl<S: Storage> fmt::Debug for Bytes<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Bytes").field(&self.as_slice()).finish()
     }
@@ -325,20 +291,6 @@ impl<'a, const N: usize> From<&'a [u8; N]> for Bytes<Borrowed<'a>> {
     }
 }
 
-impl From<Pooled> for Bytes<Leased> {
-    fn from(value: Pooled) -> Self {
-        Self {
-            storage: Leased { pooled: value },
-        }
-    }
-}
-
-impl From<Shared> for Bytes<Shared> {
-    fn from(value: Shared) -> Self {
-        Self { storage: value }
-    }
-}
-
 impl From<Shared> for Bytes<Retained> {
     fn from(value: Shared) -> Self {
         Self {
@@ -349,13 +301,13 @@ impl From<Shared> for Bytes<Retained> {
     }
 }
 
-impl From<Pooled> for Bytes<Retained> {
-    fn from(value: Pooled) -> Self {
+impl From<Frozen> for Bytes<Retained> {
+    fn from(value: Frozen) -> Self {
         let len = value.len() as u32;
         Self {
             storage: Retained {
-                repr: RetainedRepr::Leased {
-                    pooled: value,
+                repr: RetainedRepr::Frozen {
+                    frozen: value,
                     start: 0,
                     len,
                 },
@@ -369,19 +321,25 @@ impl From<Pooled> for Bytes<Retained> {
 pub trait ByteSink {
     type Error;
 
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error>;
+
+    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error>;
+
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error>;
-
-    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.write_slices([bytes])
-    }
-
-    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
-        self.write_slices([slice::from_ref(&byte)])
-    }
 }
 
 impl ByteSink for Vec<u8> {
     type Error = Infallible;
+
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+        self.push(byte);
+        Ok(())
+    }
+
+    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.extend_from_slice(bytes);
+        Ok(())
+    }
 
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
         write_vec_slices(self, slices);
@@ -392,13 +350,29 @@ impl ByteSink for Vec<u8> {
 impl ByteSink for SpareWriter<'_> {
     type Error = CapacityError;
 
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+        self.try_push(byte)
+    }
+
+    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.try_extend(bytes)
+    }
+
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
         self.try_extend_from_slices(slices)
     }
 }
 
-impl ByteSink for ByteRing {
+impl ByteSink for Ring {
     type Error = CapacityError;
+
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+        self.try_push(byte)
+    }
+
+    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.try_extend(bytes)
+    }
 
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
         self.try_extend_from_slices(slices)
@@ -416,18 +390,6 @@ impl<'a> SliceWriter<'a> {
         Self { out, written: 0 }
     }
 
-    pub const fn len(&self) -> usize {
-        self.written
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.written == 0
-    }
-
-    pub const fn remaining(&self) -> usize {
-        self.out.len() - self.written
-    }
-
     pub fn finish(self) -> usize {
         self.written
     }
@@ -435,6 +397,31 @@ impl<'a> SliceWriter<'a> {
 
 impl ByteSink for SliceWriter<'_> {
     type Error = CapacityError;
+
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+        if self.written == self.out.len() {
+            return Err(CapacityError::new(
+                self.written.saturating_add(1),
+                self.out.len(),
+            ));
+        }
+        self.out[self.written] = byte;
+        self.written += 1;
+        Ok(())
+    }
+
+    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+        let end = self
+            .written
+            .checked_add(bytes.len())
+            .ok_or_else(|| CapacityError::new(usize::MAX, self.out.len()))?;
+        if end > self.out.len() {
+            return Err(CapacityError::new(end, self.out.len()));
+        }
+        self.out[self.written..end].copy_from_slice(bytes);
+        self.written = end;
+        Ok(())
+    }
 
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
         let end = checked_append_len(self.written, self.out.len(), &slices)?;

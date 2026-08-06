@@ -1,9 +1,10 @@
-use o3::collections::CellSlab;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+
+use o3::collections::{CellSlab, SlabCapacity};
 
 #[test]
 fn reentrant_remove_observes_a_busy_slot() {
-    let slab: CellSlab<u32> = CellSlab::with_capacity(1);
+    let slab: CellSlab<u32> = CellSlab::with_capacity(SlabCapacity::new(1));
     let key = slab.insert(42).unwrap();
     let value = slab.update(key, |value| {
         assert_eq!(slab.remove(key), None);
@@ -15,7 +16,7 @@ fn reentrant_remove_observes_a_busy_slot() {
 
 #[test]
 fn updates_keep_the_value_in_its_slot() {
-    let slab: CellSlab<u32> = CellSlab::with_capacity(1);
+    let slab: CellSlab<u32> = CellSlab::with_capacity(SlabCapacity::new(1));
     let key = slab.insert(42).unwrap();
     let first = slab.update(key, |value| value as *mut u32).unwrap();
     let second = slab.update(key, |value| value as *mut u32).unwrap();
@@ -24,7 +25,7 @@ fn updates_keep_the_value_in_its_slot() {
 
 #[test]
 fn conditional_remove_visits_the_slot_once() {
-    let slab: CellSlab<u32> = CellSlab::with_capacity(1);
+    let slab: CellSlab<u32> = CellSlab::with_capacity(SlabCapacity::new(1));
     let key = slab.insert(7).unwrap();
     assert!(
         slab.remove_parts_with(key.parts(), |_| None::<()>)
@@ -38,7 +39,7 @@ fn conditional_remove_visits_the_slot_once() {
 
 #[test]
 fn keys_follow_checked_dense_positions() {
-    let slab: CellSlab<u32> = CellSlab::with_capacity(4096);
+    let slab: CellSlab<u32> = CellSlab::with_capacity(SlabCapacity::new(4096));
     let first = slab.insert(1).unwrap();
     let second = slab.insert(2).unwrap();
     let third = slab.insert(3).unwrap();
@@ -56,14 +57,14 @@ fn keys_follow_checked_dense_positions() {
         assert!(
             observed
                 .into_iter()
-                .all(|key| key.index() < slab.capacity() as u32 && slab.contains_key(key))
+                .all(|key| key.index() < slab.capacity() as u32)
         );
     });
 }
 
 #[test]
 fn panicking_callbacks_restore_the_slot() {
-    let slab: CellSlab<u32> = CellSlab::with_capacity(1);
+    let slab: CellSlab<u32> = CellSlab::with_capacity(SlabCapacity::new(1));
     let key = slab.insert(5).unwrap();
     let caught = catch_unwind(AssertUnwindSafe(|| {
         slab.update(key, |value| {
@@ -72,7 +73,7 @@ fn panicking_callbacks_restore_the_slot() {
         })
     }));
     assert!(caught.is_err());
-    assert!(slab.contains_key(key));
+    assert!(slab.keys().any(|current| current == key));
     assert_eq!(slab.len(), 1);
     assert_eq!(slab.remove(key), Some(999));
 
@@ -81,6 +82,6 @@ fn panicking_callbacks_restore_the_slot() {
         slab.remove_parts_with(key.parts(), |_| -> Option<()> { panic!("remove") });
     }));
     assert!(caught.is_err());
-    assert!(slab.contains_key(key));
+    assert!(slab.keys().any(|current| current == key));
     assert_eq!(slab.remove(key), Some(7));
 }

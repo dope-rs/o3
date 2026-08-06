@@ -1,10 +1,13 @@
-use std::marker::PhantomData;
-use std::mem::{ManuallyDrop, MaybeUninit};
-use std::ptr;
+use std::{
+    marker::PhantomData,
+    mem::{ManuallyDrop, MaybeUninit},
+    ptr,
+};
 
-use crate::collections::BoxSliceGrowth;
-use crate::collections::{ClearGuard, IndexKey};
-use crate::marker::ThreadBound;
+use crate::{
+    ThreadBound,
+    collections::{BoxSliceGrowth, ClearGuard},
+};
 
 const NONE: u32 = u32::MAX;
 
@@ -117,18 +120,18 @@ impl<T, F: FnMut(&T, usize)> Hole<'_, T, F> {
     }
 }
 
-struct HeapEntry<I, K> {
-    index: I,
+struct Entry<K> {
+    index: usize,
     key: K,
 }
 
-pub struct FixedHeap<T> {
+pub struct Max<T> {
     entries: Box<[MaybeUninit<T>]>,
     len: usize,
     _thread: ThreadBound,
 }
 
-impl<T> FixedHeap<T> {
+impl<T> Max<T> {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             entries: Box::<[T]>::new_uninit_slice(capacity),
@@ -174,7 +177,7 @@ impl<T> FixedHeap<T> {
     where
         T: Ord,
     {
-        if self.len == 0 {
+        if self.is_empty() {
             return None;
         }
         let value = unsafe { self.entries.get_unchecked(0).assume_init_read() };
@@ -195,14 +198,10 @@ impl<T> FixedHeap<T> {
     }
 
     pub fn clear(&mut self) {
-        while self.len != 0 {
+        while !self.is_empty() {
             self.len -= 1;
             unsafe { self.entries.get_unchecked_mut(self.len).assume_init_drop() };
         }
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.entries.len()
     }
 
     pub fn len(&self) -> usize {
@@ -214,57 +213,55 @@ impl<T> FixedHeap<T> {
     }
 }
 
-impl<T> Drop for FixedHeap<T> {
+impl<T> Drop for Max<T> {
     fn drop(&mut self) {
         ClearGuard::run(self, Self::clear);
     }
 }
 
-pub struct IndexedMinHeap<K: Ord, I: IndexKey = usize> {
-    entries: Box<[MaybeUninit<HeapEntry<I, K>>]>,
+pub struct Min<K: Ord> {
+    entries: Box<[MaybeUninit<Entry<K>>]>,
     positions: Box<[u32]>,
     len: usize,
     _thread: ThreadBound,
 }
 
-pub struct IndexedMinHeapVacantEntry<'a, K: Ord, I: IndexKey = usize> {
-    heap: &'a mut IndexedMinHeap<K, I>,
-    index: I,
+pub struct Vacant<'a, K: Ord> {
+    heap: &'a mut Min<K>,
+    index: usize,
 }
 
-impl<K: Ord, I: IndexKey> IndexedMinHeapVacantEntry<'_, K, I> {
+impl<K: Ord> Vacant<'_, K> {
     pub fn insert(self, key: K) {
         unsafe { self.heap.insert_unchecked(self.index, key) };
     }
 }
 
-impl<K: Ord, I: IndexKey> IndexedMinHeap<K, I> {
+impl<K: Ord> Min<K> {
     pub fn with_capacity(capacity: usize) -> Self {
         assert!(
             u32::try_from(capacity).is_ok(),
             "index heap capacity overflow"
         );
         Self {
-            entries: Box::<[HeapEntry<I, K>]>::new_uninit_slice(capacity),
+            entries: Box::<[Entry<K>]>::new_uninit_slice(capacity),
             positions: vec![NONE; capacity].into_boxed_slice(),
             len: 0,
             _thread: ThreadBound::NEW,
         }
     }
 
-    pub fn vacant_entry(&mut self, index: I) -> Option<IndexedMinHeapVacantEntry<'_, K, I>> {
-        let raw = index.index();
+    pub fn vacant_entry(&mut self, index: usize) -> Option<Vacant<'_, K>> {
         self.positions
-            .get(raw)
+            .get(index)
             .is_some_and(|position| *position == NONE)
-            .then_some(IndexedMinHeapVacantEntry { heap: self, index })
+            .then_some(Vacant { heap: self, index })
     }
 
-    pub fn insert(&mut self, index: I, key: K) -> Result<(), K> {
-        let raw = index.index();
+    pub fn insert(&mut self, index: usize, key: K) -> Result<(), K> {
         if self
             .positions
-            .get(raw)
+            .get(index)
             .is_none_or(|position| *position != NONE)
         {
             return Err(key);
@@ -274,21 +271,20 @@ impl<K: Ord, I: IndexKey> IndexedMinHeap<K, I> {
     }
 
     /// # Safety
-    /// `index.index() < capacity()`, its slot is vacant, and the heap is not full.
-    unsafe fn insert_unchecked(&mut self, index: I, key: K) {
-        let raw = index.index();
+    /// `index < capacity()`, its slot is vacant, and the heap is not full.
+    unsafe fn insert_unchecked(&mut self, index: usize, key: K) {
         debug_assert!(
             self.positions
-                .get(raw)
+                .get(index)
                 .is_some_and(|position| *position == NONE)
         );
         debug_assert!(self.len < self.entries.len());
         let position = self.len;
         self.len += 1;
-        let value = HeapEntry { index, key };
+        let value = Entry { index, key };
         let positions = &mut self.positions;
-        let on_move = |entry: &HeapEntry<I, K>, position: usize| unsafe {
-            *positions.get_unchecked_mut(entry.index.index()) = position as u32;
+        let on_move = |entry: &Entry<K>, position: usize| unsafe {
+            *positions.get_unchecked_mut(entry.index) = position as u32;
         };
         let mut hole = unsafe {
             Hole::with_value(
@@ -301,34 +297,34 @@ impl<K: Ord, I: IndexKey> IndexedMinHeap<K, I> {
         hole.sift_up(0, &mut |left, right| left.key < right.key);
     }
 
-    pub fn peek(&self) -> Option<(I, &K)> {
+    pub fn peek(&self) -> Option<(usize, &K)> {
         (self.len != 0).then(|| {
             let entry = self.entry(0);
             (entry.index, &entry.key)
         })
     }
 
-    pub fn pop(&mut self) -> Option<(I, K)> {
+    pub fn pop(&mut self) -> Option<(usize, K)> {
         (self.len != 0).then(|| unsafe { self.remove_position(0) })
     }
 
-    pub fn remove(&mut self, index: I) -> Option<K> {
-        let position = *self.positions.get(index.index())?;
+    pub fn remove(&mut self, index: usize) -> Option<K> {
+        let position = *self.positions.get(index)?;
         if position == NONE || self.entry(position as usize).index != index {
             return None;
         }
         Some(unsafe { self.remove_position(position as usize).1 })
     }
 
-    unsafe fn remove_position(&mut self, position: usize) -> (I, K) {
+    unsafe fn remove_position(&mut self, position: usize) -> (usize, K) {
         let entry = unsafe { self.entries.get_unchecked(position).assume_init_read() };
         self.len -= 1;
-        unsafe { *self.positions.get_unchecked_mut(entry.index.index()) = NONE };
+        unsafe { *self.positions.get_unchecked_mut(entry.index) = NONE };
         if position < self.len {
             let value = unsafe { self.entries.get_unchecked(self.len).assume_init_read() };
             let positions = &mut self.positions;
-            let on_move = |entry: &HeapEntry<I, K>, position: usize| unsafe {
-                *positions.get_unchecked_mut(entry.index.index()) = position as u32;
+            let on_move = |entry: &Entry<K>, position: usize| unsafe {
+                *positions.get_unchecked_mut(entry.index) = position as u32;
             };
             let mut hole = unsafe {
                 Hole::with_value(
@@ -363,18 +359,11 @@ impl<K: Ord, I: IndexKey> IndexedMinHeap<K, I> {
         positions.resize(capacity, NONE);
     }
 
-    pub fn contains_key(&self, index: I) -> bool {
-        let Some(&position) = self.positions.get(index.index()) else {
-            return false;
-        };
-        position != NONE && self.entry(position as usize).index == index
-    }
-
     pub fn clear(&mut self) {
         while self.len > 0 {
             let position = self.len - 1;
             let index = self.entry(position).index;
-            self.positions[index.index()] = NONE;
+            self.positions[index] = NONE;
             self.len -= 1;
             unsafe { self.entries.get_unchecked_mut(position).assume_init_drop() };
         }
@@ -392,13 +381,13 @@ impl<K: Ord, I: IndexKey> IndexedMinHeap<K, I> {
         self.len == 0
     }
 
-    fn entry(&self, position: usize) -> &HeapEntry<I, K> {
+    fn entry(&self, position: usize) -> &Entry<K> {
         debug_assert!(position < self.len);
         unsafe { self.entries.get_unchecked(position).assume_init_ref() }
     }
 }
 
-impl<K: Ord, I: IndexKey> Drop for IndexedMinHeap<K, I> {
+impl<K: Ord> Drop for Min<K> {
     fn drop(&mut self) {
         ClearGuard::run(self, Self::clear);
     }

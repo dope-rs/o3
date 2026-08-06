@@ -1,17 +1,18 @@
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::ops::{Deref, DerefMut};
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+    ops::{Deref, DerefMut},
+};
 
-use super::storage::{RawMut, RawSpan};
-use super::{CapacityError, ExactBuildError, PrefixLength, SpareWriter};
-use crate::buffer::Shared;
-
-pub const BLOCK_CAPACITY: u32 = 64 * 1024;
+use crate::buffer::{
+    CapacityError, ExactBuildError, PrefixLength, Shared, SpareWriter,
+    storage::{StorageMut, StorageSpan},
+};
 
 /// A uniquely owned, non-growing byte allocation. `CAP == 0` selects an exact
 /// runtime capacity; a nonzero `CAP` fixes it in the type without added storage.
 pub struct Owned<const CAP: u32 = 0> {
-    raw: RawMut,
+    storage: StorageMut,
     len: u32,
 }
 
@@ -41,15 +42,13 @@ impl Owned {
 
     pub fn try_filled(len: usize, byte: u8) -> Result<Self, CapacityError> {
         let mut value = Self::try_with_capacity(len)?;
-        value.raw.fill(byte);
+        value.storage.fill(byte);
         value.len = len as u32;
         Ok(value)
     }
 }
 
 impl<const CAP: u32> Owned<CAP> {
-    pub const CAPACITY: usize = CAP as usize;
-
     #[must_use]
     pub fn new() -> Self {
         Self::with_capacity_u32(CAP)
@@ -57,14 +56,14 @@ impl<const CAP: u32> Owned<CAP> {
 
     fn with_capacity_u32(capacity: u32) -> Self {
         Self {
-            raw: RawMut::with_capacity_u32(capacity),
+            storage: StorageMut::with_capacity_u32(capacity),
             len: 0,
         }
     }
 
     pub fn capacity(&self) -> usize {
         if CAP == 0 {
-            self.raw.capacity()
+            self.storage.capacity()
         } else {
             CAP as usize
         }
@@ -79,14 +78,14 @@ impl<const CAP: u32> Owned<CAP> {
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        self.raw.initialized(self.len())
+        self.storage.initialized(self.len())
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        self.raw.initialized_mut(self.len as usize)
+        self.storage.initialized_mut(self.len as usize)
     }
 
-    pub fn try_extend_from_slice(&mut self, src: &[u8]) -> Result<(), CapacityError> {
+    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), CapacityError> {
         let start = self.len();
         let capacity = self.capacity();
         let end = start
@@ -95,7 +94,7 @@ impl<const CAP: u32> Owned<CAP> {
         if end > capacity {
             return Err(CapacityError::new(end, capacity));
         }
-        self.raw.copy_from_slice(start, src);
+        self.storage.copy_from_slice(start, src);
         self.len = end as u32;
         Ok(())
     }
@@ -117,7 +116,7 @@ impl<const CAP: u32> Owned<CAP> {
         }
         let mut offset = start;
         for slice in slices {
-            self.raw.copy_from_slice(offset, slice);
+            self.storage.copy_from_slice(offset, slice);
             offset += slice.len();
         }
         self.len = end as u32;
@@ -130,34 +129,24 @@ impl<const CAP: u32> Owned<CAP> {
         if offset == capacity {
             return Err(CapacityError::new(offset.saturating_add(1), capacity));
         }
-        self.raw.write_byte(offset, byte);
+        self.storage.write_byte(offset, byte);
         self.len += 1;
         Ok(())
     }
 
-    pub fn clear(&mut self) {
-        self.len = 0;
-    }
-
-    pub fn truncate(&mut self, len: usize) {
-        if len < self.len() {
-            self.len = len as u32;
-        }
-    }
-
     pub fn spare_writer(&mut self) -> SpareWriter<'_> {
-        self.raw.spare_writer(&mut self.len)
+        self.storage.spare_writer(&mut self.len)
     }
 
     #[must_use]
     pub fn freeze(self) -> Shared {
-        let Self { raw, len } = self;
+        let Self { storage, len } = self;
         if len == 0 {
             return Shared::new();
         }
-        // SAFETY: every constructor and writer maintains `len <= raw.capacity()`.
-        let span = unsafe { RawSpan::new_unchecked(raw.freeze(), 0, len) };
-        Shared::from_raw_span(span)
+        // SAFETY: every constructor and writer maintains `len <= storage.capacity()`.
+        let span = unsafe { StorageSpan::new_unchecked(storage.freeze(), 0, len) };
+        Shared::from_storage_span(span)
     }
 }
 
@@ -169,9 +158,11 @@ impl<const CAP: u32> Default for Owned<CAP> {
 
 impl<const CAP: u32> Clone for Owned<CAP> {
     fn clone(&self) -> Self {
-        let mut clone = Self::with_capacity_u32(self.raw.capacity() as u32);
+        let mut clone = Self::with_capacity_u32(self.storage.capacity() as u32);
         if self.len != 0 {
-            clone.raw.copy_from_raw(0, &self.raw, 0, self.len());
+            clone
+                .storage
+                .copy_from_storage(0, &self.storage, 0, self.len());
             clone.len = self.len;
         }
         clone

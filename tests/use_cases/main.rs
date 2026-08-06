@@ -1,5 +1,6 @@
 mod cartel_shared_lanes;
 mod dope_sark_typed_pools;
+mod lease_buffer_transactions;
 mod owned_capacity_modes;
 mod protocol_segment_queues;
 mod quic_packet_journal;

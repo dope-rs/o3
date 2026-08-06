@@ -21,15 +21,15 @@ impl Response<'_> {
     }
 
     fn encode_into(&self, out: &mut SpareWriter<'_>) -> Result<(), CapacityError> {
-        out.try_extend_from_slice(self.static_head)?;
+        out.try_extend(self.static_head)?;
         for (name, value) in self.fields {
-            out.try_extend_from_slice(name)?;
-            out.try_extend_from_slice(b": ")?;
-            out.try_extend_from_slice(value)?;
-            out.try_extend_from_slice(b"\r\n")?;
+            out.try_extend(name)?;
+            out.try_extend(b": ")?;
+            out.try_extend(value)?;
+            out.try_extend(b"\r\n")?;
         }
-        out.try_extend_from_slice(b"\r\n")?;
-        out.try_extend_from_slice(self.body)
+        out.try_extend(b"\r\n")?;
+        out.try_extend(self.body)
     }
 
     fn into_shared(self) -> Result<Shared, ExactBuildError<CapacityError>> {
@@ -81,7 +81,7 @@ fn sark_response_conversion_keeps_the_length_contract_at_the_use_case_boundary()
 #[test]
 fn sark_inaccurate_length_pass_cannot_produce_a_partially_initialized_buffer() {
     let error = Owned::try_build_exact(5, |out| {
-        out.try_extend_from_slice(b"four")?;
+        out.try_extend(b"four")?;
         Ok::<_, CapacityError>(())
     })
     .expect_err("an underfilled exact allocation must be rejected");

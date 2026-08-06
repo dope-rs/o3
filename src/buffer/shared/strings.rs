@@ -1,8 +1,6 @@
-use std::fmt;
-use std::ops::Deref;
-use std::str::Utf8Error;
+use std::{fmt, ops::Deref, str::Utf8Error};
 
-use super::Shared;
+use crate::buffer::shared::Shared;
 
 #[repr(transparent)]
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -32,10 +30,6 @@ impl SharedStr {
 
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_slice()
-    }
-
-    pub fn into_shared(self) -> Shared {
-        self.0
     }
 }
 

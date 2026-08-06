@@ -1,17 +1,17 @@
 #![forbid(unsafe_code)]
 
-use o3::buffer::InlineBytes;
+use o3::buffer::inline;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum WirePrefix<const INLINE: usize> {
-    Inline(InlineBytes<INLINE>),
+    Inline(inline::Bytes<INLINE>),
     Owned(Vec<u8>),
 }
 
 impl<const INLINE: usize> WirePrefix<INLINE> {
     fn with_capacity(capacity: usize) -> Self {
         if capacity <= INLINE {
-            Self::Inline(InlineBytes::new())
+            Self::Inline(inline::Bytes::new())
         } else {
             Self::Owned(Vec::with_capacity(capacity))
         }

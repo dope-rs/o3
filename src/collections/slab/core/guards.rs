@@ -1,5 +1,7 @@
-use super::{Mode, SlabCore, Slot, SlotIndex, State};
-use crate::collections::slab::GenerationState;
+use crate::collections::slab::{
+    GenerationState,
+    core::{Mode, Reservations, SlabCore, Slot, SlotIndex, State, entries::Entries},
+};
 
 pub(super) struct Busy<'a, T, G: GenerationState, M: Mode> {
     core: &'a SlabCore<T, G, M>,
