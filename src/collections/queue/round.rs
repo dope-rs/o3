@@ -1,4 +1,4 @@
-use crate::marker::ThreadBound;
+use crate::ThreadBound;
 
 const NONE: u32 = u32::MAX;
 
@@ -13,14 +13,14 @@ const VACANT: Links = Links {
     prev: NONE,
 };
 
-pub struct RoundRobinSet {
+pub struct Robin {
     links: Box<[Links]>,
     head: u32,
     len: usize,
     _thread: ThreadBound,
 }
 
-impl RoundRobinSet {
+impl Robin {
     pub fn with_capacity(capacity: usize) -> Self {
         assert!(
             u32::try_from(capacity).is_ok(),
@@ -32,18 +32,6 @@ impl RoundRobinSet {
             len: 0,
             _thread: ThreadBound::NEW,
         }
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.links.len()
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     pub fn contains(&self, index: usize) -> bool {

@@ -1,4 +1,7 @@
-use o3::collections::{CopyArrayVec, FixedIndexTable, StackArena};
+use o3::collections::{
+    arena::Stack,
+    fixed::{array::CopyInline, index::Slots},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Packet {
@@ -14,11 +17,11 @@ struct StreamHandle(u64);
 
 #[test]
 fn quic_packet_metadata_stays_compact_while_typed_carriers_share_fixed_storage() {
-    let mut packets = FixedIndexTable::with_capacity(4);
-    let mut controls = StackArena::with_capacity(4, 4);
-    let mut streams = StackArena::with_capacity(8, 4);
-    let mut packet_controls = CopyArrayVec::<ControlHandle, 16>::new();
-    let mut packet_streams = CopyArrayVec::<StreamHandle, 16>::new();
+    let mut packets = Slots::with_capacity(4);
+    let mut controls = Stack::with_capacity(4, 4);
+    let mut streams = Stack::with_capacity(8, 4);
+    let mut packet_controls = CopyInline::<ControlHandle, 16>::new();
+    let mut packet_streams = CopyInline::<StreamHandle, 16>::new();
     let packet = Packet {
         number: 5,
         bytes: 1_200,
@@ -42,6 +45,6 @@ fn quic_packet_metadata_stays_compact_while_typed_carriers_share_fixed_storage()
         streams.drain(lane).collect::<Vec<_>>(),
         [StreamHandle(3), StreamHandle(2)]
     );
-    assert_eq!(controls.available(), controls.capacity());
-    assert_eq!(streams.available(), streams.capacity());
+    assert_eq!(controls.available(), 4);
+    assert_eq!(streams.available(), 8);
 }

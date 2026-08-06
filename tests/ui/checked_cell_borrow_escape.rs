@@ -1,6 +1,6 @@
-use o3::cell::CheckedCell;
+use o3::cell::Checked;
 
-fn escape(cell: &CheckedCell<u8>) -> &mut u8 {
+fn escape(cell: &Checked<u8>) -> &mut u8 {
     cell.with_mut(|value| value)
 }
 

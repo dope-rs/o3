@@ -1,10 +1,11 @@
-use std::cell::{Cell, UnsafeCell};
-use std::mem::MaybeUninit;
+use std::{
+    cell::{Cell, UnsafeCell},
+    mem::MaybeUninit,
+};
 
-use crate::collections::ClearGuard;
-use crate::marker::ThreadBound;
+use crate::{ThreadBound, collections::ClearGuard};
 
-pub struct CellQueue<T> {
+pub struct Fifo<T> {
     entries: Box<[UnsafeCell<MaybeUninit<T>>]>,
     capacity: usize,
     head: Cell<usize>,
@@ -12,7 +13,7 @@ pub struct CellQueue<T> {
     _thread: ThreadBound,
 }
 
-impl<T> CellQueue<T> {
+impl<T> Fifo<T> {
     pub fn with_capacity(capacity: usize) -> Self {
         assert!(
             capacity.checked_next_power_of_two().is_some(),
@@ -70,10 +71,6 @@ impl<T> CellQueue<T> {
         }
     }
 
-    pub fn capacity(&self) -> usize {
-        self.capacity
-    }
-
     pub fn len(&self) -> usize {
         self.tail.get().wrapping_sub(self.head.get())
     }
@@ -81,13 +78,9 @@ impl<T> CellQueue<T> {
     pub fn is_empty(&self) -> bool {
         self.head.get() == self.tail.get()
     }
-
-    pub fn is_full(&self) -> bool {
-        self.len() == self.capacity
-    }
 }
 
-impl<T> Drop for CellQueue<T> {
+impl<T> Drop for Fifo<T> {
     fn drop(&mut self) {
         ClearGuard::run(self, |queue| queue.clear());
     }

@@ -1,7 +1,4 @@
-use std::cell::Cell;
-use std::cmp::Ordering;
-use std::marker::PhantomPinned;
-use std::pin::Pin;
+use std::{cell::Cell, cmp::Ordering, marker::PhantomPinned, pin::Pin};
 
 pub(crate) struct PinnedItem<'a> {
     value: Cell<u32>,

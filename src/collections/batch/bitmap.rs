@@ -1,26 +1,26 @@
 use std::cell::{Cell, UnsafeCell};
 
-use crate::marker::ThreadBound;
+use crate::ThreadBound;
 
 const WORD_BITS: usize = usize::BITS as usize;
 
-pub(super) struct CellBitmap {
+pub(super) struct Bitmap {
     words: UnsafeCell<Words>,
-    summary: UnsafeCell<Option<Box<CellBitmap>>>,
+    summary: UnsafeCell<Option<Box<Bitmap>>>,
     capacity: Cell<usize>,
     len: Cell<usize>,
     cursor: Cell<usize>,
     _thread: ThreadBound,
 }
 
-enum Words {
+pub(super) enum Words {
     Empty,
     Inline(Cell<usize>),
     Heap(Vec<Cell<usize>>),
 }
 
 impl Words {
-    fn zeroed(word_count: usize) -> Self {
+    pub(super) fn zeroed(word_count: usize) -> Self {
         match word_count {
             0 => Self::Empty,
             1 => Self::Inline(Cell::new(0)),
@@ -28,22 +28,7 @@ impl Words {
         }
     }
 
-    fn grow(&mut self, word_count: usize) {
-        match self {
-            Self::Empty => *self = Self::zeroed(word_count),
-            Self::Inline(word) if word_count > 1 => {
-                let first = word.get();
-                let mut words = Vec::with_capacity(word_count);
-                words.push(Cell::new(first));
-                words.resize_with(word_count, || Cell::new(0));
-                *self = Self::Heap(words);
-            }
-            Self::Heap(words) => words.resize_with(word_count, || Cell::new(0)),
-            Self::Inline(_) => {}
-        }
-    }
-
-    fn as_slice(&self) -> &[Cell<usize>] {
+    pub(super) fn as_slice(&self) -> &[Cell<usize>] {
         use std::slice::from_ref;
         match self {
             Self::Empty => &[],
@@ -53,7 +38,7 @@ impl Words {
     }
 }
 
-impl CellBitmap {
+impl Bitmap {
     pub(super) fn with_capacity(capacity: usize) -> Self {
         let word_count = capacity.div_ceil(WORD_BITS);
         Self {
@@ -66,31 +51,6 @@ impl CellBitmap {
             cursor: Cell::new(0),
             _thread: ThreadBound::NEW,
         }
-    }
-
-    pub(super) fn grow_to(&self, capacity: usize) {
-        if capacity <= self.capacity.get() {
-            return;
-        }
-        let words = unsafe { &mut *self.words.get() };
-        let old_words = words.as_slice().len();
-        let word_count = capacity.div_ceil(WORD_BITS);
-        words.grow(word_count);
-        let summary = unsafe { &mut *self.summary.get() };
-        match summary {
-            Some(summary) => summary.grow_to(word_count),
-            None if word_count > 1 => {
-                let next = Box::new(Self::with_capacity(word_count));
-                for (index, word) in words.as_slice()[..old_words].iter().enumerate() {
-                    if word.get() != 0 {
-                        next.insert(index);
-                    }
-                }
-                *summary = Some(next);
-            }
-            None => {}
-        }
-        self.capacity.set(capacity);
     }
 
     pub(super) fn insert(&self, index: usize) -> bool {
@@ -199,7 +159,7 @@ impl CellBitmap {
         index
     }
 
-    fn summary(&self) -> Option<&CellBitmap> {
+    fn summary(&self) -> Option<&Bitmap> {
         unsafe { &*self.summary.get() }.as_deref()
     }
 

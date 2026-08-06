@@ -1,19 +1,66 @@
-use std::cell::{Cell, UnsafeCell};
-use std::mem::MaybeUninit;
+use std::{
+    cell::{Cell, UnsafeCell},
+    mem::MaybeUninit,
+    ops::Deref,
+};
 
-use crate::collections::BoxSliceGrowth;
-use crate::collections::ClearGuard;
-use crate::marker::ThreadBound;
+use crate::{
+    ThreadBound,
+    collections::{BoxSliceGrowth, ClearGuard},
+};
 
 const NONE: u32 = u32::MAX;
 
-struct Slot<T> {
+struct Node<T> {
     value: UnsafeCell<MaybeUninit<T>>,
     prev: Cell<u32>,
     next: Cell<u32>,
 }
 
-impl<T> Slot<T> {
+struct Nodes<T>(Box<[Node<T>]>);
+
+impl<T> Nodes<T> {
+    fn with_capacity(capacity: usize) -> Self {
+        assert!(
+            u32::try_from(capacity).is_ok(),
+            "slot queue capacity overflow"
+        );
+        Self((0..capacity as u32).map(Node::vacant).collect())
+    }
+
+    fn is_vacant(&self, index: usize) -> bool {
+        self.get(index)
+            .is_some_and(|entry| entry.prev.get() == index as u32)
+    }
+
+    fn grow_to(&mut self, capacity: usize) {
+        let old_capacity = self.len();
+        assert!(capacity >= old_capacity, "slot queue cannot shrink");
+        assert!(
+            u32::try_from(capacity).is_ok(),
+            "slot queue capacity overflow"
+        );
+        if capacity == old_capacity {
+            return;
+        }
+
+        let mut entries = BoxSliceGrowth::take(&mut self.0);
+        entries.reserve_exact(capacity - old_capacity);
+        for index in old_capacity..capacity {
+            entries.push(Node::vacant(index as u32));
+        }
+    }
+}
+
+impl<T> Deref for Nodes<T> {
+    type Target = [Node<T>];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> Node<T> {
     fn vacant(index: u32) -> Self {
         Self {
             value: UnsafeCell::new(MaybeUninit::uninit()),
@@ -36,29 +83,33 @@ impl State {
         tail: NONE,
         len: 0,
     };
+
+    fn len(self) -> usize {
+        self.len
+    }
+
+    fn is_empty(self) -> bool {
+        self.len == 0
+    }
 }
 
-struct SlotQueueCore<T> {
-    entries: Box<[Slot<T>]>,
+struct Core<T> {
+    entries: Nodes<T>,
     state: Cell<State>,
     _thread: ThreadBound,
 }
 
-impl<T> SlotQueueCore<T> {
+impl<T> Core<T> {
     fn with_capacity(capacity: usize) -> Self {
-        assert!(
-            u32::try_from(capacity).is_ok(),
-            "slot queue capacity overflow"
-        );
         Self {
-            entries: (0..capacity as u32).map(Slot::vacant).collect(),
+            entries: Nodes::with_capacity(capacity),
             state: Cell::new(State::EMPTY),
             _thread: ThreadBound::NEW,
         }
     }
 
     fn push_back(&self, index: usize, value: T) -> Result<(), T> {
-        if !self.is_vacant(index) {
+        if !self.entries.is_vacant(index) {
             return Err(value);
         }
         unsafe { self.push_back_unchecked(index, value) };
@@ -66,7 +117,7 @@ impl<T> SlotQueueCore<T> {
     }
 
     fn push_front(&self, index: usize, value: T) -> Result<(), T> {
-        if !self.is_vacant(index) {
+        if !self.entries.is_vacant(index) {
             return Err(value);
         }
         unsafe { self.push_front_unchecked(index, value) };
@@ -86,7 +137,7 @@ impl<T> SlotQueueCore<T> {
     /// # Safety
     /// `index` is in bounds and vacant.
     unsafe fn push_front_unchecked(&self, index: usize, value: T) {
-        debug_assert!(self.is_vacant(index));
+        debug_assert!(self.entries.is_vacant(index));
         let entry = unsafe { self.entries.get_unchecked(index) };
         unsafe { (*entry.value.get()).write(value) };
         unsafe { self.link_front(index) };
@@ -95,16 +146,10 @@ impl<T> SlotQueueCore<T> {
     /// # Safety
     /// `index` is in bounds and vacant.
     unsafe fn push_back_unchecked(&self, index: usize, value: T) {
-        debug_assert!(self.is_vacant(index));
+        debug_assert!(self.entries.is_vacant(index));
         let entry = unsafe { self.entries.get_unchecked(index) };
         unsafe { (*entry.value.get()).write(value) };
         unsafe { self.link_back(index) };
-    }
-
-    fn is_vacant(&self, index: usize) -> bool {
-        self.entries
-            .get(index)
-            .is_some_and(|entry| entry.prev.get() == index as u32)
     }
 
     unsafe fn link_front(&self, index: usize) {
@@ -208,77 +253,38 @@ impl<T> SlotQueueCore<T> {
         self.state.set(state);
     }
 
-    fn contains_key(&self, index: usize) -> bool {
-        self.entries
-            .get(index)
-            .is_some_and(|entry| entry.prev.get() != index as u32)
-    }
-
     fn clear(&self) {
         while self.pop_front().is_some() {}
     }
-
-    fn grow_to(&mut self, capacity: usize) {
-        let old_capacity = self.entries.len();
-        assert!(capacity >= old_capacity, "slot queue cannot shrink");
-        assert!(
-            u32::try_from(capacity).is_ok(),
-            "slot queue capacity overflow"
-        );
-        if capacity == old_capacity {
-            return;
-        }
-
-        let mut entries = BoxSliceGrowth::take(&mut self.entries);
-        entries.reserve_exact(capacity - old_capacity);
-        for index in old_capacity..capacity {
-            entries.push(Slot::vacant(index as u32));
-        }
-    }
-
-    fn capacity(&self) -> usize {
-        self.entries.len()
-    }
-
-    fn len(&self) -> usize {
-        self.state.get().len
-    }
-
-    fn is_empty(&self) -> bool {
-        self.state.get().len == 0
-    }
 }
 
-pub struct SlotQueue<T = ()> {
-    core: SlotQueueCore<T>,
+pub struct Fifo<T = ()> {
+    core: Core<T>,
 }
 
-pub struct SlotQueueVacantEntry<'a, T> {
-    queue: &'a mut SlotQueue<T>,
+pub struct Vacant<'a, T> {
+    queue: &'a mut Fifo<T>,
     index: usize,
 }
 
-impl<T> SlotQueueVacantEntry<'_, T> {
-    pub fn push_front(self, value: T) {
-        unsafe { self.queue.core.push_front_unchecked(self.index, value) };
-    }
-
+impl<T> Vacant<'_, T> {
     pub fn push_back(self, value: T) {
         unsafe { self.queue.core.push_back_unchecked(self.index, value) };
     }
 }
 
-impl<T> SlotQueue<T> {
+impl<T> Fifo<T> {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            core: SlotQueueCore::with_capacity(capacity),
+            core: Core::with_capacity(capacity),
         }
     }
 
-    pub fn vacant_entry(&mut self, index: usize) -> Option<SlotQueueVacantEntry<'_, T>> {
+    pub fn vacant_entry(&mut self, index: usize) -> Option<Vacant<'_, T>> {
         self.core
+            .entries
             .is_vacant(index)
-            .then_some(SlotQueueVacantEntry { queue: self, index })
+            .then_some(Vacant { queue: self, index })
     }
 
     pub fn push_back(&mut self, index: usize, value: T) -> Result<(), T> {
@@ -313,49 +319,43 @@ impl<T> SlotQueue<T> {
         self.core.remove(index)
     }
 
-    pub fn contains_key(&self, index: usize) -> bool {
-        self.core.contains_key(index)
-    }
-
     pub fn clear(&mut self) {
         self.core.clear();
     }
 
     pub fn grow_to(&mut self, capacity: usize) {
-        self.core.grow_to(capacity);
+        self.core.entries.grow_to(capacity);
     }
 
     pub fn capacity(&self) -> usize {
-        self.core.capacity()
+        self.core.entries.len()
     }
 
     pub fn len(&self) -> usize {
-        self.core.len()
+        self.core.state.get().len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.core.is_empty()
+        self.core.state.get().is_empty()
     }
 }
 
-impl<T> Drop for SlotQueue<T> {
+impl<T> Drop for Fifo<T> {
     fn drop(&mut self) {
         ClearGuard::run(self, Self::clear);
     }
 }
 
-/// A fixed-capacity indexed queue that can be mutated through shared access.
-///
-/// Values are `Copy`, so queue operations cannot invoke user code while the
-/// shared link state is being changed.
-pub struct CellSlotQueue<T: Copy = ()> {
-    core: SlotQueueCore<T>,
+/// A fixed-capacity indexed queue with shared mutation.
+/// `Copy` values prevent user code from running while links change.
+pub struct CellFifo<T: Copy = ()> {
+    core: Core<T>,
 }
 
-impl<T: Copy> CellSlotQueue<T> {
+impl<T: Copy> CellFifo<T> {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            core: SlotQueueCore::with_capacity(capacity),
+            core: Core::with_capacity(capacity),
         }
     }
 
@@ -363,57 +363,19 @@ impl<T: Copy> CellSlotQueue<T> {
         self.core.push_back(index, value)
     }
 
-    pub fn push_front(&self, index: usize, value: T) -> Result<(), T> {
-        self.core.push_front(index, value)
-    }
-
-    pub fn refresh_back(&self, index: usize, value: T) -> Result<(), T> {
-        self.core.refresh_back(index, value).map(|_| ())
-    }
-
     pub fn pop_front(&self) -> Option<T> {
         self.core.pop_front()
-    }
-
-    pub fn front(&self) -> Option<T> {
-        self.core.front().copied()
-    }
-
-    pub fn front_key_value(&self) -> Option<(usize, T)> {
-        self.core
-            .front_key_value()
-            .map(|(index, value)| (index, *value))
-    }
-
-    pub fn pop_front_key_value(&self) -> Option<(usize, T)> {
-        self.core.pop_front_key_value()
     }
 
     pub fn remove(&self, index: usize) -> Option<T> {
         self.core.remove(index)
     }
 
-    pub fn contains_key(&self, index: usize) -> bool {
-        self.core.contains_key(index)
-    }
-
-    pub fn clear(&self) {
-        self.core.clear();
-    }
-
     pub fn grow_to(&mut self, capacity: usize) {
-        self.core.grow_to(capacity);
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.core.capacity()
-    }
-
-    pub fn len(&self) -> usize {
-        self.core.len()
+        self.core.entries.grow_to(capacity);
     }
 
     pub fn is_empty(&self) -> bool {
-        self.core.is_empty()
+        self.core.state.get().is_empty()
     }
 }

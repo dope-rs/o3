@@ -1,11 +1,12 @@
-use std::cell::{Cell, UnsafeCell};
-use std::collections::TryReserveError;
-use std::error::Error;
-use std::fmt;
-use std::marker::PhantomData;
-use std::mem::MaybeUninit;
-use std::ops::{Deref, DerefMut};
-use std::ptr::NonNull;
+use std::{
+    cell::{Cell, UnsafeCell},
+    marker::PhantomData,
+    mem::{MaybeUninit, size_of},
+    ops::{Deref, DerefMut},
+    ptr::NonNull,
+};
+
+use crate::collections::slab::SlabCapacity;
 
 const NONE: u32 = u32::MAX;
 
@@ -42,7 +43,6 @@ impl<T> Slot<T> {
 struct Group<T> {
     slots: Box<[Slot<T>]>,
     free: Cell<u32>,
-    available: Cell<u32>,
 }
 
 impl<T> Group<T> {
@@ -62,7 +62,6 @@ impl<T> Group<T> {
         let slot = self.slot(index);
         debug_assert!(slot.state.get() == State::Free);
         self.free.set(slot.link.get());
-        self.available.set(self.available.get() - 1);
         slot.state.set(State::Reserved);
         Some(index)
     }
@@ -75,7 +74,6 @@ impl<T> Group<T> {
         ));
         slot.link.set(self.free.replace(index));
         slot.state.set(State::Free);
-        self.available.set(self.available.get() + 1);
     }
 }
 
@@ -93,45 +91,20 @@ impl<T> Drop for Group<T> {
 
 /// A fixed typed slab whose occupied slots are owned by leases.
 pub struct LeaseSlab<T> {
-    group: Box<Group<T>>,
+    group: Group<T>,
 }
 
-const _: () = assert!(size_of::<LeaseSlab<()>>() == size_of::<usize>());
-
 impl<T> LeaseSlab<T> {
-    pub fn try_with_capacity(capacity: usize) -> Result<Self, LeaseSlabError> {
-        let capacity = u32::try_from(capacity).map_err(|_| LeaseSlabError::Capacity)?;
-        let mut slots = Vec::new();
-        slots
-            .try_reserve_exact(capacity as usize)
-            .map_err(LeaseSlabError::Reserve)?;
-        slots.extend((0..capacity).map(|index| Slot::new(index, capacity)));
-        let group = Box::new(Group {
-            slots: slots.into_boxed_slice(),
-            free: Cell::new(if capacity == 0 { NONE } else { 0 }),
-            available: Cell::new(capacity),
-        });
-        Ok(Self { group })
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.group.slots.len()
-    }
-
-    pub fn available(&self) -> usize {
-        self.group.available.get() as usize
-    }
-
-    pub fn len(&self) -> usize {
-        self.capacity() - self.available()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.available() == self.capacity()
-    }
-
-    pub fn is_full(&self) -> bool {
-        self.group.free.get() == NONE
+    pub fn with_capacity(capacity: SlabCapacity) -> Self {
+        let capacity = capacity.get() as u32;
+        let slots = SlabCapacity::new(capacity)
+            .collect_box((0..capacity).map(|index| Slot::new(index, capacity)));
+        Self {
+            group: Group {
+                slots,
+                free: Cell::new(if capacity == 0 { NONE } else { 0 }),
+            },
+        }
     }
 
     pub fn vacant_entry(&self) -> Option<LeaseSlabVacantEntry<'_, T>> {
@@ -140,13 +113,6 @@ impl<T> LeaseSlab<T> {
             index: self.group.reserve()?,
             armed: true,
         })
-    }
-
-    pub fn insert(&self, value: T) -> Result<SlabLease<'_, T>, T> {
-        let Some(entry) = self.vacant_entry() else {
-            return Err(value);
-        };
-        Ok(entry.insert(value))
     }
 }
 
@@ -158,18 +124,12 @@ pub struct LeaseSlabVacantEntry<'a, T> {
 }
 
 impl<'a, T> LeaseSlabVacantEntry<'a, T> {
-    pub fn index(&self) -> u32 {
-        self.index
-    }
-
     pub fn insert(mut self, value: T) -> SlabLease<'a, T> {
         let slot = self.slab.group.slot(self.index);
         debug_assert!(slot.state.get() == State::Reserved);
-        // Derive the owner after the slab is in the location borrowed by the
-        // lease. A pointer cached before moving the Box into LeaseSlab would
-        // lose its provenance under a later unique retag.
-        slot.owner.set(NonNull::from(self.slab.group.as_ref()));
-        // SAFETY: this vacant entry exclusively owns the uninitialized slot.
+        slot.owner.set(NonNull::from(&self.slab.group));
+        // SAFETY: this entry exclusively owns the uninitialized slot, and the
+        // owner pointer is derived after the slab reaches its borrowed location.
         unsafe { (*slot.value.get()).write(value) };
         slot.link.set(self.index);
         slot.state.set(State::Occupied);
@@ -248,29 +208,5 @@ impl<T> Drop for SlabLease<'_, T> {
         let _reclaim = Reclaim { owner, index };
         // SAFETY: the occupied slot is initialized and this lease owns it.
         unsafe { (*slot.value.get()).assume_init_drop() };
-    }
-}
-
-#[derive(Debug)]
-pub enum LeaseSlabError {
-    Capacity,
-    Reserve(TryReserveError),
-}
-
-impl fmt::Display for LeaseSlabError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Capacity => formatter.write_str("lease slab capacity exceeds u32 slots"),
-            Self::Reserve(error) => write!(formatter, "failed to reserve lease slab: {error}"),
-        }
-    }
-}
-
-impl Error for LeaseSlabError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Capacity => None,
-            Self::Reserve(error) => Some(error),
-        }
     }
 }

@@ -1,25 +1,25 @@
 use std::cell::Cell;
 
-use o3::collections::{CellSlab, Slab};
+use o3::collections::{CellSlab, Slab, SlabCapacity};
 
 enum Short {}
 
 #[test]
 fn generations_advance_and_retired_heads_are_skipped() {
-    let mut slab: Slab<u32, Short, 3> = Slab::with_capacity(2);
-    let first = slab.insert_at_with(0, |_| 1).unwrap();
+    let mut slab: Slab<u32, Short, 3> = Slab::with_capacity(SlabCapacity::new(2));
+    let first = slab.vacant_entry_at(0).unwrap().insert(1);
     assert_eq!(first.generation().get(), 1);
     assert_eq!(slab.remove(first), Some(1));
-    let second = slab.insert_at_with(0, |_| 2).unwrap();
+    let second = slab.vacant_entry_at(0).unwrap().insert(2);
     assert_eq!(second.generation().get(), 2);
     assert_eq!(slab.get(first), None);
     assert_eq!(slab.remove(second), Some(2));
-    let third = slab.insert_at_with(0, |_| 3).unwrap();
+    let third = slab.vacant_entry_at(0).unwrap().insert(3);
     assert_eq!(third.generation().get(), 3);
     assert_eq!(slab.remove(third), Some(3));
     assert_eq!(slab.insert(4).unwrap().index(), 1);
 
-    let slab: CellSlab<u32, Short, 3> = CellSlab::with_capacity(2);
+    let slab: CellSlab<u32, Short, 3> = CellSlab::with_capacity(SlabCapacity::new(2));
     let first = slab.insert(1).unwrap();
     assert_eq!(slab.remove(first), Some(1));
     let second = slab.insert(2).unwrap();
@@ -28,24 +28,23 @@ fn generations_advance_and_retired_heads_are_skipped() {
     let third = slab.insert(3).unwrap();
     assert_eq!(third.generation().get(), 3);
     assert_eq!(slab.remove(third), Some(3));
-    assert!(!slab.contains_key(first));
-    assert!(!slab.contains_key(second));
+    assert_eq!(slab.update(first, |_| ()), None);
+    assert_eq!(slab.update(second, |_| ()), None);
     assert_eq!(slab.insert(4).unwrap().index(), 1);
 }
 
 #[test]
 fn constructor_unwind_invalidates_exposed_keys() {
-    let mut slab: Slab<u32> = Slab::with_capacity(1);
+    let mut slab: Slab<u32> = Slab::with_capacity(SlabCapacity::new(1));
     let exposed = Cell::new(None);
     let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        slab.insert_at_with(0, |key| {
-            exposed.set(Some(key));
-            panic!("constructor");
-        });
+        let reservation = slab.vacant_entry_at(0).unwrap();
+        exposed.set(Some(reservation.key()));
+        panic!("constructor");
     }));
     assert!(caught.is_err());
     let stale = exposed.get().unwrap();
-    let fresh = slab.insert_at_with(0, |_| 7).unwrap();
+    let fresh = slab.vacant_entry_at(0).unwrap().insert(7);
     assert_ne!(stale, fresh);
     assert_eq!(slab.get(stale), None);
     assert_eq!(slab.get(fresh), Some(&7));
@@ -53,19 +52,20 @@ fn constructor_unwind_invalidates_exposed_keys() {
 
 #[test]
 fn reservation_rollback_advances_or_retires_generations() {
-    let mut slab: Slab<u32, Short, 3> = Slab::with_capacity(1);
+    let mut slab: Slab<u32, Short, 3> = Slab::with_capacity(SlabCapacity::new(1));
     let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        slab.insert_at_with(0, |_| panic!("constructor"));
+        let _reservation = slab.vacant_entry_at(0).unwrap();
+        panic!("constructor");
     }));
     assert!(caught.is_err());
-    let second = slab.insert_at_with(0, |_| 2).unwrap();
+    let second = slab.vacant_entry_at(0).unwrap().insert(2);
     assert_eq!(slab.remove(second), Some(2));
-    let third = slab.insert_at_with(0, |_| 3).unwrap();
+    let third = slab.vacant_entry_at(0).unwrap().insert(3);
     assert_eq!(slab.remove(third), Some(3));
     assert!(slab.insert(4).is_err());
     assert!(slab.is_full());
 
-    let mut slab: Slab<u32> = Slab::with_capacity(1);
+    let mut slab: Slab<u32> = Slab::with_capacity(SlabCapacity::new(1));
     let reservation = slab.vacant_entry().unwrap();
     let cancelled = reservation.key();
     drop(reservation);

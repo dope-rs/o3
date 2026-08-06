@@ -1,7 +1,5 @@
-mod brand;
+mod branded;
 mod checked;
-mod raw;
 
-pub use brand::{BrandCell, BrandToken, RegionCell, RegionToken};
-pub use checked::CheckedCell;
-pub use raw::RawCell;
+pub use branded::{Brand, BrandToken, Region, RegionToken};
+pub use checked::Checked;

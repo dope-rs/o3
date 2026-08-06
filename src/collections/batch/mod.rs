@@ -1,10 +1,10 @@
 use std::cell::{Cell, UnsafeCell};
 
-use crate::marker::ThreadBound;
+use crate::ThreadBound;
 
 mod bitmap;
 
-use bitmap::CellBitmap;
+use bitmap::{Bitmap, Words};
 
 const WORD_BITS: usize = usize::BITS as usize;
 const ENTRIES_PER_WORD: usize = WORD_BITS / 2;
@@ -34,9 +34,9 @@ impl Side {
 /// A single-threaded set of indices drained in isolated batches.
 ///
 /// Duplicates coalesce; reinserting a drained index defers it to the next batch.
-pub struct BatchSet {
+pub struct Set {
     words: UnsafeCell<Words>,
-    summaries: [CellBitmap; 2],
+    summaries: [Bitmap; 2],
     capacity: Cell<usize>,
     len: [Cell<usize>; 2],
     cursor: [Cell<usize>; 2],
@@ -45,60 +45,14 @@ pub struct BatchSet {
     _thread: ThreadBound,
 }
 
-/// A fixed-capacity [`BatchSet`] carrying one value for each bound index.
-pub struct BatchMap<T: Copy> {
-    ready: BatchSet,
-    values: Box<[Cell<Option<T>>]>,
-}
-
-enum Words {
-    Empty,
-    Inline(Cell<usize>),
-    Heap(Vec<Cell<usize>>),
-}
-
-impl Words {
-    fn zeroed(word_count: usize) -> Self {
-        match word_count {
-            0 => Self::Empty,
-            1 => Self::Inline(Cell::new(0)),
-            _ => Self::Heap((0..word_count).map(|_| Cell::new(0)).collect()),
-        }
-    }
-
-    fn grow(&mut self, word_count: usize) {
-        match self {
-            Self::Empty => *self = Self::zeroed(word_count),
-            Self::Inline(word) if word_count > 1 => {
-                let first = word.get();
-                let mut words = Vec::with_capacity(word_count);
-                words.push(Cell::new(first));
-                words.resize_with(word_count, || Cell::new(0));
-                *self = Self::Heap(words);
-            }
-            Self::Heap(words) => words.resize_with(word_count, || Cell::new(0)),
-            Self::Inline(_) => {}
-        }
-    }
-
-    fn as_slice(&self) -> &[Cell<usize>] {
-        use std::slice::from_ref;
-        match self {
-            Self::Empty => &[],
-            Self::Inline(word) => from_ref(word),
-            Self::Heap(words) => words,
-        }
-    }
-}
-
-impl BatchSet {
+impl Set {
     pub fn with_capacity(capacity: usize) -> Self {
         let word_count = capacity.div_ceil(ENTRIES_PER_WORD);
         Self {
             words: UnsafeCell::new(Words::zeroed(word_count)),
             summaries: [
-                CellBitmap::with_capacity(word_count),
-                CellBitmap::with_capacity(word_count),
+                Bitmap::with_capacity(word_count),
+                Bitmap::with_capacity(word_count),
             ],
             capacity: Cell::new(capacity),
             len: [Cell::new(0), Cell::new(0)],
@@ -107,20 +61,6 @@ impl BatchSet {
             draining: Cell::new(false),
             _thread: ThreadBound::NEW,
         }
-    }
-
-    /// Grows both batch generations while preserving their contents.
-    ///
-    /// Insertion never grows the set implicitly.
-    pub fn grow_to(&self, capacity: usize) {
-        if capacity <= self.capacity.get() {
-            return;
-        }
-        let word_count = capacity.div_ceil(ENTRIES_PER_WORD);
-        unsafe { &mut *self.words.get() }.grow(word_count);
-        self.summaries[0].grow_to(word_count);
-        self.summaries[1].grow_to(word_count);
-        self.capacity.set(capacity);
     }
 
     /// Inserts an index into the pending batch.
@@ -188,13 +128,13 @@ impl BatchSet {
     /// Starts draining a stable batch.
     ///
     /// Returns `None` during another drain; concurrent inserts enter the next batch.
-    pub fn drain_batch(&self) -> Option<BatchDrain<'_>> {
+    pub fn drain_batch(&self) -> Option<Drain<'_>> {
         if self.draining.replace(true) {
             return None;
         }
         let side = self.active.get();
         self.active.set(side.other());
-        Some(BatchDrain { set: self, side })
+        Some(Drain { set: self, side })
     }
 
     pub fn capacity(&self) -> usize {
@@ -311,80 +251,13 @@ impl BatchSet {
     }
 }
 
-impl<T: Copy> BatchMap<T> {
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            ready: BatchSet::with_capacity(capacity),
-            values: (0..capacity).map(|_| Cell::new(None)).collect(),
-        }
-    }
-
-    /// Initializes one vacant value slot.
-    ///
-    /// # Safety
-    /// `index` must be in bounds and vacant.
-    #[doc(hidden)]
-    pub unsafe fn bind_unchecked(&self, index: usize, value: T) {
-        unsafe { self.values.get_unchecked(index).set(Some(value)) }
-    }
-
-    /// Clears one bound value slot after its ready bit is removed.
-    ///
-    /// # Safety
-    /// `index` must be in bounds, bound, and absent from the ready set.
-    #[doc(hidden)]
-    pub unsafe fn clear_unchecked(&self, index: usize) {
-        unsafe { self.values.get_unchecked(index).set(None) }
-    }
-
-    /// Returns the underlying ready set for a binding that maintains values.
-    ///
-    /// # Safety
-    /// Every inserted index must stay bound until it is removed from the set.
-    #[doc(hidden)]
-    pub unsafe fn ready_set(&self) -> &BatchSet {
-        &self.ready
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.ready.is_empty()
-    }
-
-    pub fn drain_batch(&self) -> Option<BatchMapDrain<'_, T>> {
-        Some(BatchMapDrain {
-            map: self,
-            drain: self.ready.drain_batch()?,
-        })
-    }
-
-    fn target(&self, index: usize) -> T {
-        // SAFETY: ready-set access retains each value until its ready bit is
-        // removed, then clear_unchecked clears it.
-        unsafe { self.values.get_unchecked(index).get().unwrap_unchecked() }
-    }
-}
-
-/// A consuming iterator over one stable [`BatchSet`] batch.
-pub struct BatchDrain<'a> {
-    set: &'a BatchSet,
+/// A consuming iterator over one stable [`Set`] batch.
+pub struct Drain<'a> {
+    set: &'a Set,
     side: Side,
 }
 
-/// A consuming iterator over one stable [`BatchMap`] batch.
-pub struct BatchMapDrain<'a, T: Copy> {
-    map: &'a BatchMap<T>,
-    drain: BatchDrain<'a>,
-}
-
-impl<T: Copy> Iterator for BatchMapDrain<'_, T> {
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.drain.next().map(|index| self.map.target(index))
-    }
-}
-
-impl Iterator for BatchDrain<'_> {
+impl Iterator for Drain<'_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -392,7 +265,7 @@ impl Iterator for BatchDrain<'_> {
     }
 }
 
-impl Drop for BatchDrain<'_> {
+impl Drop for Drain<'_> {
     fn drop(&mut self) {
         self.set.return_remaining(self.side);
         self.set.draining.set(false);

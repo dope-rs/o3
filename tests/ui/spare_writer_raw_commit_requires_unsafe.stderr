@@ -1,7 +1,0 @@
-error[E0133]: call to unsafe function `SpareWriter::<'a>::try_commit_initialized` is unsafe and requires unsafe block
- --> tests/ui/spare_writer_raw_commit_requires_unsafe.rs:6:5
-  |
-6 |     writer.try_commit_initialized(&[]).unwrap();
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
-  |
-  = note: consult the function's documentation for information on how to avoid undefined behavior

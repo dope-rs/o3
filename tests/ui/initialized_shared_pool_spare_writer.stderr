@@ -1,4 +1,4 @@
-error[E0599]: no method named `spare_writer` found for struct `SharedLease<o3::buffer::Initialized>` in the current scope
+error[E0599]: no method named `spare_writer` found for struct `o3::buffer::Lease<o3::buffer::Initialized>` in the current scope
  --> tests/ui/initialized_shared_pool_spare_writer.rs:6:19
   |
 6 |     let _ = lease.spare_writer();

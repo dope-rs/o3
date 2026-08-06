@@ -1,12 +1,11 @@
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
-use std::num::{NonZeroU32, NonZeroU64};
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+    marker::PhantomData,
+    num::{NonZeroU32, NonZeroU64},
+};
 
-use crate::collections::{IndexKey, index};
-use crate::marker::ThreadBound;
-
-use super::GenerationState;
+use crate::{ThreadBound, collections::slab::GenerationState};
 
 #[repr(transparent)]
 pub struct SlabKey<Tag = (), const MAX: u32 = { u32::MAX }> {
@@ -96,11 +95,11 @@ impl<const MAX: u32> fmt::Debug for SlabKeyParts<MAX> {
 }
 
 impl<Tag, const MAX: u32> SlabKey<Tag, MAX> {
-    pub(crate) const fn new(index: u32, generation: SlabGeneration<MAX>) -> Self {
+    pub(super) const fn new(index: u32, generation: SlabGeneration<MAX>) -> Self {
         Self::from_parts(SlabKeyParts::from_generation(index, generation))
     }
 
-    pub(crate) const fn from_parts(parts: SlabKeyParts<MAX>) -> Self {
+    pub(super) const fn from_parts(parts: SlabKeyParts<MAX>) -> Self {
         Self {
             parts,
             marker: PhantomData,
@@ -162,14 +161,6 @@ impl<const MAX: u32> fmt::Debug for SlabGeneration<MAX> {
         f.debug_tuple("SlabGeneration").field(&self.get()).finish()
     }
 }
-
-impl<Tag, const MAX: u32> IndexKey for SlabKey<Tag, MAX> {
-    fn index(self) -> usize {
-        self.index() as usize
-    }
-}
-
-impl<Tag, const MAX: u32> index::Sealed for SlabKey<Tag, MAX> {}
 
 impl<const MAX: u32> GenerationState for SlabGeneration<MAX> {
     const MIN: Self = Self::MIN;

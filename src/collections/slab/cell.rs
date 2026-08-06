@@ -1,8 +1,11 @@
 use std::marker::PhantomData;
 
-use super::core::{Interior, SlabCore};
-use super::key::{SlabGeneration, SlabKey, SlabKeyParts};
-use super::pending::Pending;
+use crate::collections::slab::{
+    SlabCapacity,
+    core::{Interior, Reservations, SlabCore, entries::Entries},
+    key::{SlabGeneration, SlabKey, SlabKeyParts},
+    pending::Pending,
+};
 
 pub struct CellSlab<T, Tag = (), const MAX: u32 = { u32::MAX }> {
     core: SlabCore<T, SlabGeneration<MAX>, Interior>,
@@ -36,8 +39,7 @@ impl<T, Tag, const MAX: u32> Iterator for Keys<'_, T, Tag, MAX> {
 }
 
 impl<T, Tag, const MAX: u32> CellSlab<T, Tag, MAX> {
-    #[must_use]
-    pub fn with_capacity(capacity: usize) -> Self {
+    pub fn with_capacity(capacity: SlabCapacity) -> Self {
         Self {
             core: SlabCore::with_capacity(capacity),
             tag: PhantomData,
@@ -48,8 +50,8 @@ impl<T, Tag, const MAX: u32> CellSlab<T, Tag, MAX> {
         self.core.capacity()
     }
 
-    pub fn grow_to(&mut self, capacity: usize) {
-        self.core.grow_to(capacity);
+    pub fn grow_to(&mut self, capacity: SlabCapacity) {
+        self.core.grow_to(capacity)
     }
 
     pub fn len(&self) -> usize {
@@ -58,19 +60,6 @@ impl<T, Tag, const MAX: u32> CellSlab<T, Tag, MAX> {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-
-    pub fn contains_key(&self, key: SlabKey<Tag, MAX>) -> bool {
-        self.contains_parts(key.parts())
-    }
-
-    pub fn contains_parts(&self, parts: SlabKeyParts<MAX>) -> bool {
-        self.core.contains(parts.index(), parts.generation())
-    }
-
-    pub fn resolve(&self, parts: SlabKeyParts<MAX>) -> Option<SlabKey<Tag, MAX>> {
-        self.contains_parts(parts)
-            .then(|| SlabKey::from_parts(parts))
     }
 
     pub fn keys(&self) -> impl Iterator<Item = SlabKey<Tag, MAX>> + '_ {

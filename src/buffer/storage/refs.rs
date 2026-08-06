@@ -1,37 +1,36 @@
-use std::cell::Cell;
-use std::process::abort;
+use std::{cell::Cell, process::abort};
 
 #[repr(transparent)]
-pub(crate) struct LocalRefCount(Cell<u32>);
+pub(in crate::buffer) struct LocalRefCount(Cell<u32>);
 
 impl LocalRefCount {
-    pub(crate) const fn one() -> Self {
+    pub(in crate::buffer) const fn one() -> Self {
         Self(Cell::new(1))
     }
 
-    pub(crate) const fn empty() -> Self {
+    pub(in crate::buffer) const fn empty() -> Self {
         Self(Cell::new(0))
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub(in crate::buffer) fn is_empty(&self) -> bool {
         self.0.get() == 0
     }
 
-    pub(crate) fn is_unique(&self) -> bool {
+    pub(in crate::buffer) fn is_unique(&self) -> bool {
         self.0.get() == 1
     }
 
-    pub(crate) fn activate(&self) {
+    pub(in crate::buffer) fn activate(&self) {
         debug_assert!(self.is_empty());
         self.0.set(1);
     }
 
-    pub(crate) fn deactivate(&self) {
+    pub(in crate::buffer) fn deactivate(&self) {
         debug_assert!(self.is_unique());
         self.0.set(0);
     }
 
-    pub(crate) fn retain(&self) {
+    pub(in crate::buffer) fn retain(&self) {
         let refs = self.0.get();
         debug_assert_ne!(refs, 0);
         let refs = refs.wrapping_add(1);
@@ -42,7 +41,7 @@ impl LocalRefCount {
     }
 
     #[must_use]
-    pub(crate) fn release(&self) -> bool {
+    pub(in crate::buffer) fn release(&self) -> bool {
         let refs = self.0.get();
         debug_assert_ne!(refs, 0);
         if refs == 1 {

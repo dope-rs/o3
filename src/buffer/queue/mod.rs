@@ -1,38 +1,31 @@
-use std::collections::VecDeque;
-use std::ops::Range;
-use std::process::abort;
+use std::{collections::VecDeque, ops::Range, process::abort};
 
-use super::PrefixLength;
-use super::bytes::{Bytes, Retained};
+use crate::buffer::{
+    PrefixLength,
+    bytes::{Bytes, Retained},
+};
 
 pub(super) mod ring;
-pub(super) mod rolling;
 
-mod private {
-    pub trait Sealed {}
-}
-
-/// A segment that can reject invalid prefix consumption before mutating itself.
-pub trait AdvanceSegment: AsRef<[u8]> + private::Sealed {
-    fn try_advance(&mut self, amount: usize) -> bool;
-}
+pub use ring::Ring;
 
 /// A byte-length-aware queue of independently owned segments.
 /// It tracks ordering and aggregate length while callers retain
 /// protocol-specific byte and segment limits.
 #[derive(Debug)]
-pub struct SegmentQueue<T> {
+pub struct Segments<T> {
     segments: VecDeque<T>,
     len: usize,
 }
 
 #[derive(Debug)]
-pub struct RetainedSegmentQueue<T> {
-    queue: SegmentQueue<T>,
+/// A logical read cursor over a queue of independently owned segments.
+pub struct Cursor<T> {
+    queue: Segments<T>,
     front_offset: usize,
 }
 
-impl<T> SegmentQueue<T> {
+impl<T> Segments<T> {
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -45,7 +38,7 @@ impl<T> SegmentQueue<T> {
         self.len
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.len == 0
     }
 
@@ -53,26 +46,17 @@ impl<T> SegmentQueue<T> {
         self.segments.len()
     }
 
-    pub fn front(&self) -> Option<&T> {
-        self.segments.front()
-    }
-
-    pub fn back(&self) -> Option<&T> {
+    fn back(&self) -> Option<&T> {
         self.segments.back()
     }
 
-    pub fn clear(&mut self) {
+    fn clear(&mut self) {
         self.segments.clear();
         self.len = 0;
     }
-
-    pub fn clear_from(&mut self, front_offset: &mut usize) {
-        self.clear();
-        *front_offset = 0;
-    }
 }
 
-impl<T: AsRef<[u8]>> SegmentQueue<T> {
+impl<T: AsRef<[u8]>> Segments<T> {
     /// Appends without copying. Empty segments are discarded.
     /// On length overflow, the segment is returned and the queue is unchanged.
     pub fn try_push_back(&mut self, segment: T) -> Result<(), T> {
@@ -91,7 +75,7 @@ impl<T: AsRef<[u8]>> SegmentQueue<T> {
     /// Mutates the last segment after reserving its maximum permitted growth.
     ///
     /// Length tracking is restored from the actual delta during unwinding.
-    pub fn try_mutate_back<R>(
+    fn try_mutate_back<R>(
         &mut self,
         additional: usize,
         mutate: impl FnOnce(&mut T) -> R,
@@ -166,7 +150,7 @@ impl<T: AsRef<[u8]>> SegmentQueue<T> {
         copied
     }
 
-    pub fn extend_range(
+    fn extend_range(
         &self,
         front_offset: usize,
         offset: usize,
@@ -200,53 +184,47 @@ impl<T: AsRef<[u8]>> SegmentQueue<T> {
         None
     }
 
-    /// Consumes a prefix while retaining a cursor into the physical first
-    /// segment. Fully consumed segments are passed to `removed`.
-    pub fn try_consume_front_from(
+    fn consume_front_up_to(
         &mut self,
         front_offset: &mut usize,
-        amount: usize,
-        removed: impl FnMut(T),
-    ) -> bool {
-        if !self.range_available(*front_offset, 0, amount) {
-            return false;
-        }
-        unsafe { self.consume_front_valid_from(front_offset, amount, removed) };
-        true
-    }
-
-    unsafe fn consume_front_valid_from(
-        &mut self,
-        front_offset: &mut usize,
-        mut amount: usize,
+        requested: usize,
         mut removed: impl FnMut(T),
-    ) {
-        debug_assert!(self.range_available(*front_offset, 0, amount));
+    ) -> usize {
+        if !self.front_offset_valid(*front_offset) {
+            return 0;
+        }
+        let mut amount = requested.min(self.len);
+        let target = amount;
         while amount != 0 {
-            let segment = unsafe { self.segments.front().unwrap_unchecked() };
+            let Some(segment) = self.segments.front() else {
+                break;
+            };
             let available = segment.as_ref().len() - *front_offset;
             if amount < available {
                 *front_offset += amount;
                 self.len -= amount;
-                return;
+                return target;
             }
             amount -= available;
             self.len -= available;
-            let segment = unsafe { self.segments.pop_front().unwrap_unchecked() };
+            let Some(segment) = self.segments.pop_front() else {
+                break;
+            };
             *front_offset = 0;
             removed(segment);
         }
+        target - amount
     }
 
     fn front_offset_valid(&self, front_offset: usize) -> bool {
         match self.segments.front() {
             Some(segment) => front_offset < segment.as_ref().len(),
-            None => front_offset == 0 && self.len == 0,
+            None => front_offset == 0 && self.is_empty(),
         }
     }
 }
 
-impl<T: AdvanceSegment> SegmentQueue<T> {
+impl Segments<Bytes<Retained>> {
     /// Consumes a prefix by advancing a partial front segment in place.
     pub fn try_consume_front(&mut self, mut amount: usize) -> bool {
         if amount > self.len {
@@ -275,23 +253,23 @@ impl<T: AdvanceSegment> SegmentQueue<T> {
     }
 }
 
-impl<T> Default for SegmentQueue<T> {
+impl<T> Default for Segments<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T> PrefixLength for SegmentQueue<T> {
+impl<T> PrefixLength for Segments<T> {
     fn prefix_len(&self) -> usize {
         self.len()
     }
 }
 
-impl<T> RetainedSegmentQueue<T> {
+impl<T> Cursor<T> {
     #[must_use]
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
-            queue: SegmentQueue::new(),
+            queue: Segments::new(),
             front_offset: 0,
         }
     }
@@ -300,7 +278,7 @@ impl<T> RetainedSegmentQueue<T> {
         self.queue.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.queue.is_empty()
     }
 
@@ -308,20 +286,17 @@ impl<T> RetainedSegmentQueue<T> {
         self.queue.segment_count()
     }
 
-    pub fn front(&self) -> Option<&T> {
-        self.queue.front()
-    }
-
     pub fn back(&self) -> Option<&T> {
         self.queue.back()
     }
 
     pub fn clear(&mut self) {
-        self.queue.clear_from(&mut self.front_offset);
+        self.queue.clear();
+        self.front_offset = 0;
     }
 }
 
-impl<T: AsRef<[u8]>> RetainedSegmentQueue<T> {
+impl<T: AsRef<[u8]>> Cursor<T> {
     pub fn try_push_back(&mut self, segment: T) -> Result<(), T> {
         self.queue.try_push_back(segment)
     }
@@ -338,38 +313,41 @@ impl<T: AsRef<[u8]>> RetainedSegmentQueue<T> {
         self.queue.range_available(self.front_offset, offset, len)
     }
 
+    pub fn for_each_range(&self, offset: usize, len: usize, visit: impl FnMut(&[u8])) -> bool {
+        self.queue
+            .for_each_range(self.front_offset, offset, len, visit)
+    }
+
+    pub fn copy_range_into(&self, offset: usize, output: &mut [u8]) -> bool {
+        self.queue
+            .copy_range_into(self.front_offset, offset, output)
+    }
+
+    pub fn contiguous_segment(&self, offset: usize, len: usize) -> Option<(&T, Range<usize>)> {
+        self.queue
+            .contiguous_segment(self.front_offset, offset, len)
+    }
+
     pub fn extend_range(&self, offset: usize, len: usize, output: &mut Vec<u8>) -> bool {
         self.queue
             .extend_range(self.front_offset, offset, len, output)
     }
 
     pub fn consume_prefix_up_to(&mut self, requested: usize, removed: impl FnMut(T)) -> usize {
-        let amount = requested.min(self.queue.len());
-        unsafe {
-            self.queue
-                .consume_front_valid_from(&mut self.front_offset, amount, removed)
-        };
-        amount
+        self.queue
+            .consume_front_up_to(&mut self.front_offset, requested, removed)
     }
 }
 
-impl<T> Default for RetainedSegmentQueue<T> {
+impl<T> Default for Cursor<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T> PrefixLength for RetainedSegmentQueue<T> {
+impl<T> PrefixLength for Cursor<T> {
     fn prefix_len(&self) -> usize {
         self.len()
-    }
-}
-
-impl private::Sealed for Bytes<Retained> {}
-
-impl AdvanceSegment for Bytes<Retained> {
-    fn try_advance(&mut self, amount: usize) -> bool {
-        self.try_advance(amount)
     }
 }
 

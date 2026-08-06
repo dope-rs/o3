@@ -1,16 +1,19 @@
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::ops::{Bound, Deref, Range, RangeBounds};
-use std::ptr::NonNull;
-use std::rc::Rc;
-use std::slice::from_raw_parts;
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+    ops::{Bound, Deref, Range, RangeBounds},
+    ptr::NonNull,
+    rc::Rc,
+    slice::from_raw_parts,
+};
 
-pub mod snapshot;
 pub mod strings;
 
-use super::owned::Owned;
-use super::storage::{Owner, RawSpan};
-use super::{PrefixLength, RangeExt};
+use crate::buffer::{
+    PrefixConsumer, PrefixLength, PrefixProof, RangeExt,
+    owned::Owned,
+    storage::{Owner, StorageSpan},
+};
 
 const VEC_ZERO_COPY_MIN: usize = 512;
 
@@ -41,12 +44,12 @@ impl Shared {
         }
     }
 
-    pub(super) fn from_raw_span(span: RawSpan) -> Self {
-        let (raw, ptr, len) = span.into_parts();
+    pub(super) fn from_storage_span(span: StorageSpan) -> Self {
+        let (storage, ptr, len) = span.into_parts();
         Self {
             ptr,
             len,
-            owner: Owner::from_raw(raw),
+            owner: Owner::from_storage(storage),
         }
     }
 
@@ -76,8 +79,8 @@ impl Shared {
         if s.is_empty() {
             return Self::new();
         }
-        match RawSpan::copy_from_slice(s) {
-            Some(span) => Self::from_raw_span(span),
+        match StorageSpan::copy_from_slice(s) {
+            Some(span) => Self::from_storage_span(span),
             None => Self::copy_large(s),
         }
     }
@@ -152,17 +155,8 @@ impl Shared {
         self.ptr = unsafe { self.ptr.add(amount) };
         self.len -= amount;
     }
-
-    super::prefix::consume_prefix_api!(Self::consume_valid);
-
     pub fn clear(&mut self) {
         *self = Self::new();
-    }
-
-    pub fn truncate(&mut self, n: usize) {
-        if n < self.len {
-            self.len = n;
-        }
     }
 }
 
@@ -181,6 +175,12 @@ impl AsRef<[u8]> for Shared {
 impl PrefixLength for Shared {
     fn prefix_len(&self) -> usize {
         self.len()
+    }
+}
+
+impl PrefixConsumer for Shared {
+    fn consume_validated_prefix(&mut self, proof: PrefixProof) {
+        self.consume_valid(proof.amount());
     }
 }
 
