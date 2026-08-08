@@ -1,28 +1,23 @@
-use std::{
-    cell::Cell,
-    marker::{PhantomData, PhantomPinned},
-    pin::Pin,
-    ptr::NonNull,
-};
+use std::{cell, marker, pin, ptr};
 
 struct Node {
-    left: Cell<Option<NonNull<Node>>>,
-    right: Cell<Option<NonNull<Node>>>,
-    parent: Cell<Option<NonNull<Node>>>,
-    height: Cell<u8>,
-    _marker: PhantomData<*mut ()>,
-    _pin: PhantomPinned,
+    left: cell::Cell<Option<ptr::NonNull<Node>>>,
+    right: cell::Cell<Option<ptr::NonNull<Node>>>,
+    parent: cell::Cell<Option<ptr::NonNull<Node>>>,
+    height: cell::Cell<u8>,
+    _marker: marker::PhantomData<*mut ()>,
+    _pin: marker::PhantomPinned,
 }
 
 impl Node {
     const fn new() -> Self {
         Self {
-            left: Cell::new(None),
-            right: Cell::new(None),
-            parent: Cell::new(None),
-            height: Cell::new(0),
-            _marker: PhantomData,
-            _pin: PhantomPinned,
+            left: cell::Cell::new(None),
+            right: cell::Cell::new(None),
+            parent: cell::Cell::new(None),
+            height: cell::Cell::new(0),
+            _marker: marker::PhantomData,
+            _pin: marker::PhantomPinned,
         }
     }
 }
@@ -42,36 +37,36 @@ impl<T> Entry<T> {
         }
     }
 
-    pub fn value(self: Pin<&Self>) -> &T {
-        &Pin::get_ref(self).value
+    pub fn value(self: pin::Pin<&Self>) -> &T {
+        &pin::Pin::get_ref(self).value
     }
 
-    pub fn is_linked(self: Pin<&Self>) -> bool {
-        Pin::get_ref(self).node.height.get() != 0
+    pub fn is_linked(self: pin::Pin<&Self>) -> bool {
+        pin::Pin::get_ref(self).node.height.get() != 0
     }
 }
 
 pub struct Tree<T> {
-    root: Cell<Option<NonNull<Node>>>,
-    first: Cell<Option<NonNull<Node>>>,
-    _marker: PhantomData<*mut ()>,
-    _value: PhantomData<fn(T) -> T>,
+    root: cell::Cell<Option<ptr::NonNull<Node>>>,
+    first: cell::Cell<Option<ptr::NonNull<Node>>>,
+    _marker: marker::PhantomData<*mut ()>,
+    _value: marker::PhantomData<fn(T) -> T>,
 }
 
 impl<T> Tree<T> {
     pub const fn new() -> Self {
         Self {
-            root: Cell::new(None),
-            first: Cell::new(None),
-            _marker: PhantomData,
-            _value: PhantomData,
+            root: cell::Cell::new(None),
+            first: cell::Cell::new(None),
+            _marker: marker::PhantomData,
+            _value: marker::PhantomData,
         }
     }
 
-    pub fn first_entry(&self) -> Option<Pin<&Entry<T>>> {
+    pub fn first_entry(&self) -> Option<pin::Pin<&Entry<T>>> {
         self.first.get().map(|node| {
             // SAFETY: only pinned Entry nodes can enter this typed tree.
-            unsafe { Pin::new_unchecked(self.value(node)) }
+            unsafe { pin::Pin::new_unchecked(self.value(node)) }
         })
     }
 
@@ -79,11 +74,11 @@ impl<T> Tree<T> {
     /// Entry stays pinned, live, unlinked, and strictly ordered while linked.
     pub unsafe fn insert_entry(
         &self,
-        entry: Pin<&Entry<T>>,
+        entry: pin::Pin<&Entry<T>>,
         mut before: impl FnMut(&T, &T) -> bool,
     ) {
         let value_ref = entry.get_ref();
-        let node = NonNull::from(&value_ref.node);
+        let node = ptr::NonNull::from(&value_ref.node);
         let node_ref = unsafe { node.as_ref() };
         debug_assert!(node_ref.left.get().is_none());
         debug_assert!(node_ref.right.get().is_none());
@@ -120,8 +115,8 @@ impl<T> Tree<T> {
 
     /// # Safety
     /// Entry is linked in this tree exactly once.
-    pub unsafe fn remove_entry(&self, entry: Pin<&Entry<T>>) {
-        let node = NonNull::from(&entry.get_ref().node);
+    pub unsafe fn remove_entry(&self, entry: pin::Pin<&Entry<T>>) {
+        let node = ptr::NonNull::from(&entry.get_ref().node);
         let node_ref = unsafe { node.as_ref() };
         debug_assert_ne!(node_ref.height.get(), 0);
         let left = node_ref.left.get();
@@ -174,26 +169,26 @@ impl<T> Tree<T> {
         }
     }
 
-    unsafe fn value(&self, node: NonNull<Node>) -> &Entry<T> {
+    unsafe fn value(&self, node: ptr::NonNull<Node>) -> &Entry<T> {
         unsafe { node.cast::<Entry<T>>().as_ref() }
     }
 
-    fn height(node: Option<NonNull<Node>>) -> u8 {
+    fn height(node: Option<ptr::NonNull<Node>>) -> u8 {
         node.map_or(0, |node| unsafe { node.as_ref() }.height.get())
     }
 
-    fn update_height(node: NonNull<Node>) {
+    fn update_height(node: ptr::NonNull<Node>) {
         let node = unsafe { node.as_ref() };
         node.height
             .set(Self::height(node.left.get()).max(Self::height(node.right.get())) + 1);
     }
 
-    fn balance(node: NonNull<Node>) -> i16 {
+    fn balance(node: ptr::NonNull<Node>) -> i16 {
         let node = unsafe { node.as_ref() };
         i16::from(Self::height(node.left.get())) - i16::from(Self::height(node.right.get()))
     }
 
-    unsafe fn transplant(&self, old: NonNull<Node>, replacement: Option<NonNull<Node>>) {
+    unsafe fn transplant(&self, old: ptr::NonNull<Node>, replacement: Option<ptr::NonNull<Node>>) {
         let parent = unsafe { old.as_ref() }.parent.get();
         if let Some(parent) = parent {
             let parent_ref = unsafe { parent.as_ref() };
@@ -210,7 +205,11 @@ impl<T> Tree<T> {
         }
     }
 
-    unsafe fn rotate_left(&self, root: NonNull<Node>, pivot: NonNull<Node>) -> NonNull<Node> {
+    unsafe fn rotate_left(
+        &self,
+        root: ptr::NonNull<Node>,
+        pivot: ptr::NonNull<Node>,
+    ) -> ptr::NonNull<Node> {
         let root_ref = unsafe { root.as_ref() };
         let pivot_ref = unsafe { pivot.as_ref() };
         let middle = pivot_ref.left.get();
@@ -226,7 +225,11 @@ impl<T> Tree<T> {
         pivot
     }
 
-    unsafe fn rotate_right(&self, root: NonNull<Node>, pivot: NonNull<Node>) -> NonNull<Node> {
+    unsafe fn rotate_right(
+        &self,
+        root: ptr::NonNull<Node>,
+        pivot: ptr::NonNull<Node>,
+    ) -> ptr::NonNull<Node> {
         let root_ref = unsafe { root.as_ref() };
         let pivot_ref = unsafe { pivot.as_ref() };
         let middle = pivot_ref.right.get();
@@ -242,7 +245,7 @@ impl<T> Tree<T> {
         pivot
     }
 
-    fn rebalance(&self, mut node: Option<NonNull<Node>>) {
+    fn rebalance(&self, mut node: Option<ptr::NonNull<Node>>) {
         while let Some(current) = node {
             Self::update_height(current);
             let current_ref = unsafe { current.as_ref() };
@@ -276,7 +279,9 @@ impl<T> Tree<T> {
         }
     }
 
-    unsafe fn first_from(node: NonNull<Node>) -> (NonNull<Node>, Option<NonNull<Node>>) {
+    unsafe fn first_from(
+        node: ptr::NonNull<Node>,
+    ) -> (ptr::NonNull<Node>, Option<ptr::NonNull<Node>>) {
         let mut current = node;
         let mut parent = None;
         while let Some(left) = unsafe { current.as_ref() }.left.get() {

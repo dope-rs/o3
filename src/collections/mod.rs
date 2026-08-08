@@ -7,10 +7,7 @@ pub mod pinned;
 pub mod queue;
 pub mod slab;
 
-use std::{
-    mem,
-    ops::{Deref, DerefMut},
-};
+use std::{mem, ops};
 
 pub(super) struct BoxSliceGrowth<'a, T> {
     target: &'a mut Box<[T]>,
@@ -24,7 +21,7 @@ impl<'a, T> BoxSliceGrowth<'a, T> {
     }
 }
 
-impl<T> Deref for BoxSliceGrowth<'_, T> {
+impl<T> ops::Deref for BoxSliceGrowth<'_, T> {
     type Target = Vec<T>;
 
     fn deref(&self) -> &Self::Target {
@@ -32,7 +29,7 @@ impl<T> Deref for BoxSliceGrowth<'_, T> {
     }
 }
 
-impl<T> DerefMut for BoxSliceGrowth<'_, T> {
+impl<T> ops::DerefMut for BoxSliceGrowth<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.values
     }

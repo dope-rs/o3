@@ -1,25 +1,21 @@
-use std::{
-    marker::PhantomData,
-    mem::{ManuallyDrop, MaybeUninit},
-    ptr,
-};
+use std::{marker, mem, ptr};
 
 use crate::collections;
 
 const NONE: u32 = u32::MAX;
 
 struct Hole<'a, T, F: FnMut(&T, usize)> {
-    entries: *mut MaybeUninit<T>,
+    entries: *mut mem::MaybeUninit<T>,
     len: usize,
-    value: ManuallyDrop<T>,
+    value: mem::ManuallyDrop<T>,
     position: usize,
     on_move: F,
-    marker: PhantomData<&'a mut [MaybeUninit<T>]>,
+    marker: marker::PhantomData<&'a mut [mem::MaybeUninit<T>]>,
 }
 
 impl<'a, T, F: FnMut(&T, usize)> Hole<'a, T, F> {
     unsafe fn with_value(
-        entries: &'a mut [MaybeUninit<T>],
+        entries: &'a mut [mem::MaybeUninit<T>],
         position: usize,
         value: T,
         on_move: F,
@@ -28,10 +24,10 @@ impl<'a, T, F: FnMut(&T, usize)> Hole<'a, T, F> {
         Self {
             entries: entries.as_mut_ptr(),
             len: entries.len(),
-            value: ManuallyDrop::new(value),
+            value: mem::ManuallyDrop::new(value),
             position,
             on_move,
-            marker: PhantomData,
+            marker: marker::PhantomData,
         }
     }
 
@@ -123,7 +119,7 @@ struct Entry<K> {
 }
 
 pub struct Max<T> {
-    entries: Box<[MaybeUninit<T>]>,
+    entries: Box<[mem::MaybeUninit<T>]>,
     len: usize,
     _thread: crate::ThreadBound,
 }
@@ -217,7 +213,7 @@ impl<T> Drop for Max<T> {
 }
 
 pub struct Min<K: Ord> {
-    entries: Box<[MaybeUninit<Entry<K>>]>,
+    entries: Box<[mem::MaybeUninit<Entry<K>>]>,
     positions: Box<[u32]>,
     len: usize,
     _thread: crate::ThreadBound,
@@ -353,7 +349,7 @@ impl<K: Ord> Min<K> {
         let mut positions = BoxSliceGrowth::take(&mut self.positions);
         entries.reserve_exact(additional);
         positions.reserve_exact(additional);
-        entries.resize_with(capacity, MaybeUninit::uninit);
+        entries.resize_with(capacity, mem::MaybeUninit::uninit);
         positions.resize(capacity, NONE);
     }
 

@@ -1,4 +1,4 @@
-use std::{fmt, ops::Deref};
+use std::{fmt, ops};
 
 use crate::buffer;
 
@@ -79,7 +79,7 @@ impl<const CAP: usize> buffer::PrefixLength for Bytes<CAP> {
     }
 }
 
-impl<const CAP: usize> Deref for Bytes<CAP> {
+impl<const CAP: usize> ops::Deref for Bytes<CAP> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {

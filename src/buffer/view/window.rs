@@ -1,12 +1,9 @@
-use std::{
-    mem::MaybeUninit,
-    ptr::{addr_of_mut, copy_nonoverlapping},
-};
+use std::mem;
 
 use crate::buffer;
 
 pub struct Inline<const CAP: usize> {
-    buf: [MaybeUninit<u8>; CAP],
+    buf: [mem::MaybeUninit<u8>; CAP],
     head: u32,
     tail: u32,
     _thread: crate::ThreadBound,
@@ -16,7 +13,7 @@ impl<const CAP: usize> Default for Inline<CAP> {
     fn default() -> Self {
         let () = Self::VALID;
         Self {
-            buf: [MaybeUninit::uninit(); CAP],
+            buf: [mem::MaybeUninit::uninit(); CAP],
             head: 0,
             tail: 0,
             _thread: Default::default(),
@@ -33,6 +30,7 @@ impl<const CAP: usize> Inline<CAP> {
         let mut value = Box::<Self>::new_uninit();
         let ptr = value.as_mut_ptr();
         unsafe {
+            use std::ptr::addr_of_mut;
             addr_of_mut!((*ptr).head).write(0);
             addr_of_mut!((*ptr).tail).write(0);
             addr_of_mut!((*ptr)._thread).write(Default::default());
@@ -89,6 +87,7 @@ impl<const CAP: usize> Inline<CAP> {
         }
         let tail = self.tail as usize;
         unsafe {
+            use std::ptr::copy_nonoverlapping;
             copy_nonoverlapping(src.as_ptr(), self.buf.as_mut_ptr().add(tail).cast(), need);
         }
         self.tail = (tail + need) as u32;

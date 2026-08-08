@@ -1,18 +1,18 @@
-use std::pin::Pin;
+use std::pin;
 
 /// A fixed, dense allocation whose elements remain pinned until drop.
 #[repr(transparent)]
 pub struct Slice<T> {
-    entries: Pin<Box<[T]>>,
+    entries: pin::Pin<Box<[T]>>,
 }
 
 impl<T> Slice<T> {
-    pub fn get(&self, index: usize) -> Option<Pin<&T>> {
+    pub fn get(&self, index: usize) -> Option<pin::Pin<&T>> {
         let entry = self.entries.as_ref().get_ref().get(index)?;
         // SAFETY: Slice never exposes ownership of or mutable unpinned access
         // to its boxed storage. The allocation remains pinned through the
         // returned shared borrow, so this element cannot move or be replaced.
-        Some(unsafe { Pin::new_unchecked(entry) })
+        Some(unsafe { pin::Pin::new_unchecked(entry) })
     }
 
     pub fn len(&self) -> usize {

@@ -1,10 +1,4 @@
-use std::{
-    array::from_fn,
-    iter::FusedIterator,
-    mem::{ManuallyDrop, MaybeUninit, forget, take},
-    ptr::{addr_of, read},
-    slice::from_raw_parts,
-};
+use std::{iter, mem};
 
 /// An inline vector with a fixed capacity.
 ///
@@ -22,14 +16,14 @@ pub struct CopyInline<T: Copy, const N: usize> {
 
 #[repr(C)]
 struct Storage<T, const N: usize> {
-    entries: [MaybeUninit<T>; N],
+    entries: [mem::MaybeUninit<T>; N],
     len: usize,
 }
 
 /// A consuming iterator over an [`Inline`].
 #[repr(C)]
 pub struct IntoIter<T, const N: usize> {
-    entries: [MaybeUninit<T>; N],
+    entries: [mem::MaybeUninit<T>; N],
     index: usize,
     len: usize,
 }
@@ -84,8 +78,10 @@ impl<T: Copy, const N: usize> Default for CopyInline<T, N> {
 
 impl<T, const N: usize> Storage<T, N> {
     fn new() -> Self {
+        use std::array::from_fn;
+
         Self {
-            entries: from_fn(|_| MaybeUninit::uninit()),
+            entries: from_fn(|_| mem::MaybeUninit::uninit()),
             len: 0,
         }
     }
@@ -108,9 +104,12 @@ impl<T, const N: usize> Storage<T, N> {
     }
 
     fn as_slice(&self) -> &[T] {
-        // SAFETY: `0..len` is the initialized prefix and `MaybeUninit<T>` has
+        // SAFETY: `0..len` is the initialized prefix and `mem::MaybeUninit<T>` has
         // the same layout and alignment as `T`.
-        unsafe { from_raw_parts(self.entries.as_ptr().cast(), self.len) }
+        unsafe {
+            use std::slice::from_raw_parts;
+            from_raw_parts(self.entries.as_ptr().cast(), self.len)
+        }
     }
 }
 
@@ -119,11 +118,16 @@ impl<T, const N: usize> IntoIterator for Inline<T, N> {
     type Item = T;
 
     fn into_iter(self) -> Self::IntoIter {
+        use std::mem::ManuallyDrop;
+
         let value = ManuallyDrop::new(self);
         let source = &value as *const ManuallyDrop<Self> as *const Self;
         // SAFETY: `value` suppresses Inline's Drop. Moving the backing array
         // transfers its initialized prefix to the returned iterator exactly once.
-        let entries = unsafe { read(addr_of!((*source).storage.entries)) };
+        let entries = unsafe {
+            use std::ptr::{addr_of, read};
+            read(addr_of!((*source).storage.entries))
+        };
         let len = unsafe { (*source).storage.len };
         IntoIter {
             entries,
@@ -165,11 +169,11 @@ impl<T, const N: usize> DoubleEndedIterator for IntoIter<T, N> {
 }
 
 impl<T, const N: usize> ExactSizeIterator for IntoIter<T, N> {}
-impl<T, const N: usize> FusedIterator for IntoIter<T, N> {}
+impl<T, const N: usize> iter::FusedIterator for IntoIter<T, N> {}
 
 impl<T, const N: usize> Drop for Inline<T, N> {
     fn drop(&mut self) {
-        let len = take(&mut self.storage.len);
+        let len = mem::take(&mut self.storage.len);
         drop(DropEntries {
             entries: &mut self.storage.entries[..len],
         });
@@ -178,7 +182,7 @@ impl<T, const N: usize> Drop for Inline<T, N> {
 
 impl<T, const N: usize> Drop for IntoIter<T, N> {
     fn drop(&mut self) {
-        let index = take(&mut self.index);
+        let index = mem::take(&mut self.index);
         drop(DropEntries {
             entries: &mut self.entries[index..self.len],
         });
@@ -186,13 +190,14 @@ impl<T, const N: usize> Drop for IntoIter<T, N> {
 }
 
 struct DropEntries<'a, T> {
-    entries: &'a mut [MaybeUninit<T>],
+    entries: &'a mut [mem::MaybeUninit<T>],
 }
 
 impl<T> Drop for DropEntries<'_, T> {
     fn drop(&mut self) {
         loop {
-            let entries = take(&mut self.entries);
+            use std::mem::forget;
+            let entries = mem::take(&mut self.entries);
             let Some((head, tail)) = entries.split_first_mut() else {
                 break;
             };
@@ -200,7 +205,7 @@ impl<T> Drop for DropEntries<'_, T> {
             // SAFETY: this guard owns exactly the initialized suffix. On an
             // unwind, `remaining` drops the tail before propagating it.
             unsafe { head.assume_init_drop() };
-            self.entries = take(&mut remaining.entries);
+            self.entries = mem::take(&mut remaining.entries);
             forget(remaining);
         }
     }

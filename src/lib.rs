@@ -11,13 +11,13 @@ pub mod collections;
 pub mod mem;
 pub mod num;
 
-use std::marker::PhantomData;
+use std::marker;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct ThreadBound(PhantomData<*mut ()>);
+pub struct ThreadBound(marker::PhantomData<*mut ()>);
 
 impl ThreadBound {
-    pub const NEW: Self = Self(PhantomData);
+    pub const NEW: Self = Self(marker::PhantomData);
 }
 
 /// Receives a resource when its owning [`ReturnPermit`] is dropped.

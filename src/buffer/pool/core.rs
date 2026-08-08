@@ -1,20 +1,19 @@
-use std::{
-    alloc::{alloc, alloc_zeroed, dealloc, handle_alloc_error},
-    cell::Cell,
-    mem::MaybeUninit,
-    ptr::{NonNull, copy_nonoverlapping},
-    slice,
-};
+use std::{cell, ptr, slice};
 
-use crate::buffer::{self, pool, storage};
+use crate::buffer::{
+    self,
+    pool::{self, state},
+    storage::raw::refs,
+    write,
+};
 
 const NONE: u32 = u32::MAX;
 
 #[repr(C)]
 pub(super) struct Core {
-    refs: storage::raw::refs::LocalRefCount,
-    free: Cell<u32>,
-    free_len: Cell<u32>,
+    refs: refs::LocalRefCount,
+    free: cell::Cell<u32>,
+    free_len: cell::Cell<u32>,
     slots: u32,
     capacity: u32,
     data_offset: usize,
@@ -23,27 +22,35 @@ pub(super) struct Core {
 
 #[repr(C)]
 pub(super) struct Slot {
-    refs: storage::raw::refs::LocalRefCount,
-    next: Cell<u32>,
+    refs: refs::LocalRefCount,
+    next: cell::Cell<u32>,
 }
 
 const _: () = assert!(align_of::<Core>() >= align_of::<Slot>());
 
 impl Core {
-    pub(super) fn allocate<S: pool::state::State>(layout: pool::Layout) -> NonNull<Self> {
+    pub(super) fn allocate<S: state::State>(layout: pool::Layout) -> ptr::NonNull<Self> {
         let raw = if S::ZEROED {
-            unsafe { alloc_zeroed(layout.allocation()) }
+            unsafe {
+                use std::alloc::alloc_zeroed;
+                alloc_zeroed(layout.allocation())
+            }
         } else {
-            unsafe { alloc(layout.allocation()) }
+            unsafe {
+                use std::alloc::alloc;
+                alloc(layout.allocation())
+            }
         };
-        let ptr = NonNull::new(raw.cast::<Self>())
-            .unwrap_or_else(|| handle_alloc_error(layout.allocation()));
+        let ptr = ptr::NonNull::new(raw.cast::<Self>()).unwrap_or_else(|| {
+            use std::alloc::handle_alloc_error;
+            handle_alloc_error(layout.allocation())
+        });
         unsafe {
             use crate::buffer::storage::raw::refs::LocalRefCount;
             ptr.write(Self {
                 refs: LocalRefCount::one(),
-                free: Cell::new(if layout.slot_count() == 0 { NONE } else { 0 }),
-                free_len: Cell::new(layout.slot_count()),
+                free: cell::Cell::new(if layout.slot_count() == 0 { NONE } else { 0 }),
+                free_len: cell::Cell::new(layout.slot_count()),
                 slots: layout.slot_count(),
                 capacity: layout.capacity().get(),
                 data_offset: layout.data_offset(),
@@ -57,7 +64,7 @@ impl Core {
             for index in 0..layout.slot_count() {
                 slot_ptr.add(index as usize).write(Slot {
                     refs: LocalRefCount::empty(),
-                    next: Cell::new(if index + 1 == layout.slot_count() {
+                    next: cell::Cell::new(if index + 1 == layout.slot_count() {
                         NONE
                     } else {
                         index + 1
@@ -68,11 +75,11 @@ impl Core {
         ptr
     }
 
-    pub(super) fn retain(ptr: NonNull<Self>) {
+    pub(super) fn retain(ptr: ptr::NonNull<Self>) {
         unsafe { ptr.as_ref() }.refs.retain();
     }
 
-    pub(super) fn release(ptr: NonNull<Self>) {
+    pub(super) fn release(ptr: ptr::NonNull<Self>) {
         let core = unsafe { ptr.as_ref() };
         if !core.refs.release() {
             return;
@@ -81,18 +88,21 @@ impl Core {
             use std::alloc::Layout;
             Layout::from_size_align_unchecked(core.allocation_size, align_of::<Self>())
         };
-        unsafe { dealloc(ptr.as_ptr().cast(), layout) };
+        unsafe {
+            use std::alloc::dealloc;
+            dealloc(ptr.as_ptr().cast(), layout);
+        }
     }
 
-    pub(super) fn capacity(ptr: NonNull<Self>) -> usize {
+    pub(super) fn capacity(ptr: ptr::NonNull<Self>) -> usize {
         unsafe { ptr.as_ref() }.capacity as usize
     }
 
-    pub(super) fn available(ptr: NonNull<Self>) -> usize {
+    pub(super) fn available(ptr: ptr::NonNull<Self>) -> usize {
         unsafe { ptr.as_ref() }.free_len.get() as usize
     }
 
-    pub(super) fn acquire(ptr: NonNull<Self>) -> Option<u32> {
+    pub(super) fn acquire(ptr: ptr::NonNull<Self>) -> Option<u32> {
         let core = unsafe { ptr.as_ref() };
         let index = core.free.get();
         if index == NONE {
@@ -107,12 +117,12 @@ impl Core {
         Some(index)
     }
 
-    pub(super) fn retain_slot(ptr: NonNull<Self>, index: u32) {
+    pub(super) fn retain_slot(ptr: ptr::NonNull<Self>, index: u32) {
         let slot = unsafe { &*Self::slot(ptr, index) };
         slot.refs.retain();
     }
 
-    pub(super) fn release_slot(ptr: NonNull<Self>, index: u32) {
+    pub(super) fn release_slot(ptr: ptr::NonNull<Self>, index: u32) {
         let core = unsafe { ptr.as_ref() };
         let slot = unsafe { &*Self::slot(ptr, index) };
         if !slot.refs.release() {
@@ -125,16 +135,16 @@ impl Core {
         Self::release(ptr);
     }
 
-    pub(super) fn slice<'a>(ptr: NonNull<Self>, index: u32, len: usize) -> &'a [u8] {
+    pub(super) fn slice<'a>(ptr: ptr::NonNull<Self>, index: u32, len: usize) -> &'a [u8] {
         unsafe { slice::from_raw_parts(Self::data(ptr, index), len) }
     }
 
-    pub(super) fn slice_mut<'a>(ptr: NonNull<Self>, index: u32, len: usize) -> &'a mut [u8] {
+    pub(super) fn slice_mut<'a>(ptr: ptr::NonNull<Self>, index: u32, len: usize) -> &'a mut [u8] {
         unsafe { slice::from_raw_parts_mut(Self::data(ptr, index), len) }
     }
 
     pub(super) fn push(
-        ptr: NonNull<Self>,
+        ptr: ptr::NonNull<Self>,
         index: u32,
         len: &mut u32,
         byte: u8,
@@ -148,6 +158,7 @@ impl Core {
             ));
         }
         unsafe {
+            use std::mem::MaybeUninit;
             Self::data(ptr, index)
                 .add(written)
                 .cast::<MaybeUninit<u8>>()
@@ -158,7 +169,7 @@ impl Core {
     }
 
     pub(super) fn extend(
-        ptr: NonNull<Self>,
+        ptr: ptr::NonNull<Self>,
         index: u32,
         len: &mut u32,
         src: &[u8],
@@ -171,13 +182,15 @@ impl Core {
         if end > capacity {
             return Err(buffer::CapacityError::new(end, capacity));
         }
-        unsafe { copy_nonoverlapping(src.as_ptr(), Self::data(ptr, index).add(start), src.len()) };
+        unsafe {
+            ptr::copy_nonoverlapping(src.as_ptr(), Self::data(ptr, index).add(start), src.len())
+        };
         *len = end as u32;
         Ok(())
     }
 
     pub(super) fn extend_from_slices<const N: usize>(
-        ptr: NonNull<Self>,
+        ptr: ptr::NonNull<Self>,
         index: u32,
         len: &mut u32,
         slices: [&[u8]; N],
@@ -188,7 +201,11 @@ impl Core {
         let mut offset = start;
         for src in slices {
             unsafe {
-                copy_nonoverlapping(src.as_ptr(), Self::data(ptr, index).add(offset), src.len());
+                ptr::copy_nonoverlapping(
+                    src.as_ptr(),
+                    Self::data(ptr, index).add(offset),
+                    src.len(),
+                );
             }
             offset += src.len();
         }
@@ -197,10 +214,10 @@ impl Core {
     }
 
     pub(super) fn spare_writer<'a>(
-        ptr: NonNull<Self>,
+        ptr: ptr::NonNull<Self>,
         index: u32,
         len: &'a mut u32,
-    ) -> buffer::write::SpareWriter<'a> {
+    ) -> write::SpareWriter<'a> {
         let capacity = Self::capacity(ptr);
         let written = *len as usize;
         let data = unsafe { Self::data(ptr, index).add(written).cast() };
@@ -210,7 +227,7 @@ impl Core {
         }
     }
 
-    fn slot(ptr: NonNull<Self>, index: u32) -> *mut Slot {
+    fn slot(ptr: ptr::NonNull<Self>, index: u32) -> *mut Slot {
         let core = unsafe { ptr.as_ref() };
         debug_assert!(index < core.slots);
         unsafe {
@@ -222,7 +239,7 @@ impl Core {
         }
     }
 
-    fn data(ptr: NonNull<Self>, index: u32) -> *mut u8 {
+    fn data(ptr: ptr::NonNull<Self>, index: u32) -> *mut u8 {
         let core = unsafe { ptr.as_ref() };
         debug_assert!(index < core.slots);
         unsafe {

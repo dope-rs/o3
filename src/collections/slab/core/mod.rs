@@ -1,8 +1,4 @@
-use std::{
-    cell::{Cell, UnsafeCell},
-    marker::PhantomData,
-    mem::ManuallyDrop,
-};
+use std::{cell, marker, mem};
 
 use crate::collections::slab;
 
@@ -58,23 +54,23 @@ struct Links {
 
 union Data<T> {
     links: Links,
-    value: ManuallyDrop<T>,
+    value: mem::ManuallyDrop<T>,
 }
 
 struct Slot<T, G: Copy> {
-    state: Cell<State>,
-    generation: Cell<G>,
-    position: Cell<u32>,
-    data: UnsafeCell<Data<T>>,
+    state: cell::Cell<State>,
+    generation: cell::Cell<G>,
+    position: cell::Cell<u32>,
+    data: cell::UnsafeCell<Data<T>>,
 }
 
 impl<T, G: Copy> Slot<T, G> {
     fn free(generation: G, next: u32, prev: u32) -> Self {
         Self {
-            state: Cell::new(State::Free),
-            generation: Cell::new(generation),
-            position: Cell::new(NONE),
-            data: UnsafeCell::new(Data {
+            state: cell::Cell::new(State::Free),
+            generation: cell::Cell::new(generation),
+            position: cell::Cell::new(NONE),
+            data: cell::UnsafeCell::new(Data {
                 links: Links { next, prev },
             }),
         }
@@ -97,11 +93,11 @@ impl<T, G: Copy> Slot<T, G> {
     }
 
     unsafe fn write_value(&self, value: T) {
-        unsafe { (*self.data.get()).value = ManuallyDrop::new(value) };
+        unsafe { (*self.data.get()).value = mem::ManuallyDrop::new(value) };
     }
 
     unsafe fn take_value(&self) -> T {
-        unsafe { ManuallyDrop::take(&mut (*self.data.get()).value) }
+        unsafe { mem::ManuallyDrop::take(&mut (*self.data.get()).value) }
     }
 }
 
@@ -113,11 +109,11 @@ pub(super) struct Ticket<G> {
 
 pub(super) struct Core<T, G: slab::GenerationState, M: Mode> {
     slots: Box<[Slot<T, G>]>,
-    occupied: Box<[Cell<u32>]>,
-    free: Cell<u32>,
-    len: Cell<u32>,
+    occupied: Box<[cell::Cell<u32>]>,
+    free: cell::Cell<u32>,
+    len: cell::Cell<u32>,
     _thread: crate::ThreadBound,
-    mode: PhantomData<M>,
+    mode: marker::PhantomData<M>,
 }
 
 impl<T, G: slab::GenerationState, M: Mode> Core<T, G, M> {
@@ -136,14 +132,14 @@ impl<T, G: slab::GenerationState, M: Mode> Core<T, G, M> {
                 if index == 0 { NONE } else { index as u32 - 1 },
             )
         }));
-        let occupied = capacity.collect_box((0..raw_capacity).map(|_| Cell::new(NONE)));
+        let occupied = capacity.collect_box((0..raw_capacity).map(|_| cell::Cell::new(NONE)));
         Self {
             slots,
             occupied,
-            free: Cell::new(if raw_capacity == 0 { NONE } else { 0 }),
-            len: Cell::new(0),
+            free: cell::Cell::new(if raw_capacity == 0 { NONE } else { 0 }),
+            len: cell::Cell::new(0),
             _thread: ThreadBound::NEW,
-            mode: PhantomData,
+            mode: marker::PhantomData,
         }
     }
 
@@ -169,7 +165,7 @@ impl<T, G: slab::GenerationState, M: Mode> Core<T, G, M> {
         let additional = capacity - old_capacity;
         slots.reserve_exact(additional);
         occupied.reserve_exact(additional);
-        occupied.resize_with(capacity, || Cell::new(NONE));
+        occupied.resize_with(capacity, || cell::Cell::new(NONE));
 
         for index in old_capacity..capacity {
             slots.push(Slot::free(

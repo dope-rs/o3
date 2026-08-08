@@ -1,15 +1,6 @@
-use std::{
-    alloc::{Layout, alloc, dealloc, handle_alloc_error},
-    marker::PhantomData,
-    mem::forget,
-    num::NonZeroUsize,
-    ops::Range,
-    ptr::{NonNull, copy, copy_nonoverlapping},
-    rc::Rc,
-    slice::{from_raw_parts, from_raw_parts_mut},
-};
+use std::{alloc, marker, mem, ops, ptr, rc};
 
-use crate::buffer;
+use crate::buffer::write;
 
 pub(in crate::buffer) mod refs;
 
@@ -31,20 +22,25 @@ fn is_span_in_bounds(start: usize, len: usize, capacity: usize) -> bool {
     start.checked_add(len).is_some_and(|end| end <= capacity)
 }
 
-fn is_range_in_bounds(src: &Range<usize>, dest: usize, capacity: usize) -> bool {
+fn is_range_in_bounds(src: &ops::Range<usize>, dest: usize, capacity: usize) -> bool {
     src.start <= src.end && src.end <= capacity && is_span_in_bounds(dest, src.len(), capacity)
 }
 
 impl Header {
-    fn layout(capacity: u32) -> Layout {
+    fn layout(capacity: u32) -> alloc::Layout {
         // SAFETY: ALIGN and MAX_LAYOUT_SIZE prove every u32 capacity has a valid rounded layout.
-        unsafe { Layout::from_size_align_unchecked(DATA_OFFSET + capacity as usize, ALIGN) }
+        unsafe { alloc::Layout::from_size_align_unchecked(DATA_OFFSET + capacity as usize, ALIGN) }
     }
 
-    fn allocate(capacity: u32) -> NonNull<Header> {
+    fn allocate(capacity: u32) -> ptr::NonNull<Header> {
         let layout = Header::layout(capacity);
-        let ptr = unsafe { alloc(layout) }.cast::<Header>();
-        let Some(ptr) = NonNull::new(ptr) else {
+        let ptr = unsafe {
+            use std::alloc::alloc;
+            alloc(layout)
+        }
+        .cast::<Header>();
+        let Some(ptr) = ptr::NonNull::new(ptr) else {
+            use std::alloc::handle_alloc_error;
             handle_alloc_error(layout);
         };
         unsafe {
@@ -57,39 +53,42 @@ impl Header {
         ptr
     }
 
-    unsafe fn retain(ptr: NonNull<Header>) {
+    unsafe fn retain(ptr: ptr::NonNull<Header>) {
         unsafe { ptr.as_ref() }.refs.retain();
     }
 
-    unsafe fn release(ptr: NonNull<Header>) {
+    unsafe fn release(ptr: ptr::NonNull<Header>) {
         let header = unsafe { ptr.as_ref() };
         if !header.refs.release() {
             return;
         }
         let layout = Header::layout(header.capacity);
-        unsafe { dealloc(ptr.as_ptr().cast(), layout) };
+        unsafe {
+            use std::alloc::dealloc;
+            dealloc(ptr.as_ptr().cast(), layout);
+        }
     }
 
-    fn data_ptr(ptr: NonNull<Header>) -> *const u8 {
+    fn data_ptr(ptr: ptr::NonNull<Header>) -> *const u8 {
         unsafe { ptr.as_ptr().cast::<u8>().add(DATA_OFFSET) }
     }
 
-    fn data_mut_ptr(ptr: NonNull<Header>) -> *mut u8 {
+    fn data_mut_ptr(ptr: ptr::NonNull<Header>) -> *mut u8 {
         debug_assert!(unsafe { ptr.as_ref() }.refs.is_unique());
         unsafe { ptr.as_ptr().cast::<u8>().add(DATA_OFFSET) }
     }
 }
 
 pub(in crate::buffer) struct AllocationMut {
-    ptr: NonNull<Header>,
-    marker: PhantomData<*mut ()>,
+    ptr: ptr::NonNull<Header>,
+    marker: marker::PhantomData<*mut ()>,
 }
 
 impl AllocationMut {
     pub(in crate::buffer) fn with_capacity_u32(capacity: u32) -> Self {
         Self {
             ptr: Header::allocate(capacity),
-            marker: PhantomData,
+            marker: marker::PhantomData,
         }
     }
 
@@ -99,12 +98,18 @@ impl AllocationMut {
 
     pub(in crate::buffer) fn initialized(&self, len: usize) -> &[u8] {
         debug_assert!(len <= self.capacity());
-        unsafe { from_raw_parts(Header::data_ptr(self.ptr), len) }
+        unsafe {
+            use std::slice::from_raw_parts;
+            from_raw_parts(Header::data_ptr(self.ptr), len)
+        }
     }
 
     pub(in crate::buffer) fn initialized_mut(&mut self, len: usize) -> &mut [u8] {
         debug_assert!(len <= self.capacity());
-        unsafe { from_raw_parts_mut(Header::data_mut_ptr(self.ptr), len) }
+        unsafe {
+            use std::slice::from_raw_parts_mut;
+            from_raw_parts_mut(Header::data_mut_ptr(self.ptr), len)
+        }
     }
 
     pub(in crate::buffer) fn write_byte(&mut self, offset: usize, byte: u8) {
@@ -121,7 +126,7 @@ impl AllocationMut {
     pub(in crate::buffer) fn spare_writer<'a>(
         &'a mut self,
         target: &'a mut u32,
-    ) -> buffer::write::SpareWriter<'a> {
+    ) -> write::SpareWriter<'a> {
         let len = *target as usize;
         let capacity = self.capacity();
         debug_assert!(len <= capacity);
@@ -140,20 +145,20 @@ impl AllocationMut {
         unsafe { Header::retain(self.ptr) };
         Allocation {
             ptr: self.ptr,
-            marker: PhantomData,
+            marker: marker::PhantomData,
         }
     }
 
     pub(in crate::buffer) fn freeze(self) -> Allocation {
         let allocation = Allocation {
             ptr: self.ptr,
-            marker: PhantomData,
+            marker: marker::PhantomData,
         };
-        forget(self);
+        mem::forget(self);
         allocation
     }
 
-    pub(in crate::buffer) fn detach_range(&mut self, src: Range<usize>, dest: usize) -> bool {
+    pub(in crate::buffer) fn detach_range(&mut self, src: ops::Range<usize>, dest: usize) -> bool {
         debug_assert!(is_range_in_bounds(&src, dest, self.capacity()));
         if unsafe { self.ptr.as_ref() }.refs.is_unique() {
             return false;
@@ -163,11 +168,11 @@ impl AllocationMut {
     }
 
     #[cold]
-    fn detach_range_slow(&mut self, src: Range<usize>, dest: usize) {
+    fn detach_range_slow(&mut self, src: ops::Range<usize>, dest: usize) {
         let ptr = Header::allocate(unsafe { self.ptr.as_ref() }.capacity);
         if !src.is_empty() {
             unsafe {
-                copy_nonoverlapping(
+                ptr::copy_nonoverlapping(
                     Header::data_ptr(self.ptr).add(src.start),
                     ptr.as_ptr().cast::<u8>().add(DATA_OFFSET + dest),
                     src.len(),
@@ -181,7 +186,7 @@ impl AllocationMut {
     pub(in crate::buffer) fn copy_from_slice(&mut self, offset: usize, src: &[u8]) {
         debug_assert!(is_span_in_bounds(offset, src.len(), self.capacity()));
         unsafe {
-            copy_nonoverlapping(
+            ptr::copy_nonoverlapping(
                 src.as_ptr(),
                 Header::data_mut_ptr(self.ptr).add(offset),
                 src.len(),
@@ -194,7 +199,7 @@ impl AllocationMut {
     pub(in crate::buffer) unsafe fn copy_from_slice_disjoint(&mut self, offset: usize, src: &[u8]) {
         debug_assert!(is_span_in_bounds(offset, src.len(), self.capacity()));
         unsafe {
-            copy_nonoverlapping(
+            ptr::copy_nonoverlapping(
                 src.as_ptr(),
                 self.ptr.as_ptr().cast::<u8>().add(DATA_OFFSET + offset),
                 src.len(),
@@ -214,7 +219,7 @@ impl AllocationMut {
                 && is_span_in_bounds(src_offset, len, src.capacity())
         );
         unsafe {
-            copy_nonoverlapping(
+            ptr::copy_nonoverlapping(
                 Header::data_ptr(src.ptr).add(src_offset),
                 Header::data_mut_ptr(self.ptr).add(offset),
                 len,
@@ -222,9 +227,10 @@ impl AllocationMut {
         }
     }
 
-    pub(in crate::buffer) fn copy_within(&mut self, src: Range<usize>, dest: usize) {
+    pub(in crate::buffer) fn copy_within(&mut self, src: ops::Range<usize>, dest: usize) {
         debug_assert!(is_range_in_bounds(&src, dest, self.capacity()));
         unsafe {
+            use std::ptr::copy;
             let data = Header::data_mut_ptr(self.ptr);
             copy(data.add(src.start), data.add(dest), src.len());
         }
@@ -238,22 +244,22 @@ impl Drop for AllocationMut {
 }
 
 pub(in crate::buffer) struct Allocation {
-    ptr: NonNull<Header>,
-    marker: PhantomData<*mut ()>,
+    ptr: ptr::NonNull<Header>,
+    marker: marker::PhantomData<*mut ()>,
 }
 
 /// A typed, provenance-carrying pointer to a live storage allocation owner.
-struct AllocationOwner(NonNull<Header>);
+struct AllocationOwner(ptr::NonNull<Header>);
 
 impl AllocationOwner {
-    fn erase(self) -> NonNull<()> {
+    fn erase(self) -> ptr::NonNull<()> {
         self.0.cast()
     }
 
     /// # Safety
     /// `ptr` must have been returned by [`AllocationOwner::erase`] and still denote a
     /// live storage allocation.
-    unsafe fn from_erased(ptr: NonNull<()>) -> Self {
+    unsafe fn from_erased(ptr: ptr::NonNull<()>) -> Self {
         Self(ptr.cast())
     }
 
@@ -272,11 +278,11 @@ impl AllocationOwner {
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-struct TaggedOwner(NonNull<()>);
+struct TaggedOwner(ptr::NonNull<()>);
 
 enum OwnerPtr {
     Allocation(AllocationOwner),
-    Vec(NonNull<Vec<u8>>),
+    Vec(ptr::NonNull<Vec<u8>>),
 }
 
 impl TaggedOwner {
@@ -284,10 +290,10 @@ impl TaggedOwner {
         Self(allocation.into_owner().erase())
     }
 
-    fn from_vec(buf: Rc<Vec<u8>>) -> Self {
-        let ptr = Rc::into_raw(buf).cast_mut();
-        // SAFETY: `Rc::into_raw` never returns a null pointer.
-        let ptr = unsafe { NonNull::new_unchecked(ptr) }.cast::<()>();
+    fn from_vec(buf: rc::Rc<Vec<u8>>) -> Self {
+        let ptr = rc::Rc::into_raw(buf).cast_mut();
+        // SAFETY: `rc::Rc::into_raw` never returns a null pointer.
+        let ptr = unsafe { ptr::NonNull::new_unchecked(ptr) }.cast::<()>();
         Self(ptr.map_addr(|addr| addr | VEC_OWNER_TAG))
     }
 
@@ -297,7 +303,10 @@ impl TaggedOwner {
             // SAFETY: both constructors start with a non-null pointer aligned
             // to at least two bytes. Clearing their optional low tag therefore
             // recovers the original non-null address.
-            unsafe { NonZeroUsize::new_unchecked(addr.get() & !VEC_OWNER_TAG) }
+            unsafe {
+                use std::num::NonZeroUsize;
+                NonZeroUsize::new_unchecked(addr.get() & !VEC_OWNER_TAG)
+            }
         });
         if tagged {
             OwnerPtr::Vec(ptr.cast())
@@ -310,19 +319,19 @@ impl TaggedOwner {
     fn retain(self) {
         match self.decode() {
             OwnerPtr::Allocation(owner) => unsafe { owner.retain() },
-            OwnerPtr::Vec(ptr) => unsafe { Rc::increment_strong_count(ptr.as_ptr()) },
+            OwnerPtr::Vec(ptr) => unsafe { rc::Rc::increment_strong_count(ptr.as_ptr()) },
         }
     }
 
     fn release(self) {
         match self.decode() {
             OwnerPtr::Allocation(owner) => unsafe { owner.release() },
-            OwnerPtr::Vec(ptr) => unsafe { Rc::decrement_strong_count(ptr.as_ptr()) },
+            OwnerPtr::Vec(ptr) => unsafe { rc::Rc::decrement_strong_count(ptr.as_ptr()) },
         }
     }
 }
 
-const _: () = assert!(size_of::<Option<TaggedOwner>>() == size_of::<NonNull<()>>());
+const _: () = assert!(size_of::<Option<TaggedOwner>>() == size_of::<ptr::NonNull<()>>());
 
 pub(in crate::buffer) struct Owner {
     tagged: Option<TaggedOwner>,
@@ -345,7 +354,7 @@ impl Owner {
         }
     }
 
-    pub(in crate::buffer) fn from_vec(buf: Rc<Vec<u8>>) -> Self {
+    pub(in crate::buffer) fn from_vec(buf: rc::Rc<Vec<u8>>) -> Self {
         Self {
             tagged: Some(TaggedOwner::from_vec(buf)),
             _thread: Default::default(),
@@ -421,7 +430,7 @@ impl Allocation {
 
     fn into_owner(self) -> AllocationOwner {
         let owner = AllocationOwner(self.ptr);
-        forget(self);
+        mem::forget(self);
         owner
     }
 }
@@ -431,7 +440,7 @@ impl Clone for Allocation {
         unsafe { Header::retain(self.ptr) };
         Self {
             ptr: self.ptr,
-            marker: PhantomData,
+            marker: marker::PhantomData,
         }
     }
 }

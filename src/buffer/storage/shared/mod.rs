@@ -1,13 +1,9 @@
-use std::{
-    fmt,
-    hash::{Hash, Hasher},
-    ops::{Bound, Deref, Range, RangeBounds},
-    ptr::NonNull,
-    rc::Rc,
-    slice::from_raw_parts,
-};
+use std::{fmt, hash, ops};
 
-use crate::buffer::{self, RangeExt as _, storage};
+use crate::buffer::{
+    self, RangeExt as _,
+    storage::{self, raw},
+};
 
 pub mod strings;
 
@@ -18,16 +14,18 @@ const VEC_ZERO_COPY_MIN: usize = 512;
 pub struct Shared {
     ptr: *const u8,
     len: usize,
-    owner: storage::raw::Owner,
+    owner: raw::Owner,
 }
 
 impl Shared {
     #[must_use]
     pub const fn new() -> Self {
+        use std::ptr::NonNull;
+
         Self {
             ptr: NonNull::<u8>::dangling().as_ptr(),
             len: 0,
-            owner: storage::raw::Owner::NONE,
+            owner: raw::Owner::NONE,
         }
     }
 
@@ -36,16 +34,16 @@ impl Shared {
         Self {
             ptr: s.as_ptr(),
             len: s.len(),
-            owner: storage::raw::Owner::NONE,
+            owner: raw::Owner::NONE,
         }
     }
 
-    pub(in crate::buffer) fn from_span(span: storage::raw::Span) -> Self {
+    pub(in crate::buffer) fn from_span(span: raw::Span) -> Self {
         let (allocation, ptr, len) = span.into_parts();
         Self {
             ptr,
             len,
-            owner: storage::raw::Owner::from_allocation(allocation),
+            owner: raw::Owner::from_allocation(allocation),
         }
     }
 
@@ -60,13 +58,15 @@ impl Shared {
     }
 
     fn from_vec_owner(buf: Vec<u8>) -> Self {
+        use std::rc::Rc;
+
         let buf = Rc::new(buf);
         let ptr = buf.as_ptr();
         let len = buf.len();
         Self {
             ptr,
             len,
-            owner: storage::raw::Owner::from_vec(buf),
+            owner: raw::Owner::from_vec(buf),
         }
     }
 
@@ -96,11 +96,16 @@ impl Shared {
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { from_raw_parts(self.ptr, self.len) }
+        unsafe {
+            use std::slice::from_raw_parts;
+            from_raw_parts(self.ptr, self.len)
+        }
     }
 
     #[must_use]
-    pub fn get(&self, range: impl RangeBounds<usize>) -> Option<Self> {
+    pub fn get(&self, range: impl ops::RangeBounds<usize>) -> Option<Self> {
+        use std::ops::Bound;
+
         let start = match range.start_bound() {
             Bound::Included(&n) => n,
             Bound::Excluded(&n) => n.checked_add(1)?,
@@ -125,7 +130,7 @@ impl Shared {
         })
     }
 
-    pub(in crate::buffer) fn try_slice_in_place(&mut self, range: Range<usize>) -> bool {
+    pub(in crate::buffer) fn try_slice_in_place(&mut self, range: ops::Range<usize>) -> bool {
         if !range.is_within(self.len) {
             return false;
         }
@@ -183,7 +188,7 @@ impl buffer::PrefixConsumer for Shared {
     }
 }
 
-impl Deref for Shared {
+impl ops::Deref for Shared {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
@@ -247,8 +252,8 @@ impl PartialEq<&[u8]> for Shared {
 
 impl Eq for Shared {}
 
-impl Hash for Shared {
-    fn hash<H: Hasher>(&self, state: &mut H) {
+impl hash::Hash for Shared {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.as_slice().hash(state);
     }
 }

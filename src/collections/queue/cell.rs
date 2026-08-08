@@ -1,13 +1,10 @@
-use std::{
-    cell::{Cell, UnsafeCell},
-    mem::MaybeUninit,
-};
+use std::{cell, mem};
 
 pub struct Fifo<T> {
-    entries: Box<[UnsafeCell<MaybeUninit<T>>]>,
+    entries: Box<[cell::UnsafeCell<mem::MaybeUninit<T>>]>,
     capacity: usize,
-    head: Cell<usize>,
-    tail: Cell<usize>,
+    head: cell::Cell<usize>,
+    tail: cell::Cell<usize>,
     _thread: crate::ThreadBound,
 }
 
@@ -21,11 +18,11 @@ impl<T> Fifo<T> {
         let ring = capacity.next_power_of_two();
         Self {
             entries: (0..ring)
-                .map(|_| UnsafeCell::new(MaybeUninit::uninit()))
+                .map(|_| cell::UnsafeCell::new(mem::MaybeUninit::uninit()))
                 .collect(),
             capacity,
-            head: Cell::new(0),
-            tail: Cell::new(0),
+            head: cell::Cell::new(0),
+            tail: cell::Cell::new(0),
             _thread: ThreadBound::NEW,
         }
     }

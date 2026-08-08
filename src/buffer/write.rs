@@ -1,11 +1,4 @@
-use std::{
-    convert::Infallible,
-    error::Error,
-    fmt,
-    mem::MaybeUninit,
-    ptr::{NonNull, copy_nonoverlapping},
-    slice,
-};
+use std::{convert, error, fmt, mem, ptr, slice};
 
 use crate::buffer::{self, queue};
 
@@ -19,7 +12,9 @@ fn append_vec_slices<const N: usize>(out: &mut Vec<u8>, slices: [&[u8]; N]) {
     for slice in slices {
         // SAFETY: the aggregate reserve covers every copy and safe borrowing
         // prevents the sources from aliasing this vector.
-        unsafe { copy_nonoverlapping(slice.as_ptr(), out.as_mut_ptr().add(offset), slice.len()) };
+        unsafe {
+            ptr::copy_nonoverlapping(slice.as_ptr(), out.as_mut_ptr().add(offset), slice.len())
+        };
         offset += slice.len();
     }
     // SAFETY: every byte in `start..offset` was initialized above.
@@ -27,7 +22,7 @@ fn append_vec_slices<const N: usize>(out: &mut Vec<u8>, slices: [&[u8]; N]) {
 }
 
 pub struct SpareWriter<'a> {
-    ptr: NonNull<MaybeUninit<u8>>,
+    ptr: ptr::NonNull<mem::MaybeUninit<u8>>,
     capacity: usize,
     written: usize,
     target: &'a mut u32,
@@ -50,7 +45,7 @@ impl fmt::Display for ExactError {
     }
 }
 
-impl Error for ExactError {}
+impl error::Error for ExactError {}
 
 /// An exact-length write reservation that rolls back unless committed.
 /// Safe writes are confined to the reserved extent.
@@ -104,7 +99,7 @@ impl<'a> SpareWriter<'a> {
             self.ptr
                 .as_ptr()
                 .add(self.written)
-                .write(MaybeUninit::new(byte))
+                .write(mem::MaybeUninit::new(byte))
         };
         self.written += 1;
         Ok(())
@@ -120,7 +115,7 @@ impl<'a> SpareWriter<'a> {
             return Err(buffer::CapacityError::new(end, self.capacity));
         }
         unsafe {
-            copy_nonoverlapping(
+            ptr::copy_nonoverlapping(
                 src.as_ptr(),
                 self.ptr.as_ptr().add(self.written).cast(),
                 src.len(),
@@ -141,7 +136,7 @@ impl<'a> SpareWriter<'a> {
         let mut offset = self.written;
         for src in slices {
             unsafe {
-                copy_nonoverlapping(
+                ptr::copy_nonoverlapping(
                     src.as_ptr(),
                     self.ptr.as_ptr().add(offset).cast(),
                     src.len(),
@@ -158,14 +153,14 @@ impl<'a> SpareWriter<'a> {
     }
 
     pub(in crate::buffer) unsafe fn new(
-        ptr: *mut MaybeUninit<u8>,
+        ptr: *mut mem::MaybeUninit<u8>,
         capacity: usize,
         target: &'a mut u32,
     ) -> Self {
         use crate::ThreadBound;
         debug_assert!(capacity <= (u32::MAX - *target) as usize);
         Self {
-            ptr: unsafe { NonNull::new_unchecked(ptr) },
+            ptr: unsafe { ptr::NonNull::new_unchecked(ptr) },
             capacity,
             written: 0,
             target,
@@ -245,7 +240,7 @@ pub trait ByteSink {
 }
 
 impl ByteSink for Vec<u8> {
-    type Error = Infallible;
+    type Error = convert::Infallible;
 
     fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
         self.push(byte);

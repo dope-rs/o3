@@ -1,10 +1,10 @@
 //! GhostCell-style cells with tagged permissions and pin-aware borrowing.
 //! Based on <https://plv.mpi-sws.org/rustbelt/ghostcell/>.
 
-use std::{cell::UnsafeCell, marker::PhantomData, pin::Pin};
+use std::{cell, marker, pin};
 
-type Invariant<'id> = PhantomData<*mut &'id ()>;
-type Tagged<Tag> = PhantomData<fn(Tag) -> Tag>;
+type Invariant<'id> = marker::PhantomData<*mut &'id ()>;
+type Tagged<Tag> = marker::PhantomData<fn(Tag) -> Tag>;
 
 #[doc(hidden)]
 pub enum BrandPermission {}
@@ -19,7 +19,7 @@ pub struct Token<'id, Tag> {
 
 #[repr(transparent)]
 pub struct Branded<'id, T, Tag> {
-    value: UnsafeCell<T>,
+    value: cell::UnsafeCell<T>,
     _brand: Invariant<'id>,
     _tag: Tagged<Tag>,
 }
@@ -47,8 +47,8 @@ impl<Tag> Token<'_, Tag> {
 
     const fn new() -> Self {
         Self {
-            _brand: PhantomData,
-            _tag: PhantomData,
+            _brand: marker::PhantomData,
+            _tag: marker::PhantomData,
         }
     }
 }
@@ -56,9 +56,9 @@ impl<Tag> Token<'_, Tag> {
 impl<'id, T, Tag> Branded<'id, T, Tag> {
     pub const fn new(value: T) -> Self {
         Self {
-            value: UnsafeCell::new(value),
-            _brand: PhantomData,
-            _tag: PhantomData,
+            value: cell::UnsafeCell::new(value),
+            _brand: marker::PhantomData,
+            _tag: marker::PhantomData,
         }
     }
 
@@ -84,14 +84,14 @@ impl<'id, T, Tag> Branded<'id, T, Tag> {
     }
 
     pub fn borrow_pin_mut<'a>(
-        self: Pin<&'a Self>,
+        self: pin::Pin<&'a Self>,
         token: &'a mut Token<'id, Tag>,
-    ) -> Pin<&'a mut T> {
+    ) -> pin::Pin<&'a mut T> {
         let _ = token;
-        unsafe { Pin::new_unchecked(&mut *self.get_ref().value.get()) }
+        unsafe { pin::Pin::new_unchecked(&mut *self.get_ref().value.get()) }
     }
 
-    pub fn borrow_pin<'a>(self: Pin<&'a Self>, token: &'a Token<'id, Tag>) -> Pin<&'a T> {
-        unsafe { Pin::new_unchecked(self.get_ref().borrow(token)) }
+    pub fn borrow_pin<'a>(self: pin::Pin<&'a Self>, token: &'a Token<'id, Tag>) -> pin::Pin<&'a T> {
+        unsafe { pin::Pin::new_unchecked(self.get_ref().borrow(token)) }
     }
 }

@@ -1,24 +1,21 @@
-use std::{fmt, ops::Deref, str::Utf8Error};
+use std::{fmt, ops, str};
 
-use crate::buffer;
+use crate::buffer::storage::shared;
 
 #[repr(transparent)]
 #[derive(Clone, Eq, Hash, PartialEq)]
-pub struct Str(buffer::storage::shared::Shared);
+pub struct Str(shared::Shared);
 
 impl Str {
     pub const fn new() -> Self {
-        Self(buffer::storage::shared::Shared::new())
+        Self(shared::Shared::new())
     }
 
     pub const fn from_static(value: &'static str) -> Self {
-        Self(buffer::storage::shared::Shared::from_static(
-            value.as_bytes(),
-        ))
+        Self(shared::Shared::from_static(value.as_bytes()))
     }
 
-    pub fn from_utf8(value: buffer::storage::shared::Shared) -> Result<Self, Utf8Error> {
-        use std::str;
+    pub fn from_utf8(value: shared::Shared) -> Result<Self, str::Utf8Error> {
         str::from_utf8(value.as_slice())?;
         Ok(Self(value))
     }
@@ -41,23 +38,23 @@ impl Default for Str {
     }
 }
 
-impl TryFrom<buffer::storage::shared::Shared> for Str {
-    type Error = Utf8Error;
+impl TryFrom<shared::Shared> for Str {
+    type Error = str::Utf8Error;
 
-    fn try_from(value: buffer::storage::shared::Shared) -> Result<Self, Self::Error> {
+    fn try_from(value: shared::Shared) -> Result<Self, Self::Error> {
         Self::from_utf8(value)
     }
 }
 
 impl From<String> for Str {
     fn from(value: String) -> Self {
-        Self(buffer::storage::shared::Shared::from(value))
+        Self(shared::Shared::from(value))
     }
 }
 
 impl From<&str> for Str {
     fn from(value: &str) -> Self {
-        Self(buffer::storage::shared::Shared::from(value))
+        Self(shared::Shared::from(value))
     }
 }
 
@@ -73,7 +70,7 @@ impl AsRef<[u8]> for Str {
     }
 }
 
-impl Deref for Str {
+impl ops::Deref for Str {
     type Target = str;
 
     fn deref(&self) -> &str {

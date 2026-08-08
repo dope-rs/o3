@@ -1,4 +1,4 @@
-use std::{error::Error, fmt};
+use std::{error, fmt};
 
 use crate::buffer;
 
@@ -35,11 +35,11 @@ impl<E: fmt::Display> fmt::Display for BuildError<E> {
     }
 }
 
-impl<E> Error for BuildError<E>
+impl<E> error::Error for BuildError<E>
 where
-    E: Error + 'static,
+    E: error::Error + 'static,
 {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             Self::Capacity(error) => Some(error),
             Self::Build(error) => Some(error),

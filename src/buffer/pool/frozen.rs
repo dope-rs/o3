@@ -1,12 +1,12 @@
-use std::{marker::PhantomData, ptr::NonNull};
+use std::{marker, ptr};
 
 use crate::buffer::pool::core;
 
 pub struct Frozen {
-    pub(super) core: NonNull<core::Core>,
+    pub(super) core: ptr::NonNull<core::Core>,
     pub(super) index: u32,
     pub(super) len: u32,
-    pub(super) marker: PhantomData<*mut ()>,
+    pub(super) marker: marker::PhantomData<*mut ()>,
 }
 
 impl Frozen {
@@ -30,7 +30,7 @@ impl Clone for Frozen {
             core: self.core,
             index: self.index,
             len: self.len,
-            marker: PhantomData,
+            marker: marker::PhantomData,
         }
     }
 }

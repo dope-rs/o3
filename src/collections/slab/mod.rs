@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, marker::PhantomData, num::NonZeroU32};
+use std::{error, fmt, marker, num};
 
 mod cell;
 mod core;
@@ -25,7 +25,7 @@ pub struct Capacity(u32);
 /// A nonzero slot count representable by every dynamically allocated slab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct NonZeroCapacity(NonZeroU32);
+pub struct NonZeroCapacity(num::NonZeroU32);
 
 impl Capacity {
     pub const EMPTY: Self = Self(0);
@@ -43,7 +43,7 @@ impl Capacity {
 
     #[must_use]
     pub const fn nonzero(self) -> Option<NonZeroCapacity> {
-        match NonZeroU32::new(self.0) {
+        match num::NonZeroU32::new(self.0) {
             Some(capacity) => Some(NonZeroCapacity(capacity)),
             None => None,
         }
@@ -112,11 +112,11 @@ impl fmt::Display for CapacityError {
     }
 }
 
-impl Error for CapacityError {}
+impl error::Error for CapacityError {}
 
 pub struct Slab<T, Tag = (), const MAX: u32 = { u32::MAX }> {
     core: core::Core<T, key::Generation<MAX>, core::Exclusive>,
-    tag: PhantomData<fn() -> Tag>,
+    tag: marker::PhantomData<fn() -> Tag>,
 }
 
 impl<T, Tag, const MAX: u32> Slab<T, Tag, MAX> {
@@ -124,7 +124,7 @@ impl<T, Tag, const MAX: u32> Slab<T, Tag, MAX> {
         use core::Core;
         Self {
             core: Core::with_capacity(capacity),
-            tag: PhantomData,
+            tag: marker::PhantomData,
         }
     }
 

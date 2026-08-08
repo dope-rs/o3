@@ -1,15 +1,15 @@
-use std::{
-    fmt,
-    hash::{Hash, Hasher},
-    ops::{Deref, DerefMut},
-};
+use std::{fmt, hash, ops};
 
-use crate::buffer::{self, storage};
+use crate::buffer::{
+    self,
+    storage::{self, raw, shared},
+    write,
+};
 
 /// A uniquely owned, non-growing byte allocation. `CAP == 0` selects an exact
 /// runtime capacity; a nonzero `CAP` fixes it in the type without added storage.
 pub struct Owned<const CAP: u32 = 0> {
-    storage: storage::raw::AllocationMut,
+    storage: raw::AllocationMut,
     len: u32,
 }
 
@@ -22,7 +22,7 @@ impl Owned {
 
     pub fn try_build_exact<E>(
         capacity: usize,
-        build: impl FnOnce(&mut buffer::write::SpareWriter<'_>) -> Result<(), E>,
+        build: impl FnOnce(&mut write::SpareWriter<'_>) -> Result<(), E>,
     ) -> Result<Self, storage::BuildError<E>> {
         use crate::buffer::storage::BuildError;
         let mut value = Self::try_with_capacity(capacity).map_err(BuildError::Capacity)?;
@@ -136,12 +136,12 @@ impl<const CAP: u32> Owned<CAP> {
         Ok(())
     }
 
-    pub fn spare_writer(&mut self) -> buffer::write::SpareWriter<'_> {
+    pub fn spare_writer(&mut self) -> write::SpareWriter<'_> {
         self.storage.spare_writer(&mut self.len)
     }
 
     #[must_use]
-    pub fn freeze(self) -> storage::shared::Shared {
+    pub fn freeze(self) -> shared::Shared {
         use crate::buffer::storage::shared::Shared;
         let Self { storage, len } = self;
         if len == 0 {
@@ -193,7 +193,7 @@ impl<const CAP: u32> AsMut<[u8]> for Owned<CAP> {
     }
 }
 
-impl<const CAP: u32> Deref for Owned<CAP> {
+impl<const CAP: u32> ops::Deref for Owned<CAP> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -201,7 +201,7 @@ impl<const CAP: u32> Deref for Owned<CAP> {
     }
 }
 
-impl<const CAP: u32> DerefMut for Owned<CAP> {
+impl<const CAP: u32> ops::DerefMut for Owned<CAP> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.as_mut_slice()
     }
@@ -215,8 +215,8 @@ impl<const CAP: u32, const OTHER: u32> PartialEq<Owned<OTHER>> for Owned<CAP> {
 
 impl<const CAP: u32> Eq for Owned<CAP> {}
 
-impl<const CAP: u32> Hash for Owned<CAP> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
+impl<const CAP: u32> hash::Hash for Owned<CAP> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.as_slice().hash(state);
     }
 }

@@ -1,4 +1,4 @@
-use std::{alloc, num::NonZeroU32};
+use std::{alloc, num};
 
 use crate::buffer::pool::{self, core};
 
@@ -6,7 +6,7 @@ use crate::buffer::pool::{self, core};
 pub struct Layout {
     allocation: alloc::Layout,
     slots: u32,
-    capacity: NonZeroU32,
+    capacity: num::NonZeroU32,
     data_offset: usize,
 }
 
@@ -16,7 +16,7 @@ impl Layout {
         let slots = u32::try_from(slots).map_err(|_| LayoutError::SlotOverflow)?;
         let capacity = u32::try_from(capacity)
             .ok()
-            .and_then(NonZeroU32::new)
+            .and_then(num::NonZeroU32::new)
             .ok_or(if capacity == 0 {
                 LayoutError::ZeroCapacity
             } else {
@@ -82,7 +82,7 @@ impl Layout {
         self.allocation
     }
 
-    pub(super) const fn capacity(self) -> NonZeroU32 {
+    pub(super) const fn capacity(self) -> num::NonZeroU32 {
         self.capacity
     }
 

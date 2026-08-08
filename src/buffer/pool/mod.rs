@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, marker::PhantomData, ptr::NonNull};
+use std::{error, fmt, marker, ptr};
 
 use crate::buffer;
 
@@ -33,7 +33,7 @@ impl fmt::Display for LayoutError {
     }
 }
 
-impl Error for LayoutError {}
+impl error::Error for LayoutError {}
 
 /// Selects whether a pool capacity is fixed in its type or stored in its layout.
 ///
@@ -43,15 +43,15 @@ pub trait Capacity: buffer::Seal {}
 
 #[repr(transparent)]
 pub struct Pool<S: state::State = state::Uninitialized, C: Capacity = RuntimeCapacity> {
-    core: NonNull<core::Core>,
-    marker: PhantomData<(S, C, *mut ())>,
+    core: ptr::NonNull<core::Core>,
+    marker: marker::PhantomData<(S, C, *mut ())>,
 }
 
 impl<S: state::State> Pool<S, RuntimeCapacity> {
     pub fn from_layout(layout: Layout) -> Self {
         Self {
             core: core::Core::allocate::<S>(layout),
-            marker: PhantomData,
+            marker: marker::PhantomData,
         }
     }
 
@@ -67,7 +67,7 @@ impl<S: state::State, C: Capacity> Pool<S, C> {
             core: self.core,
             index,
             len: 0,
-            marker: PhantomData,
+            marker: marker::PhantomData,
         })
     }
 
@@ -85,7 +85,7 @@ impl<S: state::State, const CAP: u32> Pool<S, FixedCapacity<CAP>> {
         let layout = Layout::new(slots, CAP as usize)?;
         Ok(Self {
             core: core::Core::allocate::<S>(layout),
-            marker: PhantomData,
+            marker: marker::PhantomData,
         })
     }
 
@@ -94,7 +94,7 @@ impl<S: state::State, const CAP: u32> Pool<S, FixedCapacity<CAP>> {
         let layout = Layout::fixed_capacity::<SLOTS, CAP>();
         Self {
             core: core::Core::allocate::<S>(layout),
-            marker: PhantomData,
+            marker: marker::PhantomData,
         }
     }
 }
@@ -111,7 +111,7 @@ impl<S: state::State, C: Capacity> Clone for Pool<S, C> {
         core::Core::retain(self.core);
         Self {
             core: self.core,
-            marker: PhantomData,
+            marker: marker::PhantomData,
         }
     }
 }

@@ -1,30 +1,30 @@
-use std::{array, cell::Cell};
+use std::{array, cell};
 
 /// Shared surplus for independently stored fair-lane states.
 pub struct Pool<const N: usize = 1> {
-    shared: Cell<[usize; N]>,
+    shared: cell::Cell<[usize; N]>,
     _thread: crate::ThreadBound,
 }
 
 /// One lane's protected reserve and current holdings.
 pub struct State<const N: usize = 1> {
     reserve: [usize; N],
-    held: Cell<[usize; N]>,
+    held: cell::Cell<[usize; N]>,
 }
 
 /// A borrowed lane view that updates all resource dimensions atomically.
 #[derive(Clone, Copy)]
 pub struct Lane<'a, const N: usize = 1> {
-    shared: &'a Cell<[usize; N]>,
-    held: &'a Cell<[usize; N]>,
+    shared: &'a cell::Cell<[usize; N]>,
+    held: &'a cell::Cell<[usize; N]>,
     reserve: [usize; N],
 }
 
 /// Owned fair accounting with one uniform protected reserve per lane.
 pub struct Credits<const N: usize = 1> {
-    used: Cell<[usize; N]>,
+    used: cell::Cell<[usize; N]>,
     pool: Pool<N>,
-    held: Box<[Cell<[usize; N]>]>,
+    held: Box<[cell::Cell<[usize; N]>]>,
     reserve: [usize; N],
 }
 
@@ -33,7 +33,7 @@ impl<const N: usize> Pool<N> {
         use crate::ThreadBound;
         assert!(N > 0, "credit dimension count must be positive");
         Self {
-            shared: Cell::new(shared),
+            shared: cell::Cell::new(shared),
             _thread: ThreadBound::NEW,
         }
     }
@@ -55,7 +55,7 @@ impl<const N: usize> State<N> {
     pub fn new(reserve: [usize; N]) -> Self {
         Self {
             reserve,
-            held: Cell::new([0; N]),
+            held: cell::Cell::new([0; N]),
         }
     }
 
@@ -154,11 +154,11 @@ impl<const N: usize> Credits<N> {
             reserve[dimension] * lane_count
         });
         Self {
-            used: Cell::new([0; N]),
+            used: cell::Cell::new([0; N]),
             pool: Pool::new(array::from_fn(|dimension| {
                 capacity[dimension] - reserved[dimension]
             })),
-            held: (0..lane_count).map(|_| Cell::new([0; N])).collect(),
+            held: (0..lane_count).map(|_| cell::Cell::new([0; N])).collect(),
             reserve,
         }
     }
@@ -206,7 +206,7 @@ impl<const N: usize> Credits<N> {
     }
 
     fn held_all_by(&self, lane: usize) -> Option<[usize; N]> {
-        self.held.get(lane).map(Cell::get)
+        self.held.get(lane).map(cell::Cell::get)
     }
 
     fn reserved_all_for(&self, lane: usize) -> Option<[usize; N]> {

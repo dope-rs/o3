@@ -1,15 +1,11 @@
-use std::{
-    cell::{Cell, UnsafeCell},
-    mem::MaybeUninit,
-    ops::Deref,
-};
+use std::{cell, mem, ops};
 
 const NONE: u32 = u32::MAX;
 
 struct Node<T> {
-    value: UnsafeCell<MaybeUninit<T>>,
-    prev: Cell<u32>,
-    next: Cell<u32>,
+    value: cell::UnsafeCell<mem::MaybeUninit<T>>,
+    prev: cell::Cell<u32>,
+    next: cell::Cell<u32>,
 }
 
 struct Nodes<T>(Box<[Node<T>]>);
@@ -48,7 +44,7 @@ impl<T> Nodes<T> {
     }
 }
 
-impl<T> Deref for Nodes<T> {
+impl<T> ops::Deref for Nodes<T> {
     type Target = [Node<T>];
 
     fn deref(&self) -> &Self::Target {
@@ -59,9 +55,9 @@ impl<T> Deref for Nodes<T> {
 impl<T> Node<T> {
     fn vacant(index: u32) -> Self {
         Self {
-            value: UnsafeCell::new(MaybeUninit::uninit()),
-            prev: Cell::new(index),
-            next: Cell::new(NONE),
+            value: cell::UnsafeCell::new(mem::MaybeUninit::uninit()),
+            prev: cell::Cell::new(index),
+            next: cell::Cell::new(NONE),
         }
     }
 }
@@ -91,7 +87,7 @@ impl State {
 
 struct Core<T> {
     entries: Nodes<T>,
-    state: Cell<State>,
+    state: cell::Cell<State>,
     _thread: crate::ThreadBound,
 }
 
@@ -100,7 +96,7 @@ impl<T> Core<T> {
         use crate::ThreadBound;
         Self {
             entries: Nodes::with_capacity(capacity),
-            state: Cell::new(State::EMPTY),
+            state: cell::Cell::new(State::EMPTY),
             _thread: ThreadBound::NEW,
         }
     }

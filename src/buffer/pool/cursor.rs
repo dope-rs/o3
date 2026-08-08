@@ -1,13 +1,17 @@
-use crate::buffer::{self, bytes, pool};
+use crate::buffer::{
+    self, bytes,
+    pool::{self, state},
+    write,
+};
 
 /// A pooled byte cursor over one logical readable range.
 pub struct Cursor<C: pool::Capacity = pool::RuntimeCapacity> {
-    pub(super) lease: pool::Lease<pool::state::Uninitialized, C>,
+    pub(super) lease: pool::Lease<state::Uninitialized, C>,
     pub(super) head: u32,
 }
 
 impl<C: pool::Capacity> Cursor<C> {
-    pub(super) const fn new(lease: pool::Lease<pool::state::Uninitialized, C>) -> Self {
+    pub(super) const fn new(lease: pool::Lease<state::Uninitialized, C>) -> Self {
         Self { lease, head: 0 }
     }
     #[must_use]
@@ -88,7 +92,7 @@ impl<C: pool::Capacity> Cursor<C> {
     }
 
     /// Returns a contiguous writer after compacting the readable range.
-    pub fn spare_writer(&mut self) -> buffer::write::SpareWriter<'_> {
+    pub fn spare_writer(&mut self) -> write::SpareWriter<'_> {
         self.compact();
         self.lease.spare_writer()
     }

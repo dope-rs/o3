@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell;
 
 mod bitmap;
 
@@ -33,11 +33,11 @@ impl Side {
 pub struct Set {
     words: bitmap::Words,
     summaries: [bitmap::Bitmap; 2],
-    capacity: Cell<usize>,
-    len: [Cell<usize>; 2],
-    cursor: [Cell<usize>; 2],
-    active: Cell<Side>,
-    draining: Cell<bool>,
+    capacity: cell::Cell<usize>,
+    len: [cell::Cell<usize>; 2],
+    cursor: [cell::Cell<usize>; 2],
+    active: cell::Cell<Side>,
+    draining: cell::Cell<bool>,
     _thread: crate::ThreadBound,
 }
 
@@ -54,11 +54,11 @@ impl Set {
                 Bitmap::with_capacity(word_count),
                 Bitmap::with_capacity(word_count),
             ],
-            capacity: Cell::new(capacity),
-            len: [Cell::new(0), Cell::new(0)],
-            cursor: [Cell::new(0), Cell::new(0)],
-            active: Cell::new(Side::A),
-            draining: Cell::new(false),
+            capacity: cell::Cell::new(capacity),
+            len: [cell::Cell::new(0), cell::Cell::new(0)],
+            cursor: [cell::Cell::new(0), cell::Cell::new(0)],
+            active: cell::Cell::new(Side::A),
+            draining: cell::Cell::new(false),
             _thread: ThreadBound::NEW,
         }
     }
@@ -244,7 +244,7 @@ impl Set {
         self.cursor[source_index].set(0);
     }
 
-    fn word(&self, index: usize) -> &Cell<usize> {
+    fn word(&self, index: usize) -> &cell::Cell<usize> {
         let words = self.words.as_slice();
         debug_assert!(index < words.len());
         unsafe { words.get_unchecked(index) }
