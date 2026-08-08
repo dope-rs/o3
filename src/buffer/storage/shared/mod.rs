@@ -7,13 +7,9 @@ use std::{
     slice::from_raw_parts,
 };
 
-pub mod strings;
+use crate::buffer::{self, RangeExt as _, storage};
 
-use crate::buffer::{
-    PrefixConsumer, PrefixLength, PrefixProof, RangeExt,
-    owned::Owned,
-    storage::{Owner, StorageSpan},
-};
+pub mod strings;
 
 const VEC_ZERO_COPY_MIN: usize = 512;
 
@@ -22,7 +18,7 @@ const VEC_ZERO_COPY_MIN: usize = 512;
 pub struct Shared {
     ptr: *const u8,
     len: usize,
-    owner: Owner,
+    owner: storage::raw::Owner,
 }
 
 impl Shared {
@@ -31,7 +27,7 @@ impl Shared {
         Self {
             ptr: NonNull::<u8>::dangling().as_ptr(),
             len: 0,
-            owner: Owner::NONE,
+            owner: storage::raw::Owner::NONE,
         }
     }
 
@@ -40,16 +36,16 @@ impl Shared {
         Self {
             ptr: s.as_ptr(),
             len: s.len(),
-            owner: Owner::NONE,
+            owner: storage::raw::Owner::NONE,
         }
     }
 
-    pub(super) fn from_storage_span(span: StorageSpan) -> Self {
-        let (storage, ptr, len) = span.into_parts();
+    pub(in crate::buffer) fn from_span(span: storage::raw::Span) -> Self {
+        let (allocation, ptr, len) = span.into_parts();
         Self {
             ptr,
             len,
-            owner: Owner::from_storage(storage),
+            owner: storage::raw::Owner::from_allocation(allocation),
         }
     }
 
@@ -70,17 +66,18 @@ impl Shared {
         Self {
             ptr,
             len,
-            owner: Owner::from_vec(buf),
+            owner: storage::raw::Owner::from_vec(buf),
         }
     }
 
     #[must_use]
     pub fn copy_from_slice(s: &[u8]) -> Self {
+        use crate::buffer::storage::raw::Span;
         if s.is_empty() {
             return Self::new();
         }
-        match StorageSpan::copy_from_slice(s) {
-            Some(span) => Self::from_storage_span(span),
+        match Span::copy_from_slice(s) {
+            Some(span) => Self::from_span(span),
             None => Self::copy_large(s),
         }
     }
@@ -128,7 +125,7 @@ impl Shared {
         })
     }
 
-    pub(super) fn try_slice_in_place(&mut self, range: Range<usize>) -> bool {
+    pub(in crate::buffer) fn try_slice_in_place(&mut self, range: Range<usize>) -> bool {
         if !range.is_within(self.len) {
             return false;
         }
@@ -146,7 +143,7 @@ impl Shared {
         self.try_slice_in_place(n..len)
     }
 
-    pub(super) fn consume_valid(&mut self, amount: usize) {
+    pub(in crate::buffer) fn consume_valid(&mut self, amount: usize) {
         debug_assert!(amount <= self.len);
         if amount == self.len {
             self.clear();
@@ -166,20 +163,22 @@ impl Default for Shared {
     }
 }
 
+impl buffer::Seal for Shared {}
+
 impl AsRef<[u8]> for Shared {
     fn as_ref(&self) -> &[u8] {
         self.as_slice()
     }
 }
 
-impl PrefixLength for Shared {
+impl buffer::PrefixLength for Shared {
     fn prefix_len(&self) -> usize {
         self.len()
     }
 }
 
-impl PrefixConsumer for Shared {
-    fn consume_validated_prefix(&mut self, proof: PrefixProof) {
+impl buffer::PrefixConsumer for Shared {
+    fn consume_validated_prefix(&mut self, proof: buffer::PrefixProof) {
         self.consume_valid(proof.amount());
     }
 }
@@ -210,8 +209,8 @@ impl From<Vec<u8>> for Shared {
     }
 }
 
-impl<const CAP: u32> From<Owned<CAP>> for Shared {
-    fn from(value: Owned<CAP>) -> Self {
+impl<const CAP: u32> From<storage::Owned<CAP>> for Shared {
+    fn from(value: storage::Owned<CAP>) -> Self {
         value.freeze()
     }
 }

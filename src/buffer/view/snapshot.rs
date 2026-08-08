@@ -1,11 +1,7 @@
-use crate::buffer::{
-    CapacityError, PrefixConsumer, PrefixLength, PrefixProof,
-    shared::Shared,
-    storage::{StorageMut, StorageSpan},
-};
+use crate::buffer::{self, storage};
 
 pub struct Snapshot<const MAX_CAPACITY: usize> {
-    buf: StorageMut,
+    buf: storage::raw::AllocationMut,
     cap: u32,
     head: u32,
     tail: u32,
@@ -21,7 +17,7 @@ impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
     pub fn new() -> Self {
         let () = Self::VALID;
         Self {
-            buf: StorageMut::with_capacity_u32(0),
+            buf: storage::raw::AllocationMut::with_capacity_u32(0),
             cap: 0,
             head: 0,
             tail: 0,
@@ -36,7 +32,7 @@ impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
 
     fn with_valid_capacity(capacity: usize) -> Self {
         Self {
-            buf: StorageMut::with_capacity_u32(capacity as u32),
+            buf: storage::raw::AllocationMut::with_capacity_u32(capacity as u32),
             cap: capacity as u32,
             head: 0,
             tail: 0,
@@ -61,22 +57,22 @@ impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
         self.realloc(new_cap);
     }
 
-    fn required(&self, additional: usize) -> Result<usize, CapacityError> {
+    fn required(&self, additional: usize) -> Result<usize, buffer::CapacityError> {
         let required = self
             .len()
             .checked_add(additional)
-            .ok_or_else(|| CapacityError::new(usize::MAX, MAX_CAPACITY))?;
+            .ok_or_else(|| buffer::CapacityError::new(usize::MAX, MAX_CAPACITY))?;
         if required > MAX_CAPACITY {
-            return Err(CapacityError::new(required, MAX_CAPACITY));
+            return Err(buffer::CapacityError::new(required, MAX_CAPACITY));
         }
         Ok(required)
     }
 
     fn realloc(&mut self, new_cap: usize) {
         let unparsed = (self.head - self.tail) as usize;
-        let mut fresh = StorageMut::with_capacity_u32(new_cap as u32);
+        let mut fresh = storage::raw::AllocationMut::with_capacity_u32(new_cap as u32);
         if unparsed > 0 {
-            fresh.copy_from_storage(0, &self.buf, self.tail as usize, unparsed);
+            fresh.copy_from_allocation(0, &self.buf, self.tail as usize, unparsed);
         }
         self.buf = fresh;
         self.cap = new_cap as u32;
@@ -84,7 +80,7 @@ impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
         self.tail = 0;
     }
 
-    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), CapacityError> {
+    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), buffer::CapacityError> {
         if (self.cap - self.head) as usize >= src.len() {
             self.append(src);
             return Ok(());
@@ -102,9 +98,9 @@ impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
         Ok(())
     }
 
-    pub fn try_reserve_to(&mut self, target: usize) -> Result<(), CapacityError> {
+    pub fn try_reserve_to(&mut self, target: usize) -> Result<(), buffer::CapacityError> {
         if target > MAX_CAPACITY {
-            return Err(CapacityError::new(target, MAX_CAPACITY));
+            return Err(buffer::CapacityError::new(target, MAX_CAPACITY));
         }
         if (self.cap as usize) >= target {
             return Ok(());
@@ -113,15 +109,19 @@ impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
         Ok(())
     }
 
-    pub fn snapshot(&self) -> Option<Shared> {
+    pub fn snapshot(&self) -> Option<buffer::storage::shared::Shared> {
+        use crate::buffer::storage::shared::Shared;
         let t = self.tail;
         let h = self.head;
         if h <= t {
             return None;
         }
         // SAFETY: Snapshot maintains tail <= head <= buf.capacity().
-        let span = unsafe { StorageSpan::new_unchecked(self.buf.share(), t, h - t) };
-        Some(Shared::from_storage_span(span))
+        let span = unsafe {
+            use crate::buffer::storage::raw::Span;
+            Span::new_unchecked(self.buf.share(), t, h - t)
+        };
+        Some(Shared::from_span(span))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -164,14 +164,14 @@ impl<const MAX_CAPACITY: usize> Default for Snapshot<MAX_CAPACITY> {
     }
 }
 
-impl<const MAX_CAPACITY: usize> PrefixLength for Snapshot<MAX_CAPACITY> {
+impl<const MAX_CAPACITY: usize> buffer::PrefixLength for Snapshot<MAX_CAPACITY> {
     fn prefix_len(&self) -> usize {
         self.len()
     }
 }
 
-impl<const MAX_CAPACITY: usize> PrefixConsumer for Snapshot<MAX_CAPACITY> {
-    fn consume_validated_prefix(&mut self, proof: PrefixProof) {
+impl<const MAX_CAPACITY: usize> buffer::PrefixConsumer for Snapshot<MAX_CAPACITY> {
+    fn consume_validated_prefix(&mut self, proof: buffer::PrefixProof) {
         self.consume_valid(proof.amount());
     }
 }

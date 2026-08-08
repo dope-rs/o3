@@ -1,10 +1,6 @@
-use std::cell::{Cell, UnsafeCell};
-
-use crate::ThreadBound;
+use std::cell::Cell;
 
 mod bitmap;
-
-use bitmap::{Bitmap, Words};
 
 const WORD_BITS: usize = usize::BITS as usize;
 const ENTRIES_PER_WORD: usize = WORD_BITS / 2;
@@ -35,21 +31,25 @@ impl Side {
 ///
 /// Duplicates coalesce; reinserting a drained index defers it to the next batch.
 pub struct Set {
-    words: UnsafeCell<Words>,
-    summaries: [Bitmap; 2],
+    words: bitmap::Words,
+    summaries: [bitmap::Bitmap; 2],
     capacity: Cell<usize>,
     len: [Cell<usize>; 2],
     cursor: [Cell<usize>; 2],
     active: Cell<Side>,
     draining: Cell<bool>,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 impl Set {
     pub fn with_capacity(capacity: usize) -> Self {
+        use crate::{
+            ThreadBound,
+            collections::batch::bitmap::{Bitmap, Words},
+        };
         let word_count = capacity.div_ceil(ENTRIES_PER_WORD);
         Self {
-            words: UnsafeCell::new(Words::zeroed(word_count)),
+            words: Words::zeroed(word_count),
             summaries: [
                 Bitmap::with_capacity(word_count),
                 Bitmap::with_capacity(word_count),
@@ -245,7 +245,7 @@ impl Set {
     }
 
     fn word(&self, index: usize) -> &Cell<usize> {
-        let words = unsafe { &*self.words.get() }.as_slice();
+        let words = self.words.as_slice();
         debug_assert!(index < words.len());
         unsafe { words.get_unchecked(index) }
     }

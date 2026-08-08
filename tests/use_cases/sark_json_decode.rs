@@ -1,6 +1,10 @@
 #![forbid(unsafe_code)]
 
-use o3::buffer::{CapacityError, ExactBuildError, Owned, SpareWriter};
+use o3::buffer::{
+    CapacityError,
+    storage::{BuildError, Owned},
+    write::SpareWriter,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct JsonEscapeError;
@@ -8,7 +12,7 @@ struct JsonEscapeError;
 fn decode_sark_json_escapes(
     raw: &[u8],
     decoded_len: usize,
-) -> Result<Owned, ExactBuildError<JsonEscapeError>> {
+) -> Result<Owned, BuildError<JsonEscapeError>> {
     Owned::try_build_exact(decoded_len, |out| decode_into(raw, out))
 }
 
@@ -61,7 +65,7 @@ fn sark_json_escape_decode_rejects_an_inaccurate_length_without_exposing_spare_s
 
     assert_eq!(
         error,
-        ExactBuildError::LengthMismatch {
+        BuildError::LengthMismatch {
             expected: 4,
             actual: 3,
         }

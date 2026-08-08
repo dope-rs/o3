@@ -3,16 +3,13 @@ use std::{
     ptr::{addr_of_mut, copy_nonoverlapping},
 };
 
-use crate::{
-    ThreadBound,
-    buffer::{CapacityError, PrefixConsumer, PrefixLength, PrefixProof, compact, consume},
-};
+use crate::buffer;
 
 pub struct Inline<const CAP: usize> {
     buf: [MaybeUninit<u8>; CAP],
     head: u32,
     tail: u32,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 impl<const CAP: usize> Default for Inline<CAP> {
@@ -22,7 +19,7 @@ impl<const CAP: usize> Default for Inline<CAP> {
             buf: [MaybeUninit::uninit(); CAP],
             head: 0,
             tail: 0,
-            _thread: ThreadBound::NEW,
+            _thread: Default::default(),
         }
     }
 }
@@ -38,7 +35,7 @@ impl<const CAP: usize> Inline<CAP> {
         unsafe {
             addr_of_mut!((*ptr).head).write(0);
             addr_of_mut!((*ptr).tail).write(0);
-            addr_of_mut!((*ptr)._thread).write(ThreadBound::NEW);
+            addr_of_mut!((*ptr)._thread).write(Default::default());
             value.assume_init()
         }
     }
@@ -73,7 +70,8 @@ impl<const CAP: usize> Inline<CAP> {
         }
     }
 
-    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), CapacityError> {
+    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), buffer::CapacityError> {
+        use crate::buffer::CapacityError;
         let need = src.len();
         if need == 0 {
             return Ok(());
@@ -99,22 +97,28 @@ impl<const CAP: usize> Inline<CAP> {
 
     fn consume_valid(&mut self, amount: usize) {
         debug_assert!(amount <= self.len());
-        unsafe { consume(&mut self.head, &mut self.tail, amount) };
+        unsafe {
+            use crate::buffer::consume;
+            consume(&mut self.head, &mut self.tail, amount)
+        };
     }
     #[cold]
     fn compact(&mut self) {
-        unsafe { compact(self.buf.as_mut_ptr(), &mut self.head, &mut self.tail) };
+        unsafe {
+            use crate::buffer::compact;
+            compact(self.buf.as_mut_ptr(), &mut self.head, &mut self.tail)
+        };
     }
 }
 
-impl<const CAP: usize> PrefixLength for Inline<CAP> {
+impl<const CAP: usize> buffer::PrefixLength for Inline<CAP> {
     fn prefix_len(&self) -> usize {
         self.len()
     }
 }
 
-impl<const CAP: usize> PrefixConsumer for Inline<CAP> {
-    fn consume_validated_prefix(&mut self, proof: PrefixProof) {
+impl<const CAP: usize> buffer::PrefixConsumer for Inline<CAP> {
+    fn consume_validated_prefix(&mut self, proof: buffer::PrefixProof) {
         self.consume_valid(proof.amount());
     }
 }

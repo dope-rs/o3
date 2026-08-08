@@ -4,7 +4,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
 };
 
-use o3::collections::{LeaseSlab, SlabCapacity, SlabLease};
+use o3::collections::slab::{Capacity, lease};
 
 use crate::support::PanicDrop;
 
@@ -14,9 +14,9 @@ fn panic_value() -> u8 {
 
 #[test]
 fn leases_are_one_word_and_borrow_the_slab() {
-    assert_eq!(size_of::<SlabLease<'static, u64>>(), size_of::<usize>());
+    assert_eq!(size_of::<lease::Lease<'static, u64>>(), size_of::<usize>());
 
-    let slab = LeaseSlab::with_capacity(SlabCapacity::new(1));
+    let slab = lease::Pool::with_capacity(Capacity::new(1));
     let mut lease = slab.vacant_entry().expect("vacant slot").insert(7u64);
     assert_eq!(*lease, 7);
     *lease = 9;
@@ -25,7 +25,7 @@ fn leases_are_one_word_and_borrow_the_slab() {
 
 #[test]
 fn cancelled_vacancies_and_dropped_leases_recycle_slots() {
-    let slab = LeaseSlab::with_capacity(SlabCapacity::new(1));
+    let slab = lease::Pool::with_capacity(Capacity::new(1));
     {
         let _entry = slab.vacant_entry().expect("vacant slot");
     }
@@ -48,7 +48,7 @@ fn cancelled_vacancies_and_dropped_leases_recycle_slots() {
 fn panicking_value_drop_still_reclaims_the_slot() {
     let drops = Cell::new(0);
     let panic_once = Cell::new(true);
-    let slab = LeaseSlab::with_capacity(SlabCapacity::new(1));
+    let slab = lease::Pool::with_capacity(Capacity::new(1));
     let lease = slab
         .vacant_entry()
         .expect("panic lease")
@@ -70,13 +70,13 @@ fn panicking_value_drop_still_reclaims_the_slot() {
 
 #[test]
 fn zero_capacity_is_permanently_full() {
-    let slab = LeaseSlab::<u8>::with_capacity(SlabCapacity::EMPTY);
+    let slab = lease::Pool::<u8>::with_capacity(Capacity::EMPTY);
     assert!(slab.vacant_entry().is_none());
 }
 
 #[test]
 fn panicking_construction_cancels_the_vacancy() {
-    let slab = LeaseSlab::<u8>::with_capacity(SlabCapacity::new(1));
+    let slab = lease::Pool::<u8>::with_capacity(Capacity::new(1));
     let caught = catch_unwind(AssertUnwindSafe(|| {
         let entry = slab.vacant_entry().expect("vacant slot");
         entry.insert(panic_value());
@@ -97,7 +97,7 @@ fn forgotten_lease_value_is_dropped_with_the_slab() {
 
     let drops = Cell::new(0);
     {
-        let slab = LeaseSlab::with_capacity(SlabCapacity::new(1));
+        let slab = lease::Pool::with_capacity(Capacity::new(1));
         let lease = slab
             .vacant_entry()
             .expect("vacant slot")

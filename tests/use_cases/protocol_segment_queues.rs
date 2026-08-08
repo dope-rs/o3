@@ -1,4 +1,7 @@
-use o3::buffer::{Bytes, Retained, queue::Segments};
+use o3::buffer::{
+    bytes::{Bytes, Retained},
+    queue::Segments,
+};
 
 #[test]
 fn protocol_queues_share_ranges_without_erasing_segment_ownership() {

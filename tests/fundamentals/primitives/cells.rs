@@ -1,28 +1,28 @@
-use std::pin::pin;
-
 use o3::{
     buffer::{
-        BLOCK_CAPACITY, Cursor, FixedPoolCapacity, Layout, Pool, PoolLayoutError, PrefixConsumer,
-        Shared, SharedStr, Uninitialized,
+        BLOCK_CAPACITY, PrefixConsumer,
+        pool::{Cursor, FixedCapacity, Layout, LayoutError, Pool, state::Uninitialized},
+        storage::shared::{Shared, strings::Str},
     },
-    cell::{Brand, BrandToken, Region},
+    cell::branded::{Brand, BrandToken, Region},
     mem::{
         budget::Bytes,
         fair::{Credits, State},
     },
 };
 
-type FixedPool = Pool<Uninitialized, FixedPoolCapacity<BLOCK_CAPACITY>>;
-type FixedLease = Cursor<FixedPoolCapacity<BLOCK_CAPACITY>>;
+type FixedPool = Pool<Uninitialized, FixedCapacity<BLOCK_CAPACITY>>;
+type FixedLease = Cursor<FixedCapacity<BLOCK_CAPACITY>>;
 const FIXED_CAPACITY: usize = BLOCK_CAPACITY as usize;
 
-#[cfg(target_pointer_width = "64")]
 #[test]
 fn fixed_pool_capacity_adds_no_runtime_state() {
-    assert_eq!(size_of::<Pool>(), 8);
-    assert_eq!(size_of::<FixedPool>(), 8);
-    assert_eq!(size_of::<Cursor>(), 24);
-    assert_eq!(size_of::<FixedLease>(), 24);
+    if usize::BITS == 64 {
+        assert_eq!(size_of::<Pool>(), 8);
+        assert_eq!(size_of::<FixedPool>(), 8);
+        assert_eq!(size_of::<Cursor>(), 24);
+        assert_eq!(size_of::<FixedLease>(), 24);
+    }
 }
 
 #[test]
@@ -50,19 +50,19 @@ fn pooled_buffers_enforce_capacity_and_recycle_leases() {
 fn shared_str_validates_utf8_without_copying() {
     let shared = Shared::from(String::from("hello"));
     let ptr = shared.as_ptr();
-    let text = SharedStr::from_utf8(shared).unwrap();
+    let text = Str::from_utf8(shared).unwrap();
     let clone = text.clone();
     assert_eq!(text.as_str(), "hello");
     assert_eq!(clone.as_bytes(), b"hello");
     assert_eq!(text.as_bytes().as_ptr(), ptr);
     assert_eq!(clone.as_bytes().as_ptr(), ptr);
-    assert!(SharedStr::from_utf8(Shared::from(vec![0xff])).is_err());
+    assert!(Str::from_utf8(Shared::from(vec![0xff])).is_err());
 }
 
 #[test]
 fn byte_budget_returns_capacity_when_a_lease_drops() {
-    let budget = pin!(Bytes::new(4));
-    let handle = budget.as_ref().handle();
+    let budget = Bytes::new(4);
+    let handle = budget.handle();
     let lease = handle.try_acquire(3).unwrap();
     assert!(handle.try_acquire(2).is_none());
     drop(lease);
@@ -169,13 +169,10 @@ fn runtime_pool_uses_its_configured_slot_capacity() {
 
 #[test]
 fn runtime_pool_layout_rejects_only_invalid_allocation_shapes() {
-    assert!(matches!(
-        Layout::new(1, 0),
-        Err(PoolLayoutError::ZeroCapacity)
-    ));
+    assert!(matches!(Layout::new(1, 0), Err(LayoutError::ZeroCapacity)));
     assert!(matches!(
         Layout::new(u32::MAX as usize, u32::MAX as usize),
-        Err(PoolLayoutError::CapacityOverflow)
+        Err(LayoutError::CapacityOverflow)
     ));
 
     let empty = Layout::new(0, 1).expect("a zero-slot pool has a valid empty layout");

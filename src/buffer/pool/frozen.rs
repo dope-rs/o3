@@ -1,9 +1,9 @@
 use std::{marker::PhantomData, ptr::NonNull};
 
-use crate::buffer::pool::core::Core;
+use crate::buffer::pool::core;
 
 pub struct Frozen {
-    pub(super) core: NonNull<Core>,
+    pub(super) core: NonNull<core::Core>,
     pub(super) index: u32,
     pub(super) len: u32,
     pub(super) marker: PhantomData<*mut ()>,
@@ -19,13 +19,13 @@ impl Frozen {
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        Core::slice(self.core, self.index, self.len())
+        core::Core::slice(self.core, self.index, self.len())
     }
 }
 
 impl Clone for Frozen {
     fn clone(&self) -> Self {
-        Core::retain_slot(self.core, self.index);
+        core::Core::retain_slot(self.core, self.index);
         Self {
             core: self.core,
             index: self.index,
@@ -43,6 +43,6 @@ impl AsRef<[u8]> for Frozen {
 
 impl Drop for Frozen {
     fn drop(&mut self) {
-        Core::release_slot(self.core, self.index);
+        core::Core::release_slot(self.core, self.index);
     }
 }

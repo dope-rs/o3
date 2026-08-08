@@ -1,5 +1,3 @@
-use crate::ThreadBound;
-
 const NONE: u32 = u32::MAX;
 
 #[derive(Clone, Copy)]
@@ -17,11 +15,12 @@ pub struct Robin {
     links: Box<[Links]>,
     head: u32,
     len: usize,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 impl Robin {
     pub fn with_capacity(capacity: usize) -> Self {
+        use crate::ThreadBound;
         assert!(
             u32::try_from(capacity).is_ok(),
             "round-robin set capacity overflow"

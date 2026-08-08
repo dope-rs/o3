@@ -1,15 +1,6 @@
 use std::{marker::PhantomData, mem::MaybeUninit, pin::Pin};
 
-use crate::{
-    ThreadBound,
-    collections::{
-        ClearGuard,
-        slab::{
-            GenerationState, SlabCapacity,
-            key::{SlabGeneration, SlabKey, SlabKeyParts},
-        },
-    },
-};
+use crate::collections::slab::{self, GenerationState as _, key};
 
 const NONE: u32 = u32::MAX;
 
@@ -27,7 +18,7 @@ enum State {
 
 struct Slot<T, const MAX: u32> {
     value: MaybeUninit<T>,
-    generation: SlabGeneration<MAX>,
+    generation: key::Generation<MAX>,
     next: u32,
     state: State,
 }
@@ -36,7 +27,7 @@ impl<T, const MAX: u32> Slot<T, MAX> {
     fn new(index: usize, capacity: usize) -> Self {
         Self {
             value: MaybeUninit::uninit(),
-            generation: SlabGeneration::MIN,
+            generation: key::Generation::MIN,
             next: if index + 1 == capacity {
                 NONE
             } else {
@@ -71,7 +62,7 @@ struct Core<T, Tag, S: Slots<T, MAX>, const MAX: u32> {
     len: usize,
     value: PhantomData<fn(T)>,
     tag: PhantomData<fn() -> Tag>,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 struct Reclaim<T, Tag, S: Slots<T, MAX>, const MAX: u32> {
@@ -86,7 +77,7 @@ struct CoreVacantEntry<'a, T, Tag, S: Slots<T, MAX>, const MAX: u32> {
 }
 
 impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> CoreVacantEntry<'_, T, Tag, S, MAX> {
-    fn insert(self, value: T) -> SlabKey<Tag, MAX> {
+    fn insert(self, value: T) -> key::Key<Tag, MAX> {
         let slot = unsafe {
             self.core
                 .slots
@@ -99,7 +90,7 @@ impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> CoreVacantEntry<'_, T, Tag, S, MA
         slot.next = NONE;
         slot.state = State::Occupied;
         self.core.len += 1;
-        SlabKey::new(self.index, slot.generation)
+        key::Key::new(self.index, slot.generation)
     }
 }
 
@@ -120,7 +111,8 @@ impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Drop for Reclaim<T, Tag, S, MAX> 
 
 impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Core<T, Tag, S, MAX> {
     fn new(slots: S) -> Self {
-        let _ = SlabGeneration::<MAX>::MIN;
+        use crate::ThreadBound;
+        let _ = key::Generation::<MAX>::MIN;
         validate_capacity(slots.as_slice().len());
         let free = if slots.as_slice().is_empty() { NONE } else { 0 };
         Self {
@@ -133,7 +125,7 @@ impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Core<T, Tag, S, MAX> {
         }
     }
 
-    fn insert(&mut self, value: T) -> Result<SlabKey<Tag, MAX>, T> {
+    fn insert(&mut self, value: T) -> Result<key::Key<Tag, MAX>, T> {
         match self.vacant_entry() {
             Some(entry) => Ok(entry.insert(value)),
             None => Err(value),
@@ -145,16 +137,16 @@ impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Core<T, Tag, S, MAX> {
         (index != NONE).then_some(CoreVacantEntry { core: self, index })
     }
 
-    fn contains_parts(&self, parts: SlabKeyParts<MAX>) -> bool {
+    fn contains_parts(&self, parts: key::Parts<MAX>) -> bool {
         self.slot(parts).is_some()
     }
 
-    fn parts(&self, parts: SlabKeyParts<MAX>) -> Option<Pin<&T>> {
+    fn parts(&self, parts: key::Parts<MAX>) -> Option<Pin<&T>> {
         let slot = self.slot(parts)?;
         Some(unsafe { Pin::new_unchecked(slot.value.assume_init_ref()) })
     }
 
-    fn parts_mut(&mut self, parts: SlabKeyParts<MAX>) -> Option<Pin<&mut T>> {
+    fn parts_mut(&mut self, parts: key::Parts<MAX>) -> Option<Pin<&mut T>> {
         let slot = self.slots.as_mut_slice().get_mut(parts.index() as usize)?;
         if slot.state != State::Occupied || slot.generation != parts.generation() {
             return None;
@@ -182,7 +174,7 @@ impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Core<T, Tag, S, MAX> {
         reclaim.finish();
     }
 
-    fn remove_parts(&mut self, parts: SlabKeyParts<MAX>) -> bool {
+    fn remove_parts(&mut self, parts: key::Parts<MAX>) -> bool {
         let Some(slot) = self.slots.as_slice().get(parts.index() as usize) else {
             return false;
         };
@@ -193,7 +185,7 @@ impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Core<T, Tag, S, MAX> {
         true
     }
 
-    fn slot(&self, parts: SlabKeyParts<MAX>) -> Option<&Slot<T, MAX>> {
+    fn slot(&self, parts: key::Parts<MAX>) -> Option<&Slot<T, MAX>> {
         let slot = self.slots.as_slice().get(parts.index() as usize)?;
         (slot.state == State::Occupied && slot.generation == parts.generation()).then_some(slot)
     }
@@ -215,9 +207,9 @@ impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Core<T, Tag, S, MAX> {
         self.slots.as_slice().len()
     }
 
-    fn key(&self, index: u32) -> Option<SlabKey<Tag, MAX>> {
+    fn key(&self, index: u32) -> Option<key::Key<Tag, MAX>> {
         let slot = self.slots.as_slice().get(index as usize)?;
-        (slot.state == State::Occupied).then(|| SlabKey::new(index, slot.generation))
+        (slot.state == State::Occupied).then(|| key::Key::new(index, slot.generation))
     }
 
     fn clear(&mut self) {
@@ -233,29 +225,30 @@ impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Core<T, Tag, S, MAX> {
 
 impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Drop for Core<T, Tag, S, MAX> {
     fn drop(&mut self) {
+        use crate::collections::ClearGuard;
         ClearGuard::run(self, Self::clear);
     }
 }
 
 pub mod fixed;
 
-pub struct PinSlab<T, Tag = (), const MAX: u32 = { u32::MAX }> {
+pub struct Pool<T, Tag = (), const MAX: u32 = { u32::MAX }> {
     core: Core<T, Tag, Box<[Slot<T, MAX>]>, MAX>,
 }
 
 #[must_use]
-pub struct PinSlabVacantEntry<'a, T, Tag = (), const MAX: u32 = { u32::MAX }> {
+pub struct VacantEntry<'a, T, Tag = (), const MAX: u32 = { u32::MAX }> {
     entry: CoreVacantEntry<'a, T, Tag, Box<[Slot<T, MAX>]>, MAX>,
 }
 
-impl<T, Tag, const MAX: u32> PinSlabVacantEntry<'_, T, Tag, MAX> {
-    pub fn insert(self, value: T) -> SlabKey<Tag, MAX> {
+impl<T, Tag, const MAX: u32> VacantEntry<'_, T, Tag, MAX> {
+    pub fn insert(self, value: T) -> key::Key<Tag, MAX> {
         self.entry.insert(value)
     }
 }
 
-impl<T, Tag, const MAX: u32> PinSlab<T, Tag, MAX> {
-    pub fn with_capacity(capacity: SlabCapacity) -> Self {
+impl<T, Tag, const MAX: u32> Pool<T, Tag, MAX> {
+    pub fn with_capacity(capacity: slab::Capacity) -> Self {
         let raw_capacity = capacity.get();
         let slots =
             capacity.collect_box((0..raw_capacity).map(|index| Slot::new(index, raw_capacity)));
@@ -264,17 +257,17 @@ impl<T, Tag, const MAX: u32> PinSlab<T, Tag, MAX> {
         }
     }
 
-    pub fn insert(&mut self, value: T) -> Result<SlabKey<Tag, MAX>, T> {
+    pub fn insert(&mut self, value: T) -> Result<key::Key<Tag, MAX>, T> {
         self.core.insert(value)
     }
 
-    pub fn vacant_entry(&mut self) -> Option<PinSlabVacantEntry<'_, T, Tag, MAX>> {
-        Some(PinSlabVacantEntry {
+    pub fn vacant_entry(&mut self) -> Option<VacantEntry<'_, T, Tag, MAX>> {
+        Some(VacantEntry {
             entry: self.core.vacant_entry()?,
         })
     }
 
-    pub fn contains_parts(&self, parts: SlabKeyParts<MAX>) -> bool {
+    pub fn contains_parts(&self, parts: key::Parts<MAX>) -> bool {
         self.core.contains_parts(parts)
     }
 
@@ -282,31 +275,31 @@ impl<T, Tag, const MAX: u32> PinSlab<T, Tag, MAX> {
         self.core.capacity()
     }
 
-    pub fn key(&self, index: u32) -> Option<SlabKey<Tag, MAX>> {
+    pub fn key(&self, index: u32) -> Option<key::Key<Tag, MAX>> {
         self.core.key(index)
     }
 
-    pub fn get(&self, key: SlabKey<Tag, MAX>) -> Option<Pin<&T>> {
+    pub fn get(&self, key: key::Key<Tag, MAX>) -> Option<Pin<&T>> {
         self.get_parts(key.parts())
     }
 
-    pub fn get_parts(&self, parts: SlabKeyParts<MAX>) -> Option<Pin<&T>> {
+    pub fn get_parts(&self, parts: key::Parts<MAX>) -> Option<Pin<&T>> {
         self.core.parts(parts)
     }
 
-    pub fn get_mut(&mut self, key: SlabKey<Tag, MAX>) -> Option<Pin<&mut T>> {
+    pub fn get_mut(&mut self, key: key::Key<Tag, MAX>) -> Option<Pin<&mut T>> {
         self.get_parts_mut(key.parts())
     }
 
-    pub fn get_parts_mut(&mut self, parts: SlabKeyParts<MAX>) -> Option<Pin<&mut T>> {
+    pub fn get_parts_mut(&mut self, parts: key::Parts<MAX>) -> Option<Pin<&mut T>> {
         self.core.parts_mut(parts)
     }
 
-    pub fn remove(&mut self, key: SlabKey<Tag, MAX>) -> bool {
+    pub fn remove(&mut self, key: key::Key<Tag, MAX>) -> bool {
         self.remove_parts(key.parts())
     }
 
-    pub fn remove_parts(&mut self, parts: SlabKeyParts<MAX>) -> bool {
+    pub fn remove_parts(&mut self, parts: key::Parts<MAX>) -> bool {
         self.core.remove_parts(parts)
     }
 }

@@ -3,23 +3,13 @@ pub mod batch;
 pub mod fixed;
 pub mod heap;
 pub mod intrusive;
+pub mod pinned;
 pub mod queue;
-mod slab;
+pub mod slab;
 
 use std::{
     mem,
     ops::{Deref, DerefMut},
-};
-
-pub use slab::{
-    NonZeroSlabCapacity, Slab, SlabCapacity, SlabCapacityError, SlabVacantEntry,
-    cell::CellSlab,
-    key::{SlabGeneration, SlabKey, SlabKeyParts},
-    lease::{LeaseSlab, LeaseSlabVacantEntry, SlabLease},
-    pin::{
-        PinSlab, PinSlabVacantEntry,
-        fixed::{FixedPinSlab, FixedPinSlabVacantEntry},
-    },
 };
 
 pub(super) struct BoxSliceGrowth<'a, T> {

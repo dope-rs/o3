@@ -1,6 +1,11 @@
 use std::num::NonZeroUsize;
 
-use o3::buffer::{ByteSink, Owned, PrefixConsumer, SliceWriter, queue::Ring};
+use o3::buffer::{
+    PrefixConsumer,
+    queue::Ring,
+    storage::Owned,
+    write::{ByteSink, SliceWriter},
+};
 
 fn write_pair<W: ByteSink>(out: &mut W, first: &[u8], second: &[u8]) -> Result<(), W::Error> {
     out.write_slices([first, second])

@@ -12,7 +12,7 @@ pub enum BrandPermission {}
 #[doc(hidden)]
 pub enum RegionPermission {}
 
-pub struct BrandedToken<'id, Tag> {
+pub struct Token<'id, Tag> {
     _brand: Invariant<'id>,
     _tag: Tagged<Tag>,
 }
@@ -24,25 +24,25 @@ pub struct Branded<'id, T, Tag> {
     _tag: Tagged<Tag>,
 }
 
-pub type BrandToken<'id> = BrandedToken<'id, BrandPermission>;
+pub type BrandToken<'id> = Token<'id, BrandPermission>;
 
 pub type Brand<'id, T> = Branded<'id, T, BrandPermission>;
 
-pub type RegionToken<'id> = BrandedToken<'id, RegionPermission>;
+pub type RegionToken<'id> = Token<'id, RegionPermission>;
 
 pub type Region<'id, T> = Branded<'id, T, RegionPermission>;
 
-impl BrandedToken<'_, BrandPermission> {
+impl Token<'_, BrandPermission> {
     pub fn scope_with_region<R>(
         f: impl for<'id> FnOnce(BrandToken<'id>, RegionToken<'id>) -> R,
     ) -> R {
-        f(BrandedToken::new(), BrandedToken::new())
+        f(Token::new(), Token::new())
     }
 }
 
-impl<Tag> BrandedToken<'_, Tag> {
-    pub fn scope<R>(f: impl for<'id> FnOnce(BrandedToken<'id, Tag>) -> R) -> R {
-        f(BrandedToken::new())
+impl<Tag> Token<'_, Tag> {
+    pub fn scope<R>(f: impl for<'id> FnOnce(Token<'id, Tag>) -> R) -> R {
+        f(Token::new())
     }
 
     const fn new() -> Self {
@@ -62,12 +62,12 @@ impl<'id, T, Tag> Branded<'id, T, Tag> {
         }
     }
 
-    pub fn borrow<'a>(&'a self, token: &'a BrandedToken<'id, Tag>) -> &'a T {
+    pub fn borrow<'a>(&'a self, token: &'a Token<'id, Tag>) -> &'a T {
         let _ = token;
         unsafe { &*self.value.get() }
     }
 
-    pub fn borrow_mut<'a>(&'a self, token: &'a mut BrandedToken<'id, Tag>) -> &'a mut T
+    pub fn borrow_mut<'a>(&'a self, token: &'a mut Token<'id, Tag>) -> &'a mut T
     where
         T: Unpin,
     {
@@ -85,13 +85,13 @@ impl<'id, T, Tag> Branded<'id, T, Tag> {
 
     pub fn borrow_pin_mut<'a>(
         self: Pin<&'a Self>,
-        token: &'a mut BrandedToken<'id, Tag>,
+        token: &'a mut Token<'id, Tag>,
     ) -> Pin<&'a mut T> {
         let _ = token;
         unsafe { Pin::new_unchecked(&mut *self.get_ref().value.get()) }
     }
 
-    pub fn borrow_pin<'a>(self: Pin<&'a Self>, token: &'a BrandedToken<'id, Tag>) -> Pin<&'a T> {
+    pub fn borrow_pin<'a>(self: Pin<&'a Self>, token: &'a Token<'id, Tag>) -> Pin<&'a T> {
         unsafe { Pin::new_unchecked(self.get_ref().borrow(token)) }
     }
 }

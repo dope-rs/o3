@@ -1,12 +1,12 @@
 use std::cell::Cell;
 
-use o3::collections::{CellSlab, Slab, SlabCapacity};
+use o3::collections::slab::{self, Capacity, Slab};
 
 enum Short {}
 
 #[test]
 fn generations_advance_and_retired_heads_are_skipped() {
-    let mut slab: Slab<u32, Short, 3> = Slab::with_capacity(SlabCapacity::new(2));
+    let mut slab: Slab<u32, Short, 3> = Slab::with_capacity(Capacity::new(2));
     let first = slab.vacant_entry_at(0).unwrap().insert(1);
     assert_eq!(first.generation().get(), 1);
     assert_eq!(slab.remove(first), Some(1));
@@ -19,7 +19,7 @@ fn generations_advance_and_retired_heads_are_skipped() {
     assert_eq!(slab.remove(third), Some(3));
     assert_eq!(slab.insert(4).unwrap().index(), 1);
 
-    let slab: CellSlab<u32, Short, 3> = CellSlab::with_capacity(SlabCapacity::new(2));
+    let slab: slab::Cell<u32, Short, 3> = slab::Cell::with_capacity(Capacity::new(2));
     let first = slab.insert(1).unwrap();
     assert_eq!(slab.remove(first), Some(1));
     let second = slab.insert(2).unwrap();
@@ -35,7 +35,7 @@ fn generations_advance_and_retired_heads_are_skipped() {
 
 #[test]
 fn constructor_unwind_invalidates_exposed_keys() {
-    let mut slab: Slab<u32> = Slab::with_capacity(SlabCapacity::new(1));
+    let mut slab: Slab<u32> = Slab::with_capacity(Capacity::new(1));
     let exposed = Cell::new(None);
     let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let reservation = slab.vacant_entry_at(0).unwrap();
@@ -52,7 +52,7 @@ fn constructor_unwind_invalidates_exposed_keys() {
 
 #[test]
 fn reservation_rollback_advances_or_retires_generations() {
-    let mut slab: Slab<u32, Short, 3> = Slab::with_capacity(SlabCapacity::new(1));
+    let mut slab: Slab<u32, Short, 3> = Slab::with_capacity(Capacity::new(1));
     let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _reservation = slab.vacant_entry_at(0).unwrap();
         panic!("constructor");
@@ -65,7 +65,7 @@ fn reservation_rollback_advances_or_retires_generations() {
     assert!(slab.insert(4).is_err());
     assert!(slab.is_full());
 
-    let mut slab: Slab<u32> = Slab::with_capacity(SlabCapacity::new(1));
+    let mut slab: Slab<u32> = Slab::with_capacity(Capacity::new(1));
     let reservation = slab.vacant_entry().unwrap();
     let cancelled = reservation.key();
     drop(reservation);

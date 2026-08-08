@@ -1,8 +1,11 @@
 #![forbid(unsafe_code)]
 
 use o3::{
-    cell::{Region, RegionToken},
-    collections::{Slab, SlabCapacity, SlabKey, arena::Linked},
+    cell::branded::{Region, RegionToken},
+    collections::{
+        arena::Linked,
+        slab::{Capacity, Slab, key::Key},
+    },
     mem::fair::Credits,
 };
 
@@ -67,21 +70,21 @@ struct ReplyEntry {
 struct ReplyStore<T> {
     entries: Slab<ReplyEntry, ReplyEntryTag>,
     items: Linked<T>,
-    order: Linked<SlabKey<ReplyEntryTag>>,
+    order: Linked<Key<ReplyEntryTag>>,
 }
 
 impl<T> ReplyStore<T> {
     fn with_capacity(capacity: usize, lanes: usize) -> Self {
         Self {
             entries: Slab::with_capacity(
-                SlabCapacity::try_from(capacity).expect("test capacity fits slab indices"),
+                Capacity::try_from(capacity).expect("test capacity fits slab indices"),
             ),
             items: Linked::with_capacity(capacity, capacity),
             order: Linked::with_capacity(capacity, lanes),
         }
     }
 
-    fn register(&mut self, lane: usize) -> Option<SlabKey<ReplyEntryTag>> {
+    fn register(&mut self, lane: usize) -> Option<Key<ReplyEntryTag>> {
         let key = self
             .entries
             .insert(ReplyEntry {
@@ -93,14 +96,14 @@ impl<T> ReplyStore<T> {
         Some(key)
     }
 
-    fn try_push(&mut self, key: SlabKey<ReplyEntryTag>, item: T) -> Result<(), T> {
+    fn try_push(&mut self, key: Key<ReplyEntryTag>, item: T) -> Result<(), T> {
         if self.entries.get(key).is_none() {
             return Err(item);
         }
         self.items.push_back(key.index() as usize, item)
     }
 
-    fn retire(&mut self, key: SlabKey<ReplyEntryTag>) {
+    fn retire(&mut self, key: Key<ReplyEntryTag>) {
         let Some(entry) = self.entries.get_mut(key) else {
             return;
         };

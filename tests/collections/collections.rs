@@ -1,7 +1,6 @@
 use std::{cell::Cell, cmp::Ordering, collections::VecDeque};
 
 use o3::collections::{
-    Slab, SlabCapacity,
     arena::{Linked, Stack},
     fixed::{
         array::CopyInline,
@@ -10,6 +9,7 @@ use o3::collections::{
     },
     heap::Min,
     queue::{self, round::Robin, slot::CellFifo},
+    slab::{Capacity, Slab},
 };
 
 use crate::support::PanicDrop;
@@ -476,15 +476,16 @@ fn heap_holes_close_when_comparison_panics() {
     assert_eq!(drops.get(), 2);
 }
 
-#[cfg(target_pointer_width = "64")]
 #[test]
 fn fixed_collections_keep_their_thin_layouts() {
-    assert_eq!(std::mem::size_of::<queue::fixed::Fifo<u64>>(), 32);
-    assert_eq!(std::mem::size_of::<Map<u64>>(), 64);
-    assert_eq!(std::mem::size_of::<Slots<u64>>(), 40);
-    assert_eq!(std::mem::size_of::<queue::slot::Fifo<u64>>(), 32);
-    assert_eq!(std::mem::size_of::<Slab<u64>>(), 40);
-    assert_eq!(std::mem::size_of::<Robin>(), 32);
+    if usize::BITS == 64 {
+        assert_eq!(std::mem::size_of::<queue::fixed::Fifo<u64>>(), 32);
+        assert_eq!(std::mem::size_of::<Map<u64>>(), 64);
+        assert_eq!(std::mem::size_of::<Slots<u64>>(), 40);
+        assert_eq!(std::mem::size_of::<queue::slot::Fifo<u64>>(), 32);
+        assert_eq!(std::mem::size_of::<Slab<u64>>(), 40);
+        assert_eq!(std::mem::size_of::<Robin>(), 32);
+    }
 }
 
 #[test]
@@ -505,7 +506,7 @@ fn indexed_min_heap_clear_keeps_positions_coherent_across_unwind() {
 fn slab_clear_survives_a_drop_panic() {
     let drops = Cell::new(0);
     let panic_once = Cell::new(false);
-    let mut slab: Slab<PanicDrop<'_>> = Slab::with_capacity(SlabCapacity::new(2));
+    let mut slab: Slab<PanicDrop<'_>> = Slab::with_capacity(Capacity::new(2));
     slab.insert(PanicDrop::new(0, &drops, &panic_once)).ok();
     slab.insert(PanicDrop::new(1, &drops, &panic_once)).ok();
     panic_once.set(true);
@@ -525,7 +526,7 @@ fn collection_drop_finishes_after_one_element_panics() {
     let panic_once = Cell::new(true);
 
     assert_panicking_drop_finishes(&drops, &panic_once, |first, second| {
-        let mut slab: Slab<PanicDrop<'_>> = Slab::with_capacity(SlabCapacity::new(2));
+        let mut slab: Slab<PanicDrop<'_>> = Slab::with_capacity(Capacity::new(2));
         slab.insert(first).ok();
         slab.insert(second).ok();
         drop(slab);

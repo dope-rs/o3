@@ -1,8 +1,0 @@
-error[E0515]: cannot return value referencing local variable `slab`
- --> tests/ui/lease_slab_escape.rs:5:5
-  |
-5 |     slab.vacant_entry().unwrap().insert(1)
-  |     ----^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |     |
-  |     returns a value referencing data owned by the current function
-  |     `slab` is borrowed here

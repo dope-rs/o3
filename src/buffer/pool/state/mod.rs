@@ -1,12 +1,26 @@
-mod initialized;
-mod sealed;
-mod uninitialized;
+mod seal;
 
-pub use initialized::Initialized;
-use sealed::Sealed;
-pub use uninitialized::Uninitialized;
+pub(crate) use seal::Seal;
 
 #[doc(hidden)]
-pub trait State: Sealed {
+pub struct Initialized;
+
+#[doc(hidden)]
+pub struct Uninitialized;
+
+#[doc(hidden)]
+pub trait State: Seal {
     const ZEROED: bool;
+}
+
+impl Seal for Initialized {}
+
+impl State for Initialized {
+    const ZEROED: bool = true;
+}
+
+impl Seal for Uninitialized {}
+
+impl State for Uninitialized {
+    const ZEROED: bool = false;
 }

@@ -4,11 +4,6 @@ use std::{
     ops::Deref,
 };
 
-use crate::{
-    ThreadBound,
-    collections::{BoxSliceGrowth, ClearGuard},
-};
-
 const NONE: u32 = u32::MAX;
 
 struct Node<T> {
@@ -34,6 +29,7 @@ impl<T> Nodes<T> {
     }
 
     fn grow_to(&mut self, capacity: usize) {
+        use crate::collections::BoxSliceGrowth;
         let old_capacity = self.len();
         assert!(capacity >= old_capacity, "slot queue cannot shrink");
         assert!(
@@ -96,11 +92,12 @@ impl State {
 struct Core<T> {
     entries: Nodes<T>,
     state: Cell<State>,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 impl<T> Core<T> {
     fn with_capacity(capacity: usize) -> Self {
+        use crate::ThreadBound;
         Self {
             entries: Nodes::with_capacity(capacity),
             state: Cell::new(State::EMPTY),
@@ -342,6 +339,7 @@ impl<T> Fifo<T> {
 
 impl<T> Drop for Fifo<T> {
     fn drop(&mut self) {
+        use crate::collections::ClearGuard;
         ClearGuard::run(self, Self::clear);
     }
 }

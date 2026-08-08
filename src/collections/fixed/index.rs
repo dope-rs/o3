@@ -1,7 +1,5 @@
 use std::{iter::from_fn, mem::MaybeUninit};
 
-use crate::collections::ClearGuard;
-
 const WORD_BITS: usize = u64::BITS as usize;
 
 /// Fixed-capacity values addressed directly by caller-provided indices.
@@ -143,6 +141,7 @@ impl<T> Slots<T> {
 
 impl<T> Drop for Slots<T> {
     fn drop(&mut self) {
+        use crate::collections::ClearGuard;
         ClearGuard::run(self, Self::clear_remaining);
     }
 }

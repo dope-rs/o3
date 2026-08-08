@@ -1,21 +1,18 @@
 use std::{
-    alloc::{Layout as AllocationLayout, alloc, alloc_zeroed, dealloc, handle_alloc_error},
+    alloc::{alloc, alloc_zeroed, dealloc, handle_alloc_error},
     cell::Cell,
     mem::MaybeUninit,
     ptr::{NonNull, copy_nonoverlapping},
     slice,
 };
 
-use crate::buffer::{
-    CapacityError, LocalRefCount, SpareWriter, checked_append_len,
-    pool::{Layout, State},
-};
+use crate::buffer::{self, pool, storage};
 
 const NONE: u32 = u32::MAX;
 
 #[repr(C)]
 pub(super) struct Core {
-    refs: LocalRefCount,
+    refs: storage::raw::refs::LocalRefCount,
     free: Cell<u32>,
     free_len: Cell<u32>,
     slots: u32,
@@ -26,14 +23,14 @@ pub(super) struct Core {
 
 #[repr(C)]
 pub(super) struct Slot {
-    refs: LocalRefCount,
+    refs: storage::raw::refs::LocalRefCount,
     next: Cell<u32>,
 }
 
 const _: () = assert!(align_of::<Core>() >= align_of::<Slot>());
 
 impl Core {
-    pub(super) fn allocate<S: State>(layout: Layout) -> NonNull<Self> {
+    pub(super) fn allocate<S: pool::state::State>(layout: pool::Layout) -> NonNull<Self> {
         let raw = if S::ZEROED {
             unsafe { alloc_zeroed(layout.allocation()) }
         } else {
@@ -42,6 +39,7 @@ impl Core {
         let ptr = NonNull::new(raw.cast::<Self>())
             .unwrap_or_else(|| handle_alloc_error(layout.allocation()));
         unsafe {
+            use crate::buffer::storage::raw::refs::LocalRefCount;
             ptr.write(Self {
                 refs: LocalRefCount::one(),
                 free: Cell::new(if layout.slot_count() == 0 { NONE } else { 0 }),
@@ -80,7 +78,8 @@ impl Core {
             return;
         }
         let layout = unsafe {
-            AllocationLayout::from_size_align_unchecked(core.allocation_size, align_of::<Self>())
+            use std::alloc::Layout;
+            Layout::from_size_align_unchecked(core.allocation_size, align_of::<Self>())
         };
         unsafe { dealloc(ptr.as_ptr().cast(), layout) };
     }
@@ -139,11 +138,14 @@ impl Core {
         index: u32,
         len: &mut u32,
         byte: u8,
-    ) -> Result<(), CapacityError> {
+    ) -> Result<(), buffer::CapacityError> {
         let written = *len as usize;
         let capacity = Self::capacity(ptr);
         if written == capacity {
-            return Err(CapacityError::new(written.saturating_add(1), capacity));
+            return Err(buffer::CapacityError::new(
+                written.saturating_add(1),
+                capacity,
+            ));
         }
         unsafe {
             Self::data(ptr, index)
@@ -160,14 +162,14 @@ impl Core {
         index: u32,
         len: &mut u32,
         src: &[u8],
-    ) -> Result<(), CapacityError> {
+    ) -> Result<(), buffer::CapacityError> {
         let start = *len as usize;
         let capacity = Self::capacity(ptr);
         let end = start
             .checked_add(src.len())
-            .ok_or_else(|| CapacityError::new(usize::MAX, capacity))?;
+            .ok_or_else(|| buffer::CapacityError::new(usize::MAX, capacity))?;
         if end > capacity {
-            return Err(CapacityError::new(end, capacity));
+            return Err(buffer::CapacityError::new(end, capacity));
         }
         unsafe { copy_nonoverlapping(src.as_ptr(), Self::data(ptr, index).add(start), src.len()) };
         *len = end as u32;
@@ -179,7 +181,8 @@ impl Core {
         index: u32,
         len: &mut u32,
         slices: [&[u8]; N],
-    ) -> Result<(), CapacityError> {
+    ) -> Result<(), buffer::CapacityError> {
+        use crate::buffer::checked_append_len;
         let start = *len as usize;
         let end = checked_append_len(start, Self::capacity(ptr), &slices)?;
         let mut offset = start;
@@ -197,11 +200,14 @@ impl Core {
         ptr: NonNull<Self>,
         index: u32,
         len: &'a mut u32,
-    ) -> SpareWriter<'a> {
+    ) -> buffer::write::SpareWriter<'a> {
         let capacity = Self::capacity(ptr);
         let written = *len as usize;
         let data = unsafe { Self::data(ptr, index).add(written).cast() };
-        unsafe { SpareWriter::new(data, capacity - written, len) }
+        unsafe {
+            use crate::buffer::write::SpareWriter;
+            SpareWriter::new(data, capacity - written, len)
+        }
     }
 
     fn slot(ptr: NonNull<Self>, index: u32) -> *mut Slot {

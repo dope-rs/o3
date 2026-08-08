@@ -6,7 +6,7 @@ use std::{
     ptr::NonNull,
 };
 
-use crate::collections::slab::SlabCapacity;
+use crate::collections::slab;
 
 const NONE: u32 = u32::MAX;
 
@@ -90,14 +90,15 @@ impl<T> Drop for Group<T> {
 }
 
 /// A fixed typed slab whose occupied slots are owned by leases.
-pub struct LeaseSlab<T> {
+pub struct Pool<T> {
     group: Group<T>,
 }
 
-impl<T> LeaseSlab<T> {
-    pub fn with_capacity(capacity: SlabCapacity) -> Self {
+impl<T> Pool<T> {
+    pub fn with_capacity(capacity: slab::Capacity) -> Self {
+        use crate::collections::slab::Capacity;
         let capacity = capacity.get() as u32;
-        let slots = SlabCapacity::new(capacity)
+        let slots = Capacity::new(capacity)
             .collect_box((0..capacity).map(|index| Slot::new(index, capacity)));
         Self {
             group: Group {
@@ -107,8 +108,8 @@ impl<T> LeaseSlab<T> {
         }
     }
 
-    pub fn vacant_entry(&self) -> Option<LeaseSlabVacantEntry<'_, T>> {
-        Some(LeaseSlabVacantEntry {
+    pub fn vacant_entry(&self) -> Option<VacantEntry<'_, T>> {
+        Some(VacantEntry {
             slab: self,
             index: self.group.reserve()?,
             armed: true,
@@ -117,14 +118,14 @@ impl<T> LeaseSlab<T> {
 }
 
 #[must_use]
-pub struct LeaseSlabVacantEntry<'a, T> {
-    slab: &'a LeaseSlab<T>,
+pub struct VacantEntry<'a, T> {
+    slab: &'a Pool<T>,
     index: u32,
     armed: bool,
 }
 
-impl<'a, T> LeaseSlabVacantEntry<'a, T> {
-    pub fn insert(mut self, value: T) -> SlabLease<'a, T> {
+impl<'a, T> VacantEntry<'a, T> {
+    pub fn insert(mut self, value: T) -> Lease<'a, T> {
         let slot = self.slab.group.slot(self.index);
         debug_assert!(slot.state.get() == State::Reserved);
         slot.owner.set(NonNull::from(&self.slab.group));
@@ -134,14 +135,14 @@ impl<'a, T> LeaseSlabVacantEntry<'a, T> {
         slot.link.set(self.index);
         slot.state.set(State::Occupied);
         self.armed = false;
-        SlabLease {
+        Lease {
             slot: NonNull::from(slot),
             owner: PhantomData,
         }
     }
 }
 
-impl<T> Drop for LeaseSlabVacantEntry<'_, T> {
+impl<T> Drop for VacantEntry<'_, T> {
     fn drop(&mut self) {
         if self.armed {
             self.slab.group.release(self.index);
@@ -149,15 +150,15 @@ impl<T> Drop for LeaseSlabVacantEntry<'_, T> {
     }
 }
 
-/// Exclusive ownership of one initialized `LeaseSlab` slot.
-pub struct SlabLease<'a, T> {
+/// Exclusive ownership of one initialized [`Pool`] slot.
+pub struct Lease<'a, T> {
     slot: NonNull<Slot<T>>,
-    owner: PhantomData<&'a LeaseSlab<T>>,
+    owner: PhantomData<&'a Pool<T>>,
 }
 
-const _: () = assert!(size_of::<SlabLease<'static, ()>>() == size_of::<usize>());
+const _: () = assert!(size_of::<Lease<'static, ()>>() == size_of::<usize>());
 
-impl<T> SlabLease<'_, T> {
+impl<T> Lease<'_, T> {
     fn slot(&self) -> &Slot<T> {
         // SAFETY: the lease lifetime keeps the owning slab and its boxed slot
         // storage alive.
@@ -165,7 +166,7 @@ impl<T> SlabLease<'_, T> {
     }
 }
 
-impl<T> Deref for SlabLease<'_, T> {
+impl<T> Deref for Lease<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -177,11 +178,11 @@ impl<T> Deref for SlabLease<'_, T> {
     }
 }
 
-impl<T> DerefMut for SlabLease<'_, T> {
+impl<T> DerefMut for Lease<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         let slot = self.slot();
         debug_assert!(slot.state.get() == State::Occupied);
-        // SAFETY: SlabLease is not cloneable, so mutable lease access is unique.
+        // SAFETY: Lease is not cloneable, so mutable lease access is unique.
         unsafe { (*slot.value.get()).assume_init_mut() }
     }
 }
@@ -198,7 +199,7 @@ impl<T> Drop for Reclaim<T> {
     }
 }
 
-impl<T> Drop for SlabLease<'_, T> {
+impl<T> Drop for Lease<'_, T> {
     fn drop(&mut self) {
         let slot = self.slot();
         debug_assert!(slot.state.get() == State::Occupied);

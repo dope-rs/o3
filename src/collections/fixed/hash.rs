@@ -1,7 +1,5 @@
 use std::{alloc::Layout, fmt, marker::PhantomData, mem::MaybeUninit};
 
-use crate::{ThreadBound, collections::ClearGuard};
-
 const EMPTY: u8 = u8::MAX;
 
 enum Probe {
@@ -76,7 +74,7 @@ pub struct Map<V> {
     values: Box<[MaybeUninit<V>]>,
     len: usize,
     capacity: usize,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 impl<V: Clone> Clone for Map<V> {
@@ -113,6 +111,7 @@ impl<V: fmt::Debug> fmt::Debug for Map<V> {
 
 impl<V> Map<V> {
     pub fn from_plan(plan: Plan<V>) -> Self {
+        use crate::ThreadBound;
         let capacity = plan.capacity();
         let buckets = (capacity * 2).next_power_of_two();
         Self {
@@ -259,6 +258,7 @@ impl<V> Map<V> {
 
 impl<V> Drop for Map<V> {
     fn drop(&mut self) {
+        use crate::collections::ClearGuard;
         ClearGuard::run(self, Self::clear);
     }
 }

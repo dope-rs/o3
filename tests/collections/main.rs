@@ -2,6 +2,7 @@ mod cellslab_reentrancy;
 mod collections;
 mod lease_slab;
 mod pin_slab;
+mod pinned;
 mod retire;
 mod slab;
 mod slab_stress;

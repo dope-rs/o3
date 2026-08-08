@@ -1,6 +1,10 @@
 #![forbid(unsafe_code)]
 
-use o3::buffer::{CapacityError, ExactBuildError, Owned, Shared, SpareWriter};
+use o3::buffer::{
+    CapacityError,
+    storage::{BuildError, Owned, shared::Shared},
+    write::SpareWriter,
+};
 
 struct Response<'a> {
     static_head: &'static [u8],
@@ -32,7 +36,7 @@ impl Response<'_> {
         out.try_extend(self.body)
     }
 
-    fn into_shared(self) -> Result<Shared, ExactBuildError<CapacityError>> {
+    fn into_shared(self) -> Result<Shared, BuildError<CapacityError>> {
         let encoded_len = self.encoded_len();
         Owned::try_build_exact(encoded_len, |out| self.encode_into(out)).map(Owned::freeze)
     }
@@ -88,7 +92,7 @@ fn sark_inaccurate_length_pass_cannot_produce_a_partially_initialized_buffer() {
 
     assert_eq!(
         error,
-        ExactBuildError::LengthMismatch {
+        BuildError::LengthMismatch {
             expected: 5,
             actual: 4,
         }

@@ -1,19 +1,27 @@
 use o3::{
     ThreadBound,
     buffer::{
-        BLOCK_CAPACITY, CapacityError, Cursor, FixedPoolCapacity, Owned, Retained, Shared,
-        SharedStr, SpareWriter, Uninitialized,
+        BLOCK_CAPACITY, CapacityError,
+        bytes::Retained,
+        pool,
         queue::Ring,
+        storage::{
+            Owned,
+            shared::{Shared, strings::Str},
+        },
         view::{Snapshot, window::Inline},
+        write::SpareWriter,
     },
-    cell::{Brand, BrandToken, Checked},
+    cell::{
+        Checked,
+        branded::{Brand, BrandToken},
+    },
     collections::{
-        FixedPinSlab, FixedPinSlabVacantEntry, PinSlab, PinSlabVacantEntry, Slab, SlabGeneration,
-        SlabKey, SlabKeyParts,
         arena::{Linked, Stack},
         fixed::{hash::Map, index::Slots},
         heap::Min,
         queue::round::Robin,
+        slab,
     },
     mem::{
         budget::{Bytes, Handle, Lease},
@@ -31,25 +39,25 @@ assert_confined!(Robin);
 assert_confined!(Linked<u8>);
 assert_confined!(Min<u8>);
 assert_confined!(Map<u8>);
-assert_confined!(PinSlab<u8>);
-assert_confined!(PinSlabVacantEntry<'static, u8>);
-assert_confined!(FixedPinSlab<u8, 4>);
-assert_confined!(FixedPinSlabVacantEntry<'static, u8, 4>);
-assert_confined!(Slab<u8>);
-assert_confined!(SlabGeneration);
-assert_confined!(SlabKey);
-assert_confined!(SlabKeyParts);
+assert_confined!(slab::pin::Pool<u8>);
+assert_confined!(slab::pin::VacantEntry<'static, u8>);
+assert_confined!(slab::pin::fixed::Pool<u8, 4>);
+assert_confined!(slab::pin::fixed::VacantEntry<'static, u8, 4>);
+assert_confined!(slab::Slab<u8>);
+assert_confined!(slab::key::Generation);
+assert_confined!(slab::key::Key);
+assert_confined!(slab::key::Parts);
 assert_confined!(Owned);
 assert_confined!(Owned<BLOCK_CAPACITY>);
 assert_confined!(SpareWriter<'static>);
 assert_confined!(Shared);
-assert_confined!(SharedStr);
-assert_confined!(o3::buffer::Bytes<Retained>);
+assert_confined!(Str);
+assert_confined!(o3::buffer::bytes::Bytes<Retained>);
 assert_confined!(Snapshot<16_384>);
-assert_confined!(o3::buffer::Pool);
-assert_confined!(o3::buffer::Lease);
-assert_confined!(o3::buffer::Pool<Uninitialized, FixedPoolCapacity<BLOCK_CAPACITY>>);
-assert_confined!(Cursor<FixedPoolCapacity<BLOCK_CAPACITY>>);
+assert_confined!(pool::Pool);
+assert_confined!(pool::Lease);
+assert_confined!(pool::Pool<pool::state::Uninitialized, pool::FixedCapacity<BLOCK_CAPACITY>>);
+assert_confined!(pool::Cursor<pool::FixedCapacity<BLOCK_CAPACITY>>);
 assert_confined!(Inline<64>);
 assert_confined!(Ring);
 assert_confined!(Bytes);
@@ -76,16 +84,16 @@ const _: fn() = || {
     impl<T: ?Sized + Unpin> AmbiguousIfUnpin<u8> for T {}
 
     fn not_unpin<T: ?Sized + AmbiguousIfUnpin<A>, A>() {}
-    not_unpin::<FixedPinSlab<u8, 4>, _>();
+    not_unpin::<slab::pin::fixed::Pool<u8, 4>, _>();
 };
 
 #[test]
 fn state_is_confined_and_keys_are_word_sized() {
     assert_eq!(std::mem::size_of::<ThreadBound>(), 0);
     assert_eq!(std::mem::size_of::<BrandToken<'static>>(), 0);
-    assert_eq!(std::mem::size_of::<SlabKey>(), 8);
-    assert_eq!(std::mem::size_of::<SlabKeyParts>(), 8);
-    assert_eq!(std::mem::size_of::<SlabGeneration>(), 4);
+    assert_eq!(std::mem::size_of::<slab::key::Key>(), 8);
+    assert_eq!(std::mem::size_of::<slab::key::Parts>(), 8);
+    assert_eq!(std::mem::size_of::<slab::key::Generation>(), 4);
     assert_eq!(std::mem::size_of::<Linked<u8>>(), 48);
     assert_eq!(std::mem::size_of::<Stack<u8>>(), 48);
     assert_eq!(std::mem::size_of::<Pool>(), 8);

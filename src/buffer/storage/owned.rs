@@ -4,35 +4,33 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::buffer::{
-    CapacityError, ExactBuildError, PrefixLength, Shared, SpareWriter,
-    storage::{StorageMut, StorageSpan},
-};
+use crate::buffer::{self, storage};
 
 /// A uniquely owned, non-growing byte allocation. `CAP == 0` selects an exact
 /// runtime capacity; a nonzero `CAP` fixes it in the type without added storage.
 pub struct Owned<const CAP: u32 = 0> {
-    storage: StorageMut,
+    storage: storage::raw::AllocationMut,
     len: u32,
 }
 
 impl Owned {
-    pub fn try_with_capacity(capacity: usize) -> Result<Self, CapacityError> {
-        let capacity =
-            u32::try_from(capacity).map_err(|_| CapacityError::new(capacity, u32::MAX as usize))?;
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, buffer::CapacityError> {
+        let capacity = u32::try_from(capacity)
+            .map_err(|_| buffer::CapacityError::new(capacity, u32::MAX as usize))?;
         Ok(Self::with_capacity_u32(capacity))
     }
 
     pub fn try_build_exact<E>(
         capacity: usize,
-        build: impl FnOnce(&mut SpareWriter<'_>) -> Result<(), E>,
-    ) -> Result<Self, ExactBuildError<E>> {
-        let mut value = Self::try_with_capacity(capacity).map_err(ExactBuildError::Capacity)?;
+        build: impl FnOnce(&mut buffer::write::SpareWriter<'_>) -> Result<(), E>,
+    ) -> Result<Self, storage::BuildError<E>> {
+        use crate::buffer::storage::BuildError;
+        let mut value = Self::try_with_capacity(capacity).map_err(BuildError::Capacity)?;
         let mut writer = value.spare_writer();
-        build(&mut writer).map_err(ExactBuildError::Build)?;
+        build(&mut writer).map_err(BuildError::Build)?;
         let actual = writer.finish();
         if actual != capacity {
-            return Err(ExactBuildError::LengthMismatch {
+            return Err(BuildError::LengthMismatch {
                 expected: capacity,
                 actual,
             });
@@ -40,7 +38,7 @@ impl Owned {
         Ok(value)
     }
 
-    pub fn try_filled(len: usize, byte: u8) -> Result<Self, CapacityError> {
+    pub fn try_filled(len: usize, byte: u8) -> Result<Self, buffer::CapacityError> {
         let mut value = Self::try_with_capacity(len)?;
         value.storage.fill(byte);
         value.len = len as u32;
@@ -55,8 +53,9 @@ impl<const CAP: u32> Owned<CAP> {
     }
 
     fn with_capacity_u32(capacity: u32) -> Self {
+        use crate::buffer::storage::raw::AllocationMut;
         Self {
-            storage: StorageMut::with_capacity_u32(capacity),
+            storage: AllocationMut::with_capacity_u32(capacity),
             len: 0,
         }
     }
@@ -85,14 +84,14 @@ impl<const CAP: u32> Owned<CAP> {
         self.storage.initialized_mut(self.len as usize)
     }
 
-    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), CapacityError> {
+    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), buffer::CapacityError> {
         let start = self.len();
         let capacity = self.capacity();
         let end = start
             .checked_add(src.len())
-            .ok_or_else(|| CapacityError::new(usize::MAX, capacity))?;
+            .ok_or_else(|| buffer::CapacityError::new(usize::MAX, capacity))?;
         if end > capacity {
-            return Err(CapacityError::new(end, capacity));
+            return Err(buffer::CapacityError::new(end, capacity));
         }
         self.storage.copy_from_slice(start, src);
         self.len = end as u32;
@@ -102,16 +101,16 @@ impl<const CAP: u32> Owned<CAP> {
     pub fn try_extend_from_slices<const N: usize>(
         &mut self,
         slices: [&[u8]; N],
-    ) -> Result<(), CapacityError> {
+    ) -> Result<(), buffer::CapacityError> {
         let start = self.len();
         let capacity = self.capacity();
         let mut end = start;
         for slice in &slices {
             end = end
                 .checked_add(slice.len())
-                .ok_or_else(|| CapacityError::new(usize::MAX, capacity))?;
+                .ok_or_else(|| buffer::CapacityError::new(usize::MAX, capacity))?;
             if end > capacity {
-                return Err(CapacityError::new(end, capacity));
+                return Err(buffer::CapacityError::new(end, capacity));
             }
         }
         let mut offset = start;
@@ -123,30 +122,37 @@ impl<const CAP: u32> Owned<CAP> {
         Ok(())
     }
 
-    pub fn try_push(&mut self, byte: u8) -> Result<(), CapacityError> {
+    pub fn try_push(&mut self, byte: u8) -> Result<(), buffer::CapacityError> {
         let offset = self.len();
         let capacity = self.capacity();
         if offset == capacity {
-            return Err(CapacityError::new(offset.saturating_add(1), capacity));
+            return Err(buffer::CapacityError::new(
+                offset.saturating_add(1),
+                capacity,
+            ));
         }
         self.storage.write_byte(offset, byte);
         self.len += 1;
         Ok(())
     }
 
-    pub fn spare_writer(&mut self) -> SpareWriter<'_> {
+    pub fn spare_writer(&mut self) -> buffer::write::SpareWriter<'_> {
         self.storage.spare_writer(&mut self.len)
     }
 
     #[must_use]
-    pub fn freeze(self) -> Shared {
+    pub fn freeze(self) -> storage::shared::Shared {
+        use crate::buffer::storage::shared::Shared;
         let Self { storage, len } = self;
         if len == 0 {
             return Shared::new();
         }
         // SAFETY: every constructor and writer maintains `len <= storage.capacity()`.
-        let span = unsafe { StorageSpan::new_unchecked(storage.freeze(), 0, len) };
-        Shared::from_storage_span(span)
+        let span = unsafe {
+            use crate::buffer::storage::raw::Span;
+            Span::new_unchecked(storage.freeze(), 0, len)
+        };
+        Shared::from_span(span)
     }
 }
 
@@ -162,7 +168,7 @@ impl<const CAP: u32> Clone for Owned<CAP> {
         if self.len != 0 {
             clone
                 .storage
-                .copy_from_storage(0, &self.storage, 0, self.len());
+                .copy_from_allocation(0, &self.storage, 0, self.len());
             clone.len = self.len;
         }
         clone
@@ -175,7 +181,7 @@ impl<const CAP: u32> AsRef<[u8]> for Owned<CAP> {
     }
 }
 
-impl<const CAP: u32> PrefixLength for Owned<CAP> {
+impl<const CAP: u32> buffer::PrefixLength for Owned<CAP> {
     fn prefix_len(&self) -> usize {
         self.len()
     }

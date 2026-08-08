@@ -3,18 +3,17 @@ use std::{
     mem::MaybeUninit,
 };
 
-use crate::{ThreadBound, collections::ClearGuard};
-
 pub struct Fifo<T> {
     entries: Box<[UnsafeCell<MaybeUninit<T>>]>,
     capacity: usize,
     head: Cell<usize>,
     tail: Cell<usize>,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 impl<T> Fifo<T> {
     pub fn with_capacity(capacity: usize) -> Self {
+        use crate::ThreadBound;
         assert!(
             capacity.checked_next_power_of_two().is_some(),
             "cell queue capacity overflow"
@@ -82,6 +81,7 @@ impl<T> Fifo<T> {
 
 impl<T> Drop for Fifo<T> {
     fn drop(&mut self) {
+        use crate::collections::ClearGuard;
         ClearGuard::run(self, |queue| queue.clear());
     }
 }

@@ -1,40 +1,32 @@
-use std::{
-    cell::Cell,
-    marker::{PhantomData, PhantomPinned},
-    pin::Pin,
-    ptr::NonNull,
-};
-
-use crate::ThreadBound;
+use std::cell::Cell;
 
 pub struct Bytes {
     limit: usize,
     used: Cell<usize>,
-    _pin: PhantomPinned,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 impl Bytes {
     pub fn new(limit: usize) -> Self {
+        use crate::ThreadBound;
         Self {
             limit,
             used: Cell::new(0),
-            _pin: PhantomPinned,
             _thread: ThreadBound::NEW,
         }
     }
 
-    pub fn handle<'d>(self: Pin<&'d Self>) -> Handle<'d> {
-        Handle(NonNull::from(self.get_ref()), PhantomData)
+    pub fn handle(&self) -> Handle<'_> {
+        Handle(self)
     }
 }
 
 #[derive(Clone, Copy)]
-pub struct Handle<'d>(NonNull<Bytes>, PhantomData<&'d Bytes>);
+pub struct Handle<'d>(&'d Bytes);
 
 impl<'d> Handle<'d> {
     fn budget(self) -> &'d Bytes {
-        unsafe { self.0.as_ref() }
+        self.0
     }
 
     pub fn try_acquire(self, amount: usize) -> Option<Lease<'d>> {
