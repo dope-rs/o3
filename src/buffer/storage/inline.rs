@@ -1,6 +1,6 @@
 use std::{fmt, ops::Deref};
 
-use crate::buffer::{CapacityError, PrefixLength};
+use crate::buffer;
 
 pub const CAPACITY: usize = 24;
 
@@ -13,7 +13,7 @@ pub struct Bytes<const CAP: usize = CAPACITY> {
 impl<const CAP: usize> Bytes<CAP> {
     const VALID: () = assert!(
         CAP <= u8::MAX as usize,
-        "buffer::inline::Bytes CAP must fit u8"
+        "buffer::storage::inline::Bytes CAP must fit u8"
     );
 
     #[must_use]
@@ -25,27 +25,27 @@ impl<const CAP: usize> Bytes<CAP> {
         }
     }
 
-    pub fn from_slice(bytes: &[u8]) -> Result<Self, CapacityError> {
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, buffer::CapacityError> {
         let mut inline = Self::new();
         inline.try_extend(bytes)?;
         Ok(inline)
     }
 
-    pub fn try_extend(&mut self, bytes: &[u8]) -> Result<(), CapacityError> {
+    pub fn try_extend(&mut self, bytes: &[u8]) -> Result<(), buffer::CapacityError> {
         let start = usize::from(self.len);
         let end = start + bytes.len();
         if end > CAP {
-            return Err(CapacityError::new(end, CAP));
+            return Err(buffer::CapacityError::new(end, CAP));
         }
         self.bytes[start..end].copy_from_slice(bytes);
         self.len = end as u8;
         Ok(())
     }
 
-    pub fn try_push(&mut self, byte: u8) -> Result<(), CapacityError> {
+    pub fn try_push(&mut self, byte: u8) -> Result<(), buffer::CapacityError> {
         let len = usize::from(self.len);
         if len == CAP {
-            return Err(CapacityError::new(len + 1, CAP));
+            return Err(buffer::CapacityError::new(len + 1, CAP));
         }
         self.bytes[len] = byte;
         self.len += 1;
@@ -73,7 +73,7 @@ impl<const CAP: usize> AsRef<[u8]> for Bytes<CAP> {
     }
 }
 
-impl<const CAP: usize> PrefixLength for Bytes<CAP> {
+impl<const CAP: usize> buffer::PrefixLength for Bytes<CAP> {
     fn prefix_len(&self) -> usize {
         self.len()
     }

@@ -2,7 +2,7 @@ use o3::buffer;
 
 #[test]
 fn bounded_protocol_output_commits_only_a_complete_safe_record() {
-    let pool = buffer::Pool::try_new(1, 32).unwrap();
+    let pool = buffer::pool::Pool::try_new(1, 32).unwrap();
     let mut output = pool.try_acquire_buffer().unwrap();
 
     {

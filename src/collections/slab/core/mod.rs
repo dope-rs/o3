@@ -1,22 +1,14 @@
 use std::{
     cell::{Cell, UnsafeCell},
-    hint::unreachable_unchecked,
     marker::PhantomData,
     mem::ManuallyDrop,
 };
 
-use crate::{
-    ThreadBound,
-    collections::{
-        BoxSliceGrowth, ClearGuard,
-        slab::{GenerationState, SlabCapacity},
-    },
-};
+use crate::collections::slab;
 
 pub(super) mod entries;
 mod guards;
-
-use entries::Entries;
+mod reservations;
 
 pub(super) const NONE: u32 = u32::MAX;
 
@@ -119,30 +111,18 @@ pub(super) struct Ticket<G> {
     pub(super) generation: G,
 }
 
-pub(super) struct SlabCore<T, G: GenerationState, M: Mode> {
+pub(super) struct Core<T, G: slab::GenerationState, M: Mode> {
     slots: Box<[Slot<T, G>]>,
     occupied: Box<[Cell<u32>]>,
     free: Cell<u32>,
     len: Cell<u32>,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
     mode: PhantomData<M>,
 }
 
-pub(super) trait Reservations<T, G: GenerationState, M: Mode> {
-    fn take_free(&self) -> Option<Ticket<G>>;
-    unsafe fn take_free_raw(&self, raw: u32) -> Ticket<G>;
-    fn take_index(&self, index: u32) -> Option<Ticket<G>>;
-    fn unlink(&self, index: SlotIndex, prev: u32, next: u32);
-    fn release(&self, index: SlotIndex, generation: G);
-    fn set_free_next(&self, index: u32, next: u32);
-    fn set_free_prev(&self, index: u32, prev: u32);
-    fn commit(&self, ticket: Ticket<G>, value: T);
-    fn commit_initialized(&self, ticket: Ticket<G>);
-    fn rollback(&self, ticket: Ticket<G>);
-}
-
-impl<T, G: GenerationState, M: Mode> SlabCore<T, G, M> {
-    pub(super) fn with_capacity(capacity: SlabCapacity) -> Self {
+impl<T, G: slab::GenerationState, M: Mode> Core<T, G, M> {
+    pub(super) fn with_capacity(capacity: slab::Capacity) -> Self {
+        use crate::ThreadBound;
         let () = G::VALID;
         let raw_capacity = capacity.get();
         let slots = capacity.collect_box((0..raw_capacity).map(|index| {
@@ -171,7 +151,8 @@ impl<T, G: GenerationState, M: Mode> SlabCore<T, G, M> {
         self.slots.len()
     }
 
-    pub(super) fn grow_to(&mut self, capacity: SlabCapacity) {
+    pub(super) fn grow_to(&mut self, capacity: slab::Capacity) {
+        use crate::collections::BoxSliceGrowth;
         let old_capacity = self.capacity();
         let capacity = capacity.get();
         assert!(
@@ -209,7 +190,8 @@ impl<T, G: GenerationState, M: Mode> SlabCore<T, G, M> {
         drop(slots);
         drop(occupied);
         if old_free != NONE {
-            self.set_free_prev(old_free, capacity as u32 - 1);
+            self.reservations()
+                .set_free_prev(old_free, capacity as u32 - 1);
         }
         self.free.set(old_capacity as u32);
     }
@@ -221,142 +203,62 @@ impl<T, G: GenerationState, M: Mode> SlabCore<T, G, M> {
     pub(super) fn is_full(&self) -> bool {
         self.free.get() == NONE
     }
-}
 
-impl<T, G: GenerationState, M: Mode> Reservations<T, G, M> for SlabCore<T, G, M> {
-    fn take_free(&self) -> Option<Ticket<G>> {
-        let raw = self.free.get();
-        if raw == NONE {
-            return None;
-        }
-        Some(unsafe { self.take_free_raw(raw) })
+    pub(in crate::collections::slab) fn entries(&self) -> entries::Entries<'_, T, G, M> {
+        use crate::collections::slab::core::entries::Entries;
+        Entries::new(self)
     }
 
-    unsafe fn take_free_raw(&self, raw: u32) -> Ticket<G> {
-        let index = SlotIndex(raw);
-        let slot = unsafe { self.slots.get_unchecked(index.get() as usize) };
-        if slot.state.get() != State::Free {
-            unsafe { unreachable_unchecked() }
-        }
-        let generation = slot.generation.get();
-        let Links { next, prev } = unsafe { slot.links() };
-        debug_assert_eq!(prev, NONE);
-        if next != NONE {
-            let next = unsafe { self.slots.get_unchecked(next as usize) };
-            if next.state.get() != State::Free {
-                unsafe { unreachable_unchecked() }
-            }
-            let Links { next: link, .. } = unsafe { next.links() };
-            unsafe {
-                next.set_links(Links {
-                    next: link,
-                    prev: NONE,
-                })
-            };
-        }
-        self.free.set(next);
-        slot.state.set(State::Reserved);
-        Ticket { index, generation }
+    pub(in crate::collections::slab) fn reservations(
+        &self,
+    ) -> reservations::Reservations<'_, T, G, M> {
+        use crate::collections::slab::core::reservations::Reservations;
+        Reservations::new(self)
     }
 
-    fn take_index(&self, index: u32) -> Option<Ticket<G>> {
-        let slot = self.slots.get(index as usize)?;
-        let index = SlotIndex::new(index, self.slots.len())?;
-        if slot.state.get() != State::Free {
-            return None;
-        }
-        let generation = slot.generation.get();
-        let Links { next, prev } = unsafe { slot.links() };
-        self.unlink(index, prev, next);
-        slot.state.set(State::Reserved);
-        Some(Ticket { index, generation })
-    }
-
-    fn unlink(&self, index: SlotIndex, prev: u32, next: u32) {
-        if prev == NONE {
-            debug_assert_eq!(self.free.get(), index.get());
-            self.free.set(next);
+    pub(in crate::collections::slab) fn get_mut(
+        &mut self,
+        index: u32,
+        generation: G,
+    ) -> Option<&mut T> {
+        let slot = self.slots.get_mut(index as usize)?;
+        if slot.state.get() == State::Occupied && slot.generation.get() == generation {
+            Some(unsafe { &mut *slot.value_ptr() })
         } else {
-            self.set_free_next(prev, next);
-        }
-        if next != NONE {
-            self.set_free_prev(next, prev);
+            None
         }
     }
 
-    fn release(&self, index: SlotIndex, generation: G) {
-        let head = self.free.replace(index.get());
-        let slot = unsafe { self.slots.get_unchecked(index.get() as usize) };
-        slot.generation.set(generation);
-        unsafe {
-            slot.set_links(Links {
-                next: head,
-                prev: NONE,
-            })
-        };
-        slot.state.set(State::Free);
-        if head != NONE {
-            self.set_free_prev(head, index.get());
+    pub(in crate::collections::slab) fn index_mut(&mut self, index: u32) -> Option<(&mut T, G)> {
+        let slot = self.slots.get_mut(index as usize)?;
+        if slot.state.get() == State::Occupied {
+            let generation = slot.generation.get();
+            Some((unsafe { &mut *slot.value_ptr() }, generation))
+        } else {
+            None
         }
     }
 
-    fn set_free_next(&self, index: u32, next: u32) {
-        let slot = free_slot(self, index);
-        let Links { prev, .. } = unsafe { slot.links() };
-        unsafe { slot.set_links(Links { next, prev }) };
+    pub(in crate::collections::slab) fn values_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        let len = self.len();
+        let slots = self.slots.as_mut_ptr();
+        let occupied = &self.occupied;
+        (0..len).map(move |position| {
+            let index = unsafe { occupied.get_unchecked(position) }.get();
+            let slot = unsafe { &mut *slots.add(index as usize) };
+            debug_assert!(slot.state.get() == State::Occupied);
+            unsafe { &mut *slot.value_ptr() }
+        })
     }
 
-    fn set_free_prev(&self, index: u32, prev: u32) {
-        let slot = free_slot(self, index);
-        let Links { next, .. } = unsafe { slot.links() };
-        unsafe { slot.set_links(Links { next, prev }) };
-    }
-
-    fn commit(&self, ticket: Ticket<G>, value: T) {
-        let slot = reserved_slot(self, ticket);
-        unsafe { slot.write_value(value) };
-        self.commit_initialized(ticket);
-    }
-
-    fn commit_initialized(&self, ticket: Ticket<G>) {
-        let slot = reserved_slot(self, ticket);
-        let position = self.len.get();
-        unsafe { self.occupied.get_unchecked(position as usize) }.set(ticket.index.get());
-        slot.position.set(position);
-        slot.state.set(State::Occupied);
-        self.len.set(position + 1);
-    }
-
-    fn rollback(&self, ticket: Ticket<G>) {
-        let slot = reserved_slot(self, ticket);
-        match ticket.generation.next() {
-            Some(generation) => self.release(ticket.index, generation),
-            None => slot.state.set(State::Retired),
-        }
+    pub(in crate::collections::slab) fn clear(&mut self) {
+        self.entries().clear();
     }
 }
 
-fn free_slot<T, G: GenerationState, M: Mode>(core: &SlabCore<T, G, M>, index: u32) -> &Slot<T, G> {
-    let slot = unsafe { core.slots.get_unchecked(index as usize) };
-    if slot.state.get() != State::Free {
-        unsafe { unreachable_unchecked() }
-    }
-    slot
-}
-
-fn reserved_slot<T, G: GenerationState, M: Mode>(
-    core: &SlabCore<T, G, M>,
-    ticket: Ticket<G>,
-) -> &Slot<T, G> {
-    let slot = unsafe { core.slots.get_unchecked(ticket.index.get() as usize) };
-    debug_assert!(
-        slot.state.get() == State::Reserved && slot.generation.get() == ticket.generation
-    );
-    slot
-}
-
-impl<T, G: GenerationState, M: Mode> Drop for SlabCore<T, G, M> {
+impl<T, G: slab::GenerationState, M: Mode> Drop for Core<T, G, M> {
     fn drop(&mut self) {
+        use crate::collections::ClearGuard;
         ClearGuard::run(self, Self::clear);
     }
 }

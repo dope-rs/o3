@@ -1,8 +1,12 @@
 use std::mem::{needs_drop, size_of};
 
-use o3::buffer::{self, Borrowed, Bytes, RetainBytes, Retained, Shared};
+use o3::buffer::{
+    self,
+    bytes::{Borrowed, Bytes, Retainable, Retained},
+    storage::shared::Shared,
+};
 
-fn span(value: &impl RetainBytes) -> &[u8] {
+fn span(value: &impl Retainable) -> &[u8] {
     value.as_slice()
 }
 
@@ -27,13 +31,13 @@ fn borrowed_slice_stays_borrowed() {
 #[test]
 fn borrowed_retention_is_an_explicit_copy() {
     let source = [1, 2, 3, 4];
-    let retained = RetainBytes::into_retained(Bytes::<Borrowed<'_>>::from(&source));
+    let retained = Retainable::into_retained(Bytes::<Borrowed<'_>>::from(&source));
     assert_eq!(retained.as_slice(), source);
 }
 
 #[test]
 fn pooled_ranges_enter_owned_storage_directly() {
-    let pool = buffer::Pool::<buffer::Uninitialized>::try_new(1, 16).unwrap();
+    let pool = buffer::pool::Pool::<buffer::pool::state::Uninitialized>::try_new(1, 16).unwrap();
     let mut lease = pool.try_acquire().expect("pool slot");
     lease.try_extend(b"abcdef").expect("slot capacity");
     let source = lease.as_slice()[1..5].as_ptr();
@@ -48,7 +52,7 @@ fn pooled_ranges_enter_owned_storage_directly() {
 
 #[test]
 fn empty_pooled_slice_releases_its_slot() {
-    let pool = buffer::Pool::<buffer::Uninitialized>::try_new(1, 8).unwrap();
+    let pool = buffer::pool::Pool::<buffer::pool::state::Uninitialized>::try_new(1, 8).unwrap();
     let mut lease = pool.try_acquire().expect("pool slot");
     lease.try_extend(b"abcdef").expect("slot capacity");
 
@@ -59,15 +63,16 @@ fn empty_pooled_slice_releases_its_slot() {
     assert_eq!(pool.available(), 1);
 }
 
-#[cfg(target_pointer_width = "64")]
 #[test]
 fn retained_storage_stays_compact() {
-    assert_eq!(size_of::<Bytes<Retained>>(), 32);
+    if usize::BITS == 64 {
+        assert_eq!(size_of::<Bytes<Retained>>(), 32);
+    }
 }
 
 #[test]
 fn retained_storage_advances_and_slices_without_copying() {
-    let pool = buffer::Pool::<buffer::Uninitialized>::try_new(1, 8).unwrap();
+    let pool = buffer::pool::Pool::<buffer::pool::state::Uninitialized>::try_new(1, 8).unwrap();
     let mut lease = pool.try_acquire().expect("pool slot");
     lease.try_extend(b"abcdef").expect("slot capacity");
     let source = lease.as_slice().as_ptr();

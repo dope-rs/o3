@@ -1,7 +1,5 @@
 use std::mem::MaybeUninit;
 
-use crate::{ThreadBound, collections::ClearGuard};
-
 pub struct Fifo<T> {
     ring: Ring<T>,
 }
@@ -10,7 +8,7 @@ struct Ring<T> {
     entries: Box<[MaybeUninit<T>]>,
     head: usize,
     len: usize,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 pub struct Vacant<'a, T> {
@@ -29,6 +27,7 @@ impl<T> Vacant<'_, T> {
 
 impl<T> Fifo<T> {
     pub fn with_capacity(capacity: usize) -> Self {
+        use crate::ThreadBound;
         Self {
             ring: Ring {
                 entries: Box::<[T]>::new_uninit_slice(capacity),
@@ -174,6 +173,7 @@ impl<T> Ring<T> {
 
 impl<T> Drop for Fifo<T> {
     fn drop(&mut self) {
+        use crate::collections::ClearGuard;
         ClearGuard::run(self, Self::clear);
     }
 }

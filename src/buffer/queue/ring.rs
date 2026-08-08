@@ -1,9 +1,6 @@
 use std::{mem::MaybeUninit, num::NonZeroUsize, ptr::copy_nonoverlapping, slice::from_raw_parts};
 
-use crate::{
-    ThreadBound,
-    buffer::{CapacityError, PrefixConsumer, PrefixLength, PrefixProof, checked_append_len},
-};
+use crate::buffer;
 
 const fn wrap(index: usize, capacity: usize) -> usize {
     if index >= capacity {
@@ -17,12 +14,13 @@ pub struct Ring {
     buf: Box<[MaybeUninit<u8>]>,
     head: usize,
     len: usize,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 impl Ring {
     #[must_use]
     pub fn with_capacity(capacity: NonZeroUsize) -> Self {
+        use crate::ThreadBound;
         Self {
             buf: Box::<[u8]>::new_uninit_slice(capacity.get()),
             head: 0,
@@ -59,14 +57,14 @@ impl Ring {
     }
 
     /// Appends one contiguous slice after validating its complete length.
-    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), CapacityError> {
+    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), buffer::CapacityError> {
         let capacity = self.capacity();
         let end = self
             .len
             .checked_add(src.len())
-            .ok_or_else(|| CapacityError::new(usize::MAX, capacity))?;
+            .ok_or_else(|| buffer::CapacityError::new(usize::MAX, capacity))?;
         if end > capacity {
-            return Err(CapacityError::new(end, capacity));
+            return Err(buffer::CapacityError::new(end, capacity));
         }
         let tail = wrap(self.head + self.len, capacity);
         self.copy_at_tail(tail, src);
@@ -74,10 +72,10 @@ impl Ring {
         Ok(())
     }
 
-    pub fn try_push(&mut self, byte: u8) -> Result<(), CapacityError> {
+    pub fn try_push(&mut self, byte: u8) -> Result<(), buffer::CapacityError> {
         let capacity = self.capacity();
         if self.len == capacity {
-            return Err(CapacityError::new(self.len + 1, capacity));
+            return Err(buffer::CapacityError::new(self.len + 1, capacity));
         }
         let tail = wrap(self.head + self.len, capacity);
         unsafe {
@@ -96,7 +94,8 @@ impl Ring {
     pub fn try_extend_from_slices<const N: usize>(
         &mut self,
         slices: [&[u8]; N],
-    ) -> Result<(), CapacityError> {
+    ) -> Result<(), buffer::CapacityError> {
+        use crate::buffer::checked_append_len;
         let capacity = self.capacity();
         let end = checked_append_len(self.len, capacity, &slices)?;
         let mut tail = wrap(self.head + self.len, capacity);
@@ -137,14 +136,14 @@ impl Ring {
     }
 }
 
-impl PrefixLength for Ring {
+impl buffer::PrefixLength for Ring {
     fn prefix_len(&self) -> usize {
         self.len()
     }
 }
 
-impl PrefixConsumer for Ring {
-    fn consume_validated_prefix(&mut self, proof: PrefixProof) {
+impl buffer::PrefixConsumer for Ring {
+    fn consume_validated_prefix(&mut self, proof: buffer::PrefixProof) {
         self.consume_valid(proof.amount());
     }
 }

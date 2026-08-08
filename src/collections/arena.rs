@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use crate::{ThreadBound, collections::ClearGuard};
+use crate::collections;
 
 const NONE: u32 = u32::MAX;
 
@@ -35,7 +35,7 @@ impl ChainState {
 pub struct Linked<T> {
     nodes: NodePool<T>,
     lanes: Box<[ChainState]>,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 /// Fixed node storage shared by persistent LIFO lanes.
@@ -214,6 +214,7 @@ impl<T> NodePool<T> {
 
 impl<T> Linked<T> {
     pub fn with_capacity(capacity: usize, lanes: usize) -> Self {
+        use crate::ThreadBound;
         Self {
             nodes: NodePool::with_capacity(capacity),
             lanes: vec![ChainState::EMPTY; lanes].into_boxed_slice(),
@@ -260,7 +261,7 @@ impl<T> Linked<T> {
     }
 
     fn clear(&mut self) {
-        ClearGuard::run(self, Self::clear_remaining);
+        collections::ClearGuard::run(self, Self::clear_remaining);
     }
 
     fn clear_remaining(&mut self) {
@@ -310,7 +311,7 @@ impl<T> Stack<T> {
     }
 
     fn clear(&mut self) {
-        ClearGuard::run(self, Self::clear_remaining);
+        collections::ClearGuard::run(self, Self::clear_remaining);
     }
 
     fn clear_remaining(&mut self) {
@@ -338,7 +339,7 @@ impl<T> Iterator for StackDrain<'_, T> {
 
 impl<T> Drop for StackDrain<'_, T> {
     fn drop(&mut self) {
-        ClearGuard::run(self, Self::clear_remaining);
+        collections::ClearGuard::run(self, Self::clear_remaining);
     }
 }
 

@@ -1,8 +1,8 @@
-use o3::collections::{CellSlab, Slab, SlabCapacity, SlabKeyParts};
+use o3::collections::slab::{Capacity, Cell, Slab, key::Parts};
 
 #[test]
 fn generational_reuse_and_capacity() {
-    let mut slab: Slab<&str> = Slab::with_capacity(SlabCapacity::new(3));
+    let mut slab: Slab<&str> = Slab::with_capacity(Capacity::new(3));
     let first = slab.insert("a").unwrap();
     let recycled = slab.insert("b").unwrap();
     let last = slab.insert("c").unwrap();
@@ -24,7 +24,7 @@ fn generational_reuse_and_capacity() {
 
 #[test]
 fn entry_and_explicit_index_paths_preserve_the_free_list() {
-    let mut slab = Slab::<u32>::with_capacity(SlabCapacity::new(200));
+    let mut slab = Slab::<u32>::with_capacity(Capacity::new(200));
     let entry = slab.vacant_entry().unwrap();
     let first = entry.insert(1);
     let (second, value) = slab.insert_entry(2).unwrap();
@@ -57,7 +57,7 @@ fn entry_and_explicit_index_paths_preserve_the_free_list() {
 
 #[test]
 fn indexed_entry_reserves_before_construction_and_rolls_back_on_drop() {
-    let mut slab = Slab::<u32>::with_capacity(SlabCapacity::new(4));
+    let mut slab = Slab::<u32>::with_capacity(Capacity::new(4));
     let occupied = slab.vacant_entry_at(1).unwrap().insert(7);
     assert!(slab.vacant_entry_at(occupied.index()).is_none());
     assert!(slab.vacant_entry_at(4).is_none());
@@ -75,7 +75,7 @@ fn indexed_entry_reserves_before_construction_and_rolls_back_on_drop() {
 
 #[test]
 fn sparse_iteration_clear_and_index_removal_follow_live_entries() {
-    let mut slab: Slab<u32> = Slab::with_capacity(SlabCapacity::new(128));
+    let mut slab: Slab<u32> = Slab::with_capacity(Capacity::new(128));
     assert_eq!(slab.key(127), None);
     let high = slab.vacant_entry_at(127).unwrap().insert(7);
     let low = slab.vacant_entry_at(1).unwrap().insert(3);
@@ -100,9 +100,9 @@ fn sparse_iteration_clear_and_index_removal_follow_live_entries() {
 
 #[test]
 fn cell_slab_growth_preserves_live_entries() {
-    let mut slab: CellSlab<i32> = CellSlab::with_capacity(SlabCapacity::new(1));
+    let mut slab: Cell<i32> = Cell::with_capacity(Capacity::new(1));
     let first = slab.insert(7).unwrap();
-    slab.grow_to(SlabCapacity::new(3));
+    slab.grow_to(Capacity::new(3));
     let second = slab.insert(8).unwrap();
     let third = slab.insert(9).unwrap();
     assert_eq!(slab.update(first, |value| *value), Some(7));
@@ -114,15 +114,15 @@ fn cell_slab_growth_preserves_live_entries() {
 #[test]
 fn capacity_proof_bounds_construction_and_growth() {
     assert_eq!(
-        SlabCapacity::try_from(u32::MAX as usize).unwrap(),
-        SlabCapacity::MAX
+        Capacity::try_from(u32::MAX as usize).unwrap(),
+        Capacity::MAX
     );
     if usize::BITS > 32 {
-        let error = SlabCapacity::try_from(u32::MAX as usize + 1).unwrap_err();
+        let error = Capacity::try_from(u32::MAX as usize + 1).unwrap_err();
         assert_eq!(error.requested(), u32::MAX as usize + 1);
     }
 
-    let slab = CellSlab::<u8>::with_capacity(SlabCapacity::new(2));
+    let slab = Cell::<u8>::with_capacity(Capacity::new(2));
     assert_eq!(slab.capacity(), 2);
 }
 
@@ -131,18 +131,18 @@ fn external_parts_resolve_only_the_current_generation() {
     const MAX: u32 = 7;
     struct Tag;
 
-    assert!(SlabKeyParts::<MAX>::new(0, 0).is_none());
-    assert!(SlabKeyParts::<MAX>::new(0, MAX + 1).is_none());
-    assert!(SlabKeyParts::<MAX>::new(u32::MAX, MAX).is_some());
+    assert!(Parts::<MAX>::new(0, 0).is_none());
+    assert!(Parts::<MAX>::new(0, MAX + 1).is_none());
+    assert!(Parts::<MAX>::new(u32::MAX, MAX).is_some());
 
-    let mut slab = Slab::<u32, Tag, MAX>::with_capacity(SlabCapacity::new(1));
+    let mut slab = Slab::<u32, Tag, MAX>::with_capacity(Capacity::new(1));
     let key = slab.insert(7).unwrap();
-    let parts = SlabKeyParts::<MAX>::new(key.index(), key.generation().get()).unwrap();
+    let parts = Parts::<MAX>::new(key.index(), key.generation().get()).unwrap();
     assert_eq!(slab.get_parts(parts), Some(&7));
     assert_eq!(slab.remove_parts(parts), Some(7));
     assert_eq!(slab.get_parts(parts), None);
 
-    let slab = CellSlab::<u32, Tag, MAX>::with_capacity(SlabCapacity::new(1));
+    let slab = Cell::<u32, Tag, MAX>::with_capacity(Capacity::new(1));
     let stale = slab.insert(7).unwrap().parts();
     assert_eq!(slab.remove_parts(stale), Some(7));
     let current = slab.insert(11).unwrap().parts();

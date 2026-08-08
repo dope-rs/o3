@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use o3::buffer::inline;
+use o3::buffer::storage::inline;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum WirePrefix<const INLINE: usize> {

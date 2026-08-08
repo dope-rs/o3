@@ -1,11 +1,15 @@
 use std::mem::size_of;
 
-use o3::buffer::{Bytes, Retained, queue::Segments};
+use o3::buffer::{
+    bytes::{Bytes, Retained},
+    queue::Segments,
+};
 
-#[cfg(target_pointer_width = "64")]
 #[test]
 fn queue_keeps_the_deque_and_length_layout() {
-    assert_eq!(size_of::<Segments<Vec<u8>>>(), 40);
+    if usize::BITS == 64 {
+        assert_eq!(size_of::<Segments<Vec<u8>>>(), 40);
+    }
 }
 
 #[test]

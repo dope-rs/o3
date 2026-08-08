@@ -1,16 +1,13 @@
-use crate::buffer::{
-    Bytes, CapacityError, PrefixConsumer, PrefixLength, PrefixProof, Retained, SpareWriter,
-    pool::{Lease, PoolCapacity, RuntimePoolCapacity, Uninitialized},
-};
+use crate::buffer::{self, bytes, pool};
 
 /// A pooled byte cursor over one logical readable range.
-pub struct Cursor<C: PoolCapacity = RuntimePoolCapacity> {
-    pub(super) lease: Lease<Uninitialized, C>,
+pub struct Cursor<C: pool::Capacity = pool::RuntimeCapacity> {
+    pub(super) lease: pool::Lease<pool::state::Uninitialized, C>,
     pub(super) head: u32,
 }
 
-impl<C: PoolCapacity> Cursor<C> {
-    pub(super) const fn new(lease: Lease<Uninitialized, C>) -> Self {
+impl<C: pool::Capacity> Cursor<C> {
+    pub(super) const fn new(lease: pool::Lease<pool::state::Uninitialized, C>) -> Self {
         Self { lease, head: 0 }
     }
     #[must_use]
@@ -42,7 +39,7 @@ impl<C: PoolCapacity> Cursor<C> {
         &mut self.lease.as_mut_slice()[head..]
     }
 
-    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), CapacityError> {
+    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), buffer::CapacityError> {
         let capacity = self.lease.capacity();
         let lease_len = self.lease.len();
         if src.len() > capacity - lease_len
@@ -53,7 +50,7 @@ impl<C: PoolCapacity> Cursor<C> {
         self.lease.try_extend(src)
     }
 
-    pub fn try_push(&mut self, byte: u8) -> Result<(), CapacityError> {
+    pub fn try_push(&mut self, byte: u8) -> Result<(), buffer::CapacityError> {
         if self.lease.len() == self.lease.capacity() && self.head != 0 {
             self.compact();
         }
@@ -63,8 +60,9 @@ impl<C: PoolCapacity> Cursor<C> {
     pub fn try_extend_from_slices<const N: usize>(
         &mut self,
         slices: [&[u8]; N],
-    ) -> Result<(), CapacityError> {
+    ) -> Result<(), buffer::CapacityError> {
         let additional = slices.iter().try_fold(0usize, |len, slice| {
+            use crate::buffer::CapacityError;
             len.checked_add(slice.len())
                 .ok_or_else(|| CapacityError::new(usize::MAX, self.lease.capacity()))
         })?;
@@ -90,16 +88,17 @@ impl<C: PoolCapacity> Cursor<C> {
     }
 
     /// Returns a contiguous writer after compacting the readable range.
-    pub fn spare_writer(&mut self) -> SpareWriter<'_> {
+    pub fn spare_writer(&mut self) -> buffer::write::SpareWriter<'_> {
         self.compact();
         self.lease.spare_writer()
     }
 
     #[must_use]
-    pub fn freeze(self) -> Bytes<Retained> {
+    pub fn freeze(self) -> bytes::Bytes<bytes::Retained> {
+        use crate::buffer::PrefixConsumer;
         let head = self.head as usize;
-        let mut bytes = Bytes::<Retained>::from(self.lease.freeze());
-        bytes.consume_prefix_up_to(head);
+        let mut bytes = bytes::Bytes::<bytes::Retained>::from(self.lease.freeze());
+        let _ = PrefixConsumer::consume_prefix_up_to(&mut bytes, head);
         bytes
     }
 
@@ -125,20 +124,20 @@ impl<C: PoolCapacity> Cursor<C> {
     }
 }
 
-impl<C: PoolCapacity> AsRef<[u8]> for Cursor<C> {
+impl<C: pool::Capacity> AsRef<[u8]> for Cursor<C> {
     fn as_ref(&self) -> &[u8] {
         self.as_slice()
     }
 }
 
-impl<C: PoolCapacity> PrefixLength for Cursor<C> {
+impl<C: pool::Capacity> buffer::PrefixLength for Cursor<C> {
     fn prefix_len(&self) -> usize {
         self.len()
     }
 }
 
-impl<C: PoolCapacity> PrefixConsumer for Cursor<C> {
-    fn consume_validated_prefix(&mut self, proof: PrefixProof) {
+impl<C: pool::Capacity> buffer::PrefixConsumer for Cursor<C> {
+    fn consume_validated_prefix(&mut self, proof: buffer::PrefixProof) {
         self.consume_valid(proof.amount());
     }
 }

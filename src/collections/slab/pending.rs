@@ -1,15 +1,12 @@
-use crate::collections::slab::{
-    GenerationState,
-    core::{Mode, Reservations, SlabCore, Ticket},
-};
+use crate::collections::slab::{self, core};
 
-pub(super) struct Pending<'a, T, G: GenerationState, M: Mode> {
-    core: &'a SlabCore<T, G, M>,
-    ticket: Option<Ticket<G>>,
+pub(super) struct Pending<'a, T, G: slab::GenerationState, M: core::Mode> {
+    core: &'a core::Core<T, G, M>,
+    ticket: Option<core::Ticket<G>>,
 }
 
-impl<'a, T, G: GenerationState, M: Mode> Pending<'a, T, G, M> {
-    pub(super) fn new(core: &'a SlabCore<T, G, M>, ticket: Ticket<G>) -> Self {
+impl<'a, T, G: slab::GenerationState, M: core::Mode> Pending<'a, T, G, M> {
+    pub(super) fn new(core: &'a core::Core<T, G, M>, ticket: core::Ticket<G>) -> Self {
         Self {
             core,
             ticket: Some(ticket),
@@ -18,14 +15,15 @@ impl<'a, T, G: GenerationState, M: Mode> Pending<'a, T, G, M> {
 
     pub(super) fn commit(mut self, value: T) {
         self.core
+            .reservations()
             .commit(unsafe { self.ticket.take().unwrap_unchecked() }, value);
     }
 }
 
-impl<T, G: GenerationState, M: Mode> Drop for Pending<'_, T, G, M> {
+impl<T, G: slab::GenerationState, M: core::Mode> Drop for Pending<'_, T, G, M> {
     fn drop(&mut self) {
         if let Some(ticket) = self.ticket.take() {
-            self.core.rollback(ticket);
+            self.core.reservations().rollback(ticket);
         }
     }
 }

@@ -1,16 +1,13 @@
 use std::{error::Error, fmt, marker::PhantomData, num::NonZeroU32};
 
-pub mod cell;
+mod cell;
 mod core;
 pub mod key;
 pub mod lease;
 mod pending;
 pub mod pin;
 
-use core::{Exclusive, Reservations, SlabCore, Ticket, entries::Entries};
-
-use key::{SlabGeneration, SlabKey, SlabKeyParts};
-use pending::Pending;
+pub use cell::Cell;
 
 trait GenerationState: Copy + Eq {
     const MIN: Self;
@@ -23,14 +20,14 @@ trait GenerationState: Copy + Eq {
 /// Allocation follows the standard collection policy: exhaustion aborts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct SlabCapacity(u32);
+pub struct Capacity(u32);
 
 /// A nonzero slot count representable by every dynamically allocated slab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct NonZeroSlabCapacity(NonZeroU32);
+pub struct NonZeroCapacity(NonZeroU32);
 
-impl SlabCapacity {
+impl Capacity {
     pub const EMPTY: Self = Self(0);
     pub const MAX: Self = Self(u32::MAX);
 
@@ -45,9 +42,9 @@ impl SlabCapacity {
     }
 
     #[must_use]
-    pub const fn nonzero(self) -> Option<NonZeroSlabCapacity> {
+    pub const fn nonzero(self) -> Option<NonZeroCapacity> {
         match NonZeroU32::new(self.0) {
-            Some(capacity) => Some(NonZeroSlabCapacity(capacity)),
+            Some(capacity) => Some(NonZeroCapacity(capacity)),
             None => None,
         }
     }
@@ -62,50 +59,50 @@ impl SlabCapacity {
     }
 }
 
-impl NonZeroSlabCapacity {
+impl NonZeroCapacity {
     #[must_use]
     pub const fn get(self) -> usize {
         self.0.get() as usize
     }
 
     #[must_use]
-    pub const fn slab(self) -> SlabCapacity {
-        SlabCapacity::new(self.0.get())
+    pub const fn capacity(self) -> Capacity {
+        Capacity::new(self.0.get())
     }
 }
 
-impl TryFrom<usize> for SlabCapacity {
-    type Error = SlabCapacityError;
+impl TryFrom<usize> for Capacity {
+    type Error = CapacityError;
 
     fn try_from(capacity: usize) -> Result<Self, Self::Error> {
         match u32::try_from(capacity) {
             Ok(capacity) => Ok(Self(capacity)),
-            Err(_) => Err(SlabCapacityError {
+            Err(_) => Err(CapacityError {
                 requested: capacity,
             }),
         }
     }
 }
 
-impl From<SlabCapacity> for usize {
-    fn from(capacity: SlabCapacity) -> Self {
+impl From<Capacity> for usize {
+    fn from(capacity: Capacity) -> Self {
         capacity.get()
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SlabCapacityError {
+pub struct CapacityError {
     requested: usize,
 }
 
-impl SlabCapacityError {
+impl CapacityError {
     #[must_use]
     pub const fn requested(self) -> usize {
         self.requested
     }
 }
 
-impl fmt::Display for SlabCapacityError {
+impl fmt::Display for CapacityError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
@@ -115,17 +112,18 @@ impl fmt::Display for SlabCapacityError {
     }
 }
 
-impl Error for SlabCapacityError {}
+impl Error for CapacityError {}
 
 pub struct Slab<T, Tag = (), const MAX: u32 = { u32::MAX }> {
-    core: SlabCore<T, SlabGeneration<MAX>, Exclusive>,
+    core: core::Core<T, key::Generation<MAX>, core::Exclusive>,
     tag: PhantomData<fn() -> Tag>,
 }
 
 impl<T, Tag, const MAX: u32> Slab<T, Tag, MAX> {
-    pub fn with_capacity(capacity: SlabCapacity) -> Self {
+    pub fn with_capacity(capacity: Capacity) -> Self {
+        use core::Core;
         Self {
-            core: SlabCore::with_capacity(capacity),
+            core: Core::with_capacity(capacity),
             tag: PhantomData,
         }
     }
@@ -146,12 +144,12 @@ impl<T, Tag, const MAX: u32> Slab<T, Tag, MAX> {
         self.core.is_full()
     }
 
-    pub fn insert(&mut self, value: T) -> Result<SlabKey<Tag, MAX>, T> {
+    pub fn insert(&mut self, value: T) -> Result<key::Key<Tag, MAX>, T> {
         self.insert_entry(value).map(|(key, _)| key)
     }
 
-    pub fn insert_entry(&mut self, value: T) -> Result<(SlabKey<Tag, MAX>, &mut T), T> {
-        let Some(ticket) = self.core.take_free() else {
+    pub fn insert_entry(&mut self, value: T) -> Result<(key::Key<Tag, MAX>, &mut T), T> {
+        let Some(ticket) = self.core.reservations().take_free() else {
             return Err(value);
         };
         Ok(self.insert_ticket(ticket, value))
@@ -159,12 +157,13 @@ impl<T, Tag, const MAX: u32> Slab<T, Tag, MAX> {
 
     fn insert_ticket(
         &mut self,
-        ticket: Ticket<SlabGeneration<MAX>>,
+        ticket: core::Ticket<key::Generation<MAX>>,
         value: T,
-    ) -> (SlabKey<Tag, MAX>, &mut T) {
+    ) -> (key::Key<Tag, MAX>, &mut T) {
+        use crate::collections::slab::pending::Pending;
         let pending = Pending::new(&self.core, ticket);
         let raw_index = ticket.index.get();
-        let key = SlabKey::new(raw_index, ticket.generation);
+        let key = key::Key::new(raw_index, ticket.generation);
         pending.commit(value);
         let value = unsafe {
             self.core
@@ -174,17 +173,17 @@ impl<T, Tag, const MAX: u32> Slab<T, Tag, MAX> {
         (key, value)
     }
 
-    pub fn vacant_entry(&mut self) -> Option<SlabVacantEntry<'_, T, Tag, MAX>> {
-        let ticket = self.core.take_free()?;
-        Some(SlabVacantEntry {
+    pub fn vacant_entry(&mut self) -> Option<VacantEntry<'_, T, Tag, MAX>> {
+        let ticket = self.core.reservations().take_free()?;
+        Some(VacantEntry {
             slab: self,
             ticket: Some(ticket),
         })
     }
 
-    pub fn vacant_entry_at(&mut self, index: u32) -> Option<SlabVacantEntry<'_, T, Tag, MAX>> {
-        let ticket = self.core.take_index(index)?;
-        Some(SlabVacantEntry {
+    pub fn vacant_entry_at(&mut self, index: u32) -> Option<VacantEntry<'_, T, Tag, MAX>> {
+        let ticket = self.core.reservations().take_index(index)?;
+        Some(VacantEntry {
             slab: self,
             ticket: Some(ticket),
         })
@@ -192,65 +191,73 @@ impl<T, Tag, const MAX: u32> Slab<T, Tag, MAX> {
 }
 
 impl<T, Tag, const MAX: u32> Slab<T, Tag, MAX> {
-    pub fn get(&self, key: SlabKey<Tag, MAX>) -> Option<&T> {
+    pub fn get(&self, key: key::Key<Tag, MAX>) -> Option<&T> {
         self.get_parts(key.parts())
     }
 
-    pub fn get_parts(&self, parts: SlabKeyParts<MAX>) -> Option<&T> {
-        self.core.get(parts.index(), parts.generation())
+    pub fn get_parts(&self, parts: key::Parts<MAX>) -> Option<&T> {
+        self.core.entries().get(parts.index(), parts.generation())
     }
 
-    pub fn get_mut(&mut self, key: SlabKey<Tag, MAX>) -> Option<&mut T> {
+    pub fn get_mut(&mut self, key: key::Key<Tag, MAX>) -> Option<&mut T> {
         self.get_parts_mut(key.parts())
     }
 
-    pub fn get_parts_mut(&mut self, parts: SlabKeyParts<MAX>) -> Option<&mut T> {
+    pub fn get_parts_mut(&mut self, parts: key::Parts<MAX>) -> Option<&mut T> {
         self.core.get_mut(parts.index(), parts.generation())
     }
 
-    pub fn remove(&mut self, key: SlabKey<Tag, MAX>) -> Option<T> {
+    pub fn remove(&mut self, key: key::Key<Tag, MAX>) -> Option<T> {
         self.remove_parts(key.parts())
     }
 
-    pub fn remove_parts(&mut self, parts: SlabKeyParts<MAX>) -> Option<T> {
-        let (value, _) = self.core.remove(parts.index(), parts.generation())?;
+    pub fn remove_parts(&mut self, parts: key::Parts<MAX>) -> Option<T> {
+        let (value, _) = self
+            .core
+            .entries()
+            .remove(parts.index(), parts.generation())?;
         Some(value)
     }
 
     pub fn remove_index_with<R>(
         &mut self,
         index: u32,
-        f: impl FnOnce(&mut T, SlabKey<Tag, MAX>) -> Option<R>,
+        f: impl FnOnce(&mut T, key::Key<Tag, MAX>) -> Option<R>,
     ) -> Option<(T, R)> {
-        let (value, result, _) = self.core.remove_index_with(index, |value, generation| {
-            f(value, SlabKey::new(index, generation))
-        })?;
+        let (value, result, _) = self
+            .core
+            .entries()
+            .remove_index_with(index, |value, generation| {
+                f(value, key::Key::new(index, generation))
+            })?;
         Some((value, result))
     }
 
-    pub fn get_index(&self, index: u32) -> Option<(&T, SlabKey<Tag, MAX>)> {
+    pub fn get_index(&self, index: u32) -> Option<(&T, key::Key<Tag, MAX>)> {
         self.core
+            .entries()
             .index(index)
-            .map(|(value, generation)| (value, SlabKey::new(index, generation)))
+            .map(|(value, generation)| (value, key::Key::new(index, generation)))
     }
 
-    pub fn get_index_mut(&mut self, index: u32) -> Option<(&mut T, SlabKey<Tag, MAX>)> {
+    pub fn get_index_mut(&mut self, index: u32) -> Option<(&mut T, key::Key<Tag, MAX>)> {
         self.core
             .index_mut(index)
-            .map(|(value, generation)| (value, SlabKey::new(index, generation)))
+            .map(|(value, generation)| (value, key::Key::new(index, generation)))
     }
 
-    pub fn key(&self, index: u32) -> Option<SlabKey<Tag, MAX>> {
+    pub fn key(&self, index: u32) -> Option<key::Key<Tag, MAX>> {
         self.core
+            .entries()
             .generation(index)
-            .map(|generation| SlabKey::new(index, generation))
+            .map(|generation| key::Key::new(index, generation))
     }
 
     pub fn values<'a>(&'a self) -> impl Iterator<Item = &'a T>
     where
         T: 'a,
     {
-        self.core.values()
+        self.core.entries().values()
     }
 
     pub fn values_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut T>
@@ -265,30 +272,30 @@ impl<T, Tag, const MAX: u32> Slab<T, Tag, MAX> {
     }
 }
 
-pub struct SlabVacantEntry<'a, T, Tag = (), const MAX: u32 = { u32::MAX }> {
+pub struct VacantEntry<'a, T, Tag = (), const MAX: u32 = { u32::MAX }> {
     slab: &'a mut Slab<T, Tag, MAX>,
-    ticket: Option<Ticket<SlabGeneration<MAX>>>,
+    ticket: Option<core::Ticket<key::Generation<MAX>>>,
 }
 
-impl<T, Tag, const MAX: u32> SlabVacantEntry<'_, T, Tag, MAX> {
-    pub fn key(&self) -> SlabKey<Tag, MAX> {
+impl<T, Tag, const MAX: u32> VacantEntry<'_, T, Tag, MAX> {
+    pub fn key(&self) -> key::Key<Tag, MAX> {
         let ticket = unsafe { self.ticket.unwrap_unchecked() };
-        SlabKey::new(ticket.index.get(), ticket.generation)
+        key::Key::new(ticket.index.get(), ticket.generation)
     }
 
-    pub fn insert(mut self, value: T) -> SlabKey<Tag, MAX> {
+    pub fn insert(mut self, value: T) -> key::Key<Tag, MAX> {
         let ticket = unsafe { self.ticket.unwrap_unchecked() };
-        let key = SlabKey::new(ticket.index.get(), ticket.generation);
+        let key = key::Key::new(ticket.index.get(), ticket.generation);
         let ticket = unsafe { self.ticket.take().unwrap_unchecked() };
-        self.slab.core.commit(ticket, value);
+        self.slab.core.reservations().commit(ticket, value);
         key
     }
 }
 
-impl<T, Tag, const MAX: u32> Drop for SlabVacantEntry<'_, T, Tag, MAX> {
+impl<T, Tag, const MAX: u32> Drop for VacantEntry<'_, T, Tag, MAX> {
     fn drop(&mut self) {
         if let Some(ticket) = self.ticket.take() {
-            self.slab.core.rollback(ticket);
+            self.slab.core.reservations().rollback(ticket);
         }
     }
 }

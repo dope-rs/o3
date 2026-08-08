@@ -1,10 +1,10 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use o3::collections::{CellSlab, SlabCapacity};
+use o3::collections::slab::{Capacity, Cell};
 
 #[test]
 fn reentrant_remove_observes_a_busy_slot() {
-    let slab: CellSlab<u32> = CellSlab::with_capacity(SlabCapacity::new(1));
+    let slab: Cell<u32> = Cell::with_capacity(Capacity::new(1));
     let key = slab.insert(42).unwrap();
     let value = slab.update(key, |value| {
         assert_eq!(slab.remove(key), None);
@@ -16,7 +16,7 @@ fn reentrant_remove_observes_a_busy_slot() {
 
 #[test]
 fn updates_keep_the_value_in_its_slot() {
-    let slab: CellSlab<u32> = CellSlab::with_capacity(SlabCapacity::new(1));
+    let slab: Cell<u32> = Cell::with_capacity(Capacity::new(1));
     let key = slab.insert(42).unwrap();
     let first = slab.update(key, |value| value as *mut u32).unwrap();
     let second = slab.update(key, |value| value as *mut u32).unwrap();
@@ -25,7 +25,7 @@ fn updates_keep_the_value_in_its_slot() {
 
 #[test]
 fn conditional_remove_visits_the_slot_once() {
-    let slab: CellSlab<u32> = CellSlab::with_capacity(SlabCapacity::new(1));
+    let slab: Cell<u32> = Cell::with_capacity(Capacity::new(1));
     let key = slab.insert(7).unwrap();
     assert!(
         slab.remove_parts_with(key.parts(), |_| None::<()>)
@@ -39,7 +39,7 @@ fn conditional_remove_visits_the_slot_once() {
 
 #[test]
 fn keys_follow_checked_dense_positions() {
-    let slab: CellSlab<u32> = CellSlab::with_capacity(SlabCapacity::new(4096));
+    let slab: Cell<u32> = Cell::with_capacity(Capacity::new(4096));
     let first = slab.insert(1).unwrap();
     let second = slab.insert(2).unwrap();
     let third = slab.insert(3).unwrap();
@@ -64,7 +64,7 @@ fn keys_follow_checked_dense_positions() {
 
 #[test]
 fn panicking_callbacks_restore_the_slot() {
-    let slab: CellSlab<u32> = CellSlab::with_capacity(SlabCapacity::new(1));
+    let slab: Cell<u32> = Cell::with_capacity(Capacity::new(1));
     let key = slab.insert(5).unwrap();
     let caught = catch_unwind(AssertUnwindSafe(|| {
         slab.update(key, |value| {

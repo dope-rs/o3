@@ -1,7 +1,5 @@
 use std::cell::{Cell, UnsafeCell};
 
-use crate::ThreadBound;
-
 /// Single-threaded storage whose exclusive callback rejects reentry.
 ///
 /// Its borrow flag is restored during unwinding.
@@ -9,11 +7,12 @@ use crate::ThreadBound;
 pub struct Checked<T> {
     value: UnsafeCell<T>,
     active: Cell<bool>,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 impl<T> Checked<T> {
     pub const fn new(value: T) -> Self {
+        use crate::ThreadBound;
         Self {
             value: UnsafeCell::new(value),
             active: Cell::new(false),

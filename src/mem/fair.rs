@@ -1,11 +1,9 @@
 use std::{array, cell::Cell};
 
-use crate::ThreadBound;
-
 /// Shared surplus for independently stored fair-lane states.
 pub struct Pool<const N: usize = 1> {
     shared: Cell<[usize; N]>,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 /// One lane's protected reserve and current holdings.
@@ -32,6 +30,7 @@ pub struct Credits<const N: usize = 1> {
 
 impl<const N: usize> Pool<N> {
     pub fn new(shared: [usize; N]) -> Self {
+        use crate::ThreadBound;
         assert!(N > 0, "credit dimension count must be positive");
         Self {
             shared: Cell::new(shared),

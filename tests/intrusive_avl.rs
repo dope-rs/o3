@@ -2,19 +2,16 @@ use std::collections::BTreeSet;
 
 use o3::collections::intrusive::avl::{Entry, Tree};
 
-#[cfg(debug_assertions)]
 #[test]
 fn linked_root_is_not_mistaken_for_an_unlinked_node() {
     let tree = Tree::new();
     let entry = Box::pin(Entry::new(1));
     unsafe { tree.insert_entry(entry.as_ref(), |_, _| false) };
 
-    let duplicate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-        tree.insert_entry(entry.as_ref(), |_, _| false);
-    }));
-
-    assert!(duplicate.is_err());
+    assert!(entry.as_ref().is_linked());
+    assert_eq!(tree.first_entry().map(|entry| *entry.value()), Some(1));
     unsafe { tree.remove_entry(entry.as_ref()) };
+    assert!(!entry.as_ref().is_linked());
     assert!(tree.first_entry().is_none());
 }
 

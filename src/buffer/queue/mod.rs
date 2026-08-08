@@ -1,9 +1,6 @@
 use std::{collections::VecDeque, ops::Range, process::abort};
 
-use crate::buffer::{
-    PrefixLength,
-    bytes::{Bytes, Retained},
-};
+use crate::buffer;
 
 pub(super) mod ring;
 
@@ -224,7 +221,7 @@ impl<T: AsRef<[u8]>> Segments<T> {
     }
 }
 
-impl Segments<Bytes<Retained>> {
+impl Segments<buffer::bytes::Bytes<buffer::bytes::Retained>> {
     /// Consumes a prefix by advancing a partial front segment in place.
     pub fn try_consume_front(&mut self, mut amount: usize) -> bool {
         if amount > self.len {
@@ -259,7 +256,7 @@ impl<T> Default for Segments<T> {
     }
 }
 
-impl<T> PrefixLength for Segments<T> {
+impl<T> buffer::PrefixLength for Segments<T> {
     fn prefix_len(&self) -> usize {
         self.len()
     }
@@ -345,7 +342,7 @@ impl<T> Default for Cursor<T> {
     }
 }
 
-impl<T> PrefixLength for Cursor<T> {
+impl<T> buffer::PrefixLength for Cursor<T> {
     fn prefix_len(&self) -> usize {
         self.len()
     }

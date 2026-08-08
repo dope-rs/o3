@@ -1,4 +1,4 @@
-use o3::buffer::{BLOCK_CAPACITY, Owned};
+use o3::buffer::{BLOCK_CAPACITY, storage::Owned};
 
 #[test]
 fn exact_and_fixed_owners_share_operations_without_sharing_capacity_types() {

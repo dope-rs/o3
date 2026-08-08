@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
-use o3::collections::{Slab, SlabCapacity, SlabKey};
+use o3::collections::slab::{Capacity, Slab, key::Key};
 
 struct Lcg(u64);
 impl Lcg {
@@ -16,9 +16,9 @@ impl Lcg {
 #[test]
 fn free_list_matches_a_reference_set() {
     const CAP: u32 = if cfg!(miri) { 128 } else { 5000 };
-    let mut s: Slab<u32> = Slab::with_capacity(SlabCapacity::new(CAP));
+    let mut s: Slab<u32> = Slab::with_capacity(Capacity::new(CAP));
     let mut free: BTreeSet<u32> = (0..CAP).collect();
-    let mut live: HashMap<u32, SlabKey> = HashMap::new();
+    let mut live: HashMap<u32, Key> = HashMap::new();
     let mut rng = Lcg(0x1234_5678_9abc_def0);
 
     let boundaries: &[u32] = if cfg!(miri) {

@@ -1,16 +1,14 @@
-use std::cell::{Cell, UnsafeCell};
-
-use crate::ThreadBound;
+use std::cell::Cell;
 
 const WORD_BITS: usize = usize::BITS as usize;
 
 pub(super) struct Bitmap {
-    words: UnsafeCell<Words>,
-    summary: UnsafeCell<Option<Box<Bitmap>>>,
+    words: Words,
+    summary: Option<Box<Bitmap>>,
     capacity: Cell<usize>,
     len: Cell<usize>,
     cursor: Cell<usize>,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 pub(super) enum Words {
@@ -40,12 +38,11 @@ impl Words {
 
 impl Bitmap {
     pub(super) fn with_capacity(capacity: usize) -> Self {
+        use crate::ThreadBound;
         let word_count = capacity.div_ceil(WORD_BITS);
         Self {
-            words: UnsafeCell::new(Words::zeroed(word_count)),
-            summary: UnsafeCell::new(
-                (word_count > 1).then(|| Box::new(Self::with_capacity(word_count))),
-            ),
+            words: Words::zeroed(word_count),
+            summary: (word_count > 1).then(|| Box::new(Self::with_capacity(word_count))),
             capacity: Cell::new(capacity),
             len: Cell::new(0),
             cursor: Cell::new(0),
@@ -160,10 +157,10 @@ impl Bitmap {
     }
 
     fn summary(&self) -> Option<&Bitmap> {
-        unsafe { &*self.summary.get() }.as_deref()
+        self.summary.as_deref()
     }
 
     fn words(&self) -> &[Cell<usize>] {
-        unsafe { &*self.words.get() }.as_slice()
+        self.words.as_slice()
     }
 }

@@ -4,10 +4,7 @@ use std::{
     ptr,
 };
 
-use crate::{
-    ThreadBound,
-    collections::{BoxSliceGrowth, ClearGuard},
-};
+use crate::collections;
 
 const NONE: u32 = u32::MAX;
 
@@ -128,7 +125,7 @@ struct Entry<K> {
 pub struct Max<T> {
     entries: Box<[MaybeUninit<T>]>,
     len: usize,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 impl<T> Max<T> {
@@ -136,7 +133,7 @@ impl<T> Max<T> {
         Self {
             entries: Box::<[T]>::new_uninit_slice(capacity),
             len: 0,
-            _thread: ThreadBound::NEW,
+            _thread: Default::default(),
         }
     }
 
@@ -215,7 +212,7 @@ impl<T> Max<T> {
 
 impl<T> Drop for Max<T> {
     fn drop(&mut self) {
-        ClearGuard::run(self, Self::clear);
+        collections::ClearGuard::run(self, Self::clear);
     }
 }
 
@@ -223,7 +220,7 @@ pub struct Min<K: Ord> {
     entries: Box<[MaybeUninit<Entry<K>>]>,
     positions: Box<[u32]>,
     len: usize,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 pub struct Vacant<'a, K: Ord> {
@@ -247,7 +244,7 @@ impl<K: Ord> Min<K> {
             entries: Box::<[Entry<K>]>::new_uninit_slice(capacity),
             positions: vec![NONE; capacity].into_boxed_slice(),
             len: 0,
-            _thread: ThreadBound::NEW,
+            _thread: Default::default(),
         }
     }
 
@@ -340,6 +337,7 @@ impl<K: Ord> Min<K> {
     }
 
     pub fn grow_to(&mut self, capacity: usize) {
+        use crate::collections::BoxSliceGrowth;
         let old_capacity = self.positions.len();
         assert!(capacity >= old_capacity, "index heap cannot shrink");
         assert!(
@@ -389,6 +387,6 @@ impl<K: Ord> Min<K> {
 
 impl<K: Ord> Drop for Min<K> {
     fn drop(&mut self) {
-        ClearGuard::run(self, Self::clear);
+        collections::ClearGuard::run(self, Self::clear);
     }
 }

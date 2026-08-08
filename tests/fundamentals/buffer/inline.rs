@@ -1,6 +1,6 @@
 use std::mem::size_of;
 
-use o3::buffer::inline::{Bytes, CAPACITY};
+use o3::buffer::storage::inline::{Bytes, CAPACITY};
 
 #[test]
 fn inline_bytes_fill_without_growing_the_owner() {

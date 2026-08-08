@@ -68,8 +68,9 @@ fn native_buffer_prefix_commit_has_no_second_validation_surface() {
     assert!(buffer.is_empty());
 }
 
-#[cfg(target_pointer_width = "64")]
 #[test]
 fn prefix_proof_keeps_only_the_exclusive_target_and_length() {
-    assert_eq!(std::mem::size_of::<ValidatedPrefix<'_, Inline<16>>>(), 16);
+    if usize::BITS == 64 {
+        assert_eq!(std::mem::size_of::<ValidatedPrefix<'_, Inline<16>>>(), 16);
+    }
 }

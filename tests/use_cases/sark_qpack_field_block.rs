@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use o3::buffer::{CapacityError, Owned, SpareWriter};
+use o3::buffer::{CapacityError, storage::Owned, write::SpareWriter};
 
 fn push_field(
     writer: &mut SpareWriter<'_>,

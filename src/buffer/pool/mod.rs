@@ -1,6 +1,6 @@
-use std::{marker::PhantomData, ptr::NonNull};
+use std::{error::Error, fmt, marker::PhantomData, ptr::NonNull};
 
-use crate::buffer::PoolLayoutError;
+use crate::buffer;
 
 mod core;
 mod cursor;
@@ -8,48 +8,61 @@ mod frozen;
 mod layout;
 mod lease;
 mod plan;
-mod state;
-
-use core::Core;
+pub mod state;
 
 pub use cursor::Cursor;
 pub use frozen::Frozen;
 pub use layout::Layout;
 pub use lease::Lease;
 pub use plan::Plan;
-#[doc(hidden)]
-pub use state::{Initialized, State, Uninitialized};
 
-pub trait PoolCapacitySealed {}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutError {
+    ZeroCapacity,
+    SlotOverflow,
+    CapacityOverflow,
+}
+
+impl fmt::Display for LayoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroCapacity => f.write_str("buffer pool capacity must be positive"),
+            Self::SlotOverflow => f.write_str("buffer pool slot count overflow"),
+            Self::CapacityOverflow => f.write_str("buffer pool allocation size overflow"),
+        }
+    }
+}
+
+impl Error for LayoutError {}
 
 /// Selects whether a pool capacity is fixed in its type or stored in its layout.
 ///
 /// This bound is sealed because the allocator's layout proof depends on it.
 #[doc(hidden)]
-pub trait PoolCapacity: PoolCapacitySealed {}
+pub trait Capacity: buffer::Seal {}
 
 #[repr(transparent)]
-pub struct Pool<S: State = Uninitialized, C: PoolCapacity = RuntimePoolCapacity> {
-    core: NonNull<Core>,
+pub struct Pool<S: state::State = state::Uninitialized, C: Capacity = RuntimeCapacity> {
+    core: NonNull<core::Core>,
     marker: PhantomData<(S, C, *mut ())>,
 }
 
-impl<S: State> Pool<S, RuntimePoolCapacity> {
+impl<S: state::State> Pool<S, RuntimeCapacity> {
     pub fn from_layout(layout: Layout) -> Self {
         Self {
-            core: Core::allocate::<S>(layout),
+            core: core::Core::allocate::<S>(layout),
             marker: PhantomData,
         }
     }
 
-    pub fn try_new(slots: usize, capacity: usize) -> Result<Self, PoolLayoutError> {
+    pub fn try_new(slots: usize, capacity: usize) -> Result<Self, LayoutError> {
         Ok(Self::from_layout(Layout::new(slots, capacity)?))
     }
 }
 
-impl<S: State, C: PoolCapacity> Pool<S, C> {
+impl<S: state::State, C: Capacity> Pool<S, C> {
     pub fn try_acquire(&self) -> Option<Lease<S, C>> {
-        let index = Core::acquire(self.core)?;
+        let index = core::Core::acquire(self.core)?;
         Some(Lease {
             core: self.core,
             index,
@@ -59,19 +72,19 @@ impl<S: State, C: PoolCapacity> Pool<S, C> {
     }
 
     pub fn capacity(&self) -> usize {
-        Core::capacity(self.core)
+        core::Core::capacity(self.core)
     }
 
     pub fn available(&self) -> usize {
-        Core::available(self.core)
+        core::Core::available(self.core)
     }
 }
 
-impl<S: State, const CAP: u32> Pool<S, FixedPoolCapacity<CAP>> {
-    pub fn try_with_slots(slots: usize) -> Result<Self, PoolLayoutError> {
+impl<S: state::State, const CAP: u32> Pool<S, FixedCapacity<CAP>> {
+    pub fn try_with_slots(slots: usize) -> Result<Self, LayoutError> {
         let layout = Layout::new(slots, CAP as usize)?;
         Ok(Self {
-            core: Core::allocate::<S>(layout),
+            core: core::Core::allocate::<S>(layout),
             marker: PhantomData,
         })
     }
@@ -80,22 +93,22 @@ impl<S: State, const CAP: u32> Pool<S, FixedPoolCapacity<CAP>> {
     pub fn fixed<const SLOTS: usize>() -> Self {
         let layout = Layout::fixed_capacity::<SLOTS, CAP>();
         Self {
-            core: Core::allocate::<S>(layout),
+            core: core::Core::allocate::<S>(layout),
             marker: PhantomData,
         }
     }
 }
 
-impl<C: PoolCapacity> Pool<Uninitialized, C> {
+impl<C: Capacity> Pool<state::Uninitialized, C> {
     #[must_use]
     pub fn try_acquire_buffer(&self) -> Option<Cursor<C>> {
         self.try_acquire().map(Cursor::new)
     }
 }
 
-impl<S: State, C: PoolCapacity> Clone for Pool<S, C> {
+impl<S: state::State, C: Capacity> Clone for Pool<S, C> {
     fn clone(&self) -> Self {
-        Core::retain(self.core);
+        core::Core::retain(self.core);
         Self {
             core: self.core,
             marker: PhantomData,
@@ -103,24 +116,24 @@ impl<S: State, C: PoolCapacity> Clone for Pool<S, C> {
     }
 }
 
-impl<S: State, C: PoolCapacity> Drop for Pool<S, C> {
+impl<S: state::State, C: Capacity> Drop for Pool<S, C> {
     fn drop(&mut self) {
-        Core::release(self.core);
+        core::Core::release(self.core);
     }
 }
 
 /// Selects a capacity supplied by [`Layout`] at construction time.
 #[derive(Clone, Copy)]
-pub struct RuntimePoolCapacity;
+pub struct RuntimeCapacity;
 
-impl PoolCapacitySealed for RuntimePoolCapacity {}
+impl buffer::Seal for RuntimeCapacity {}
 
-impl PoolCapacity for RuntimePoolCapacity {}
+impl Capacity for RuntimeCapacity {}
 
 /// Selects a capacity fixed in the pool type.
 #[derive(Clone, Copy)]
-pub struct FixedPoolCapacity<const CAP: u32>;
+pub struct FixedCapacity<const CAP: u32>;
 
-impl<const CAP: u32> PoolCapacitySealed for FixedPoolCapacity<CAP> {}
+impl<const CAP: u32> buffer::Seal for FixedCapacity<CAP> {}
 
-impl<const CAP: u32> PoolCapacity for FixedPoolCapacity<CAP> {}
+impl<const CAP: u32> Capacity for FixedCapacity<CAP> {}

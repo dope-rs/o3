@@ -1,15 +1,20 @@
-use o3::buffer::{BLOCK_CAPACITY, CapacityError, Owned, Shared, view::Snapshot};
+use o3::buffer::{
+    BLOCK_CAPACITY, CapacityError,
+    storage::{Owned, shared::Shared},
+    view::Snapshot,
+};
 
 type FixedOwned = Owned<BLOCK_CAPACITY>;
 const FIXED_CAPACITY: usize = BLOCK_CAPACITY as usize;
 
-#[cfg(target_pointer_width = "64")]
 #[test]
 fn buffer_handles_stay_thin() {
-    assert_eq!(size_of::<Owned>(), 16);
-    assert_eq!(size_of::<FixedOwned>(), 16);
-    assert_eq!(size_of::<Shared>(), 24);
-    assert_eq!(size_of::<Snapshot<1_048_576>>(), 24);
+    if usize::BITS == 64 {
+        assert_eq!(size_of::<Owned>(), 16);
+        assert_eq!(size_of::<FixedOwned>(), 16);
+        assert_eq!(size_of::<Shared>(), 24);
+        assert_eq!(size_of::<Snapshot<1_048_576>>(), 24);
+    }
 }
 
 #[test]
