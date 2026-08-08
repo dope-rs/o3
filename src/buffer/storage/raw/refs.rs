@@ -1,15 +1,15 @@
-use std::{cell::Cell, process::abort};
+use std::cell;
 
 #[repr(transparent)]
-pub(in crate::buffer) struct LocalRefCount(Cell<u32>);
+pub(in crate::buffer) struct LocalRefCount(cell::Cell<u32>);
 
 impl LocalRefCount {
     pub(in crate::buffer) const fn one() -> Self {
-        Self(Cell::new(1))
+        Self(cell::Cell::new(1))
     }
 
     pub(in crate::buffer) const fn empty() -> Self {
-        Self(Cell::new(0))
+        Self(cell::Cell::new(0))
     }
 
     pub(in crate::buffer) fn is_empty(&self) -> bool {
@@ -57,5 +57,6 @@ const _: () = assert!(size_of::<LocalRefCount>() == size_of::<u32>());
 
 #[cold]
 fn overflow() -> ! {
+    use std::process::abort;
     abort()
 }

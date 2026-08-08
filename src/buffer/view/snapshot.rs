@@ -1,7 +1,10 @@
-use crate::buffer::{self, storage};
+use crate::buffer::{
+    self,
+    storage::{raw, shared},
+};
 
 pub struct Snapshot<const MAX_CAPACITY: usize> {
-    buf: storage::raw::AllocationMut,
+    buf: raw::AllocationMut,
     cap: u32,
     head: u32,
     tail: u32,
@@ -17,7 +20,7 @@ impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
     pub fn new() -> Self {
         let () = Self::VALID;
         Self {
-            buf: storage::raw::AllocationMut::with_capacity_u32(0),
+            buf: raw::AllocationMut::with_capacity_u32(0),
             cap: 0,
             head: 0,
             tail: 0,
@@ -32,7 +35,7 @@ impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
 
     fn with_valid_capacity(capacity: usize) -> Self {
         Self {
-            buf: storage::raw::AllocationMut::with_capacity_u32(capacity as u32),
+            buf: raw::AllocationMut::with_capacity_u32(capacity as u32),
             cap: capacity as u32,
             head: 0,
             tail: 0,
@@ -70,7 +73,7 @@ impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
 
     fn realloc(&mut self, new_cap: usize) {
         let unparsed = (self.head - self.tail) as usize;
-        let mut fresh = storage::raw::AllocationMut::with_capacity_u32(new_cap as u32);
+        let mut fresh = raw::AllocationMut::with_capacity_u32(new_cap as u32);
         if unparsed > 0 {
             fresh.copy_from_allocation(0, &self.buf, self.tail as usize, unparsed);
         }
@@ -109,7 +112,7 @@ impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
         Ok(())
     }
 
-    pub fn snapshot(&self) -> Option<buffer::storage::shared::Shared> {
+    pub fn snapshot(&self) -> Option<shared::Shared> {
         use crate::buffer::storage::shared::Shared;
         let t = self.tail;
         let h = self.head;

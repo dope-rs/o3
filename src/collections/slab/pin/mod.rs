@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, mem::MaybeUninit, pin::Pin};
+use std::{marker, mem, pin};
 
 use crate::collections::slab::{self, GenerationState as _, key};
 
@@ -17,7 +17,7 @@ enum State {
 }
 
 struct Slot<T, const MAX: u32> {
-    value: MaybeUninit<T>,
+    value: mem::MaybeUninit<T>,
     generation: key::Generation<MAX>,
     next: u32,
     state: State,
@@ -26,7 +26,7 @@ struct Slot<T, const MAX: u32> {
 impl<T, const MAX: u32> Slot<T, MAX> {
     fn new(index: usize, capacity: usize) -> Self {
         Self {
-            value: MaybeUninit::uninit(),
+            value: mem::MaybeUninit::uninit(),
             generation: key::Generation::MIN,
             next: if index + 1 == capacity {
                 NONE
@@ -60,8 +60,8 @@ struct Core<T, Tag, S: Slots<T, MAX>, const MAX: u32> {
     slots: S,
     free: u32,
     len: usize,
-    value: PhantomData<fn(T)>,
-    tag: PhantomData<fn() -> Tag>,
+    value: marker::PhantomData<fn(T)>,
+    tag: marker::PhantomData<fn() -> Tag>,
     _thread: crate::ThreadBound,
 }
 
@@ -119,8 +119,8 @@ impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Core<T, Tag, S, MAX> {
             slots,
             free,
             len: 0,
-            value: PhantomData,
-            tag: PhantomData,
+            value: marker::PhantomData,
+            tag: marker::PhantomData,
             _thread: ThreadBound::NEW,
         }
     }
@@ -141,17 +141,17 @@ impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Core<T, Tag, S, MAX> {
         self.slot(parts).is_some()
     }
 
-    fn parts(&self, parts: key::Parts<MAX>) -> Option<Pin<&T>> {
+    fn parts(&self, parts: key::Parts<MAX>) -> Option<pin::Pin<&T>> {
         let slot = self.slot(parts)?;
-        Some(unsafe { Pin::new_unchecked(slot.value.assume_init_ref()) })
+        Some(unsafe { pin::Pin::new_unchecked(slot.value.assume_init_ref()) })
     }
 
-    fn parts_mut(&mut self, parts: key::Parts<MAX>) -> Option<Pin<&mut T>> {
+    fn parts_mut(&mut self, parts: key::Parts<MAX>) -> Option<pin::Pin<&mut T>> {
         let slot = self.slots.as_mut_slice().get_mut(parts.index() as usize)?;
         if slot.state != State::Occupied || slot.generation != parts.generation() {
             return None;
         }
-        Some(unsafe { Pin::new_unchecked(slot.value.assume_init_mut()) })
+        Some(unsafe { pin::Pin::new_unchecked(slot.value.assume_init_mut()) })
     }
 
     fn remove_index(&mut self, index: u32) {
@@ -279,19 +279,19 @@ impl<T, Tag, const MAX: u32> Pool<T, Tag, MAX> {
         self.core.key(index)
     }
 
-    pub fn get(&self, key: key::Key<Tag, MAX>) -> Option<Pin<&T>> {
+    pub fn get(&self, key: key::Key<Tag, MAX>) -> Option<pin::Pin<&T>> {
         self.get_parts(key.parts())
     }
 
-    pub fn get_parts(&self, parts: key::Parts<MAX>) -> Option<Pin<&T>> {
+    pub fn get_parts(&self, parts: key::Parts<MAX>) -> Option<pin::Pin<&T>> {
         self.core.parts(parts)
     }
 
-    pub fn get_mut(&mut self, key: key::Key<Tag, MAX>) -> Option<Pin<&mut T>> {
+    pub fn get_mut(&mut self, key: key::Key<Tag, MAX>) -> Option<pin::Pin<&mut T>> {
         self.get_parts_mut(key.parts())
     }
 
-    pub fn get_parts_mut(&mut self, parts: key::Parts<MAX>) -> Option<Pin<&mut T>> {
+    pub fn get_parts_mut(&mut self, parts: key::Parts<MAX>) -> Option<pin::Pin<&mut T>> {
         self.core.parts_mut(parts)
     }
 

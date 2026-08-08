@@ -1,32 +1,32 @@
-use std::cell::Cell;
+use std::cell;
 
 const WORD_BITS: usize = usize::BITS as usize;
 
 pub(super) struct Bitmap {
     words: Words,
     summary: Option<Box<Bitmap>>,
-    capacity: Cell<usize>,
-    len: Cell<usize>,
-    cursor: Cell<usize>,
+    capacity: cell::Cell<usize>,
+    len: cell::Cell<usize>,
+    cursor: cell::Cell<usize>,
     _thread: crate::ThreadBound,
 }
 
 pub(super) enum Words {
     Empty,
-    Inline(Cell<usize>),
-    Heap(Vec<Cell<usize>>),
+    Inline(cell::Cell<usize>),
+    Heap(Vec<cell::Cell<usize>>),
 }
 
 impl Words {
     pub(super) fn zeroed(word_count: usize) -> Self {
         match word_count {
             0 => Self::Empty,
-            1 => Self::Inline(Cell::new(0)),
-            _ => Self::Heap((0..word_count).map(|_| Cell::new(0)).collect()),
+            1 => Self::Inline(cell::Cell::new(0)),
+            _ => Self::Heap((0..word_count).map(|_| cell::Cell::new(0)).collect()),
         }
     }
 
-    pub(super) fn as_slice(&self) -> &[Cell<usize>] {
+    pub(super) fn as_slice(&self) -> &[cell::Cell<usize>] {
         use std::slice::from_ref;
         match self {
             Self::Empty => &[],
@@ -43,9 +43,9 @@ impl Bitmap {
         Self {
             words: Words::zeroed(word_count),
             summary: (word_count > 1).then(|| Box::new(Self::with_capacity(word_count))),
-            capacity: Cell::new(capacity),
-            len: Cell::new(0),
-            cursor: Cell::new(0),
+            capacity: cell::Cell::new(capacity),
+            len: cell::Cell::new(0),
+            cursor: cell::Cell::new(0),
             _thread: ThreadBound::NEW,
         }
     }
@@ -160,7 +160,7 @@ impl Bitmap {
         self.summary.as_deref()
     }
 
-    fn words(&self) -> &[Cell<usize>] {
+    fn words(&self) -> &[cell::Cell<usize>] {
         self.words.as_slice()
     }
 }

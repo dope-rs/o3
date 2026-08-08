@@ -1,11 +1,11 @@
-use std::mem::MaybeUninit;
+use std::mem;
 
 pub struct Fifo<T> {
     ring: Ring<T>,
 }
 
 struct Ring<T> {
-    entries: Box<[MaybeUninit<T>]>,
+    entries: Box<[mem::MaybeUninit<T>]>,
     head: usize,
     len: usize,
     _thread: crate::ThreadBound,

@@ -6,7 +6,7 @@ pub mod storage;
 pub mod view;
 pub mod write;
 
-use std::{error::Error, fmt, mem::MaybeUninit, ops::Range, ptr};
+use std::{error, fmt, mem, ops, ptr};
 
 pub(crate) use seal::Seal;
 
@@ -127,7 +127,7 @@ impl fmt::Display for CapacityError {
     }
 }
 
-impl Error for CapacityError {}
+impl error::Error for CapacityError {}
 
 fn checked_append_len<const N: usize>(
     start: usize,
@@ -150,7 +150,7 @@ trait RangeExt {
     fn is_within(&self, len: usize) -> bool;
 }
 
-impl RangeExt for Range<usize> {
+impl RangeExt for ops::Range<usize> {
     fn is_within(&self, len: usize) -> bool {
         self.start <= self.end && self.end <= len
     }
@@ -158,7 +158,7 @@ impl RangeExt for Range<usize> {
 
 /// # Safety
 /// `buf` is valid through `*tail`, and `*head <= *tail`.
-unsafe fn compact(buf: *mut MaybeUninit<u8>, head: &mut u32, tail: &mut u32) {
+unsafe fn compact(buf: *mut mem::MaybeUninit<u8>, head: &mut u32, tail: &mut u32) {
     if *head == 0 {
         return;
     }

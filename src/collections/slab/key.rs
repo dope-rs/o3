@@ -1,28 +1,23 @@
-use std::{
-    fmt,
-    hash::{Hash, Hasher},
-    marker::PhantomData,
-    num::{NonZeroU32, NonZeroU64},
-};
+use std::{fmt, hash, marker, num};
 
 use crate::collections::slab;
 
 #[repr(transparent)]
 pub struct Key<Tag = (), const MAX: u32 = { u32::MAX }> {
     parts: Parts<MAX>,
-    marker: PhantomData<*mut Tag>,
+    marker: marker::PhantomData<*mut Tag>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, hash::Hash)]
 #[repr(transparent)]
 pub struct Parts<const MAX: u32 = { u32::MAX }> {
-    raw: NonZeroU64,
-    marker: PhantomData<*mut ()>,
+    raw: num::NonZeroU64,
+    marker: marker::PhantomData<*mut ()>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, hash::Hash)]
 #[repr(transparent)]
-pub struct Generation<const MAX: u32 = { u32::MAX }>(NonZeroU32, crate::ThreadBound);
+pub struct Generation<const MAX: u32 = { u32::MAX }>(num::NonZeroU32, crate::ThreadBound);
 
 impl<const MAX: u32> Generation<MAX> {
     const THREAD_BOUND: crate::ThreadBound = {
@@ -32,13 +27,13 @@ impl<const MAX: u32> Generation<MAX> {
     const VALID: () = assert!(MAX != 0, "generation limit must be nonzero");
     pub const MIN: Self = {
         let () = Self::VALID;
-        Self(NonZeroU32::MIN, Self::THREAD_BOUND)
+        Self(num::NonZeroU32::MIN, Self::THREAD_BOUND)
     };
 
     #[must_use]
     pub const fn new(raw: u32) -> Option<Self> {
         let () = Self::VALID;
-        match NonZeroU32::new(raw) {
+        match num::NonZeroU32::new(raw) {
             Some(_) if raw > MAX => None,
             Some(raw) => Some(Self(raw, Self::THREAD_BOUND)),
             None => None,
@@ -72,8 +67,8 @@ impl<const MAX: u32> Parts<MAX> {
     pub const fn from_generation(index: u32, generation: Generation<MAX>) -> Self {
         let raw = ((generation.get() as u64) << 32) | index as u64;
         Self {
-            raw: unsafe { NonZeroU64::new_unchecked(raw) },
-            marker: PhantomData,
+            raw: unsafe { num::NonZeroU64::new_unchecked(raw) },
+            marker: marker::PhantomData,
         }
     }
 
@@ -83,7 +78,7 @@ impl<const MAX: u32> Parts<MAX> {
 
     pub const fn generation(self) -> Generation<MAX> {
         Generation(
-            unsafe { NonZeroU32::new_unchecked((self.raw.get() >> 32) as u32) },
+            unsafe { num::NonZeroU32::new_unchecked((self.raw.get() >> 32) as u32) },
             Generation::<MAX>::THREAD_BOUND,
         )
     }
@@ -106,7 +101,7 @@ impl<Tag, const MAX: u32> Key<Tag, MAX> {
     pub(super) const fn from_parts(parts: Parts<MAX>) -> Self {
         Self {
             parts,
-            marker: PhantomData,
+            marker: marker::PhantomData,
         }
     }
 
@@ -145,8 +140,8 @@ impl<Tag, const MAX: u32> PartialEq for Key<Tag, MAX> {
 
 impl<Tag, const MAX: u32> Eq for Key<Tag, MAX> {}
 
-impl<Tag, const MAX: u32> Hash for Key<Tag, MAX> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
+impl<Tag, const MAX: u32> hash::Hash for Key<Tag, MAX> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.parts.hash(state);
     }
 }

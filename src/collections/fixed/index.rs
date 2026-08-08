@@ -1,11 +1,11 @@
-use std::{iter::from_fn, mem::MaybeUninit};
+use std::mem;
 
 const WORD_BITS: usize = u64::BITS as usize;
 
 /// Fixed-capacity values addressed directly by caller-provided indices.
 pub struct Slots<T> {
     occupied: Box<[u64]>,
-    values: Box<[MaybeUninit<T>]>,
+    values: Box<[mem::MaybeUninit<T>]>,
     len: usize,
 }
 
@@ -89,6 +89,7 @@ impl<T> Slots<T> {
             .copied()
             .enumerate()
             .flat_map(|(word_index, mut word)| {
+                use std::iter::from_fn;
                 from_fn(move || {
                     if word == 0 {
                         return None;

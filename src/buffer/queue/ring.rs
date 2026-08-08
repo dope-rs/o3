@@ -1,4 +1,4 @@
-use std::{mem::MaybeUninit, num::NonZeroUsize, ptr::copy_nonoverlapping, slice::from_raw_parts};
+use std::{mem, num};
 
 use crate::buffer;
 
@@ -11,7 +11,7 @@ const fn wrap(index: usize, capacity: usize) -> usize {
 }
 
 pub struct Ring {
-    buf: Box<[MaybeUninit<u8>]>,
+    buf: Box<[mem::MaybeUninit<u8>]>,
     head: usize,
     len: usize,
     _thread: crate::ThreadBound,
@@ -19,7 +19,7 @@ pub struct Ring {
 
 impl Ring {
     #[must_use]
-    pub fn with_capacity(capacity: NonZeroUsize) -> Self {
+    pub fn with_capacity(capacity: num::NonZeroUsize) -> Self {
         use crate::ThreadBound;
         Self {
             buf: Box::<[u8]>::new_uninit_slice(capacity.get()),
@@ -49,6 +49,7 @@ impl Ring {
         let first_len = self.len.min(self.capacity() - self.head);
         let second_len = self.len - first_len;
         unsafe {
+            use std::slice::from_raw_parts;
             (
                 from_raw_parts(self.buf.as_ptr().add(self.head).cast(), first_len),
                 from_raw_parts(self.buf.as_ptr().cast(), second_len),
@@ -82,7 +83,7 @@ impl Ring {
             self.buf
                 .as_mut_ptr()
                 .add(tail)
-                .write(MaybeUninit::new(byte))
+                .write(mem::MaybeUninit::new(byte))
         };
         self.len += 1;
         Ok(())
@@ -119,6 +120,7 @@ impl Ring {
     fn copy_at_tail(&mut self, tail: usize, src: &[u8]) {
         let first_len = src.len().min(self.capacity() - tail);
         unsafe {
+            use std::ptr::copy_nonoverlapping;
             copy_nonoverlapping(
                 src.as_ptr(),
                 self.buf.as_mut_ptr().add(tail).cast(),

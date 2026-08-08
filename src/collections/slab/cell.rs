@@ -1,10 +1,10 @@
-use std::marker::PhantomData;
+use std::marker;
 
 use crate::collections::slab::{self, core, key};
 
 pub struct Cell<T, Tag = (), const MAX: u32 = { u32::MAX }> {
     core: core::Core<T, key::Generation<MAX>, core::Interior>,
-    tag: PhantomData<fn() -> Tag>,
+    tag: marker::PhantomData<fn() -> Tag>,
 }
 
 struct Keys<'a, T, Tag, const MAX: u32> {
@@ -38,7 +38,7 @@ impl<T, Tag, const MAX: u32> Cell<T, Tag, MAX> {
         use crate::collections::slab::core::Core;
         Self {
             core: Core::with_capacity(capacity),
-            tag: PhantomData,
+            tag: marker::PhantomData,
         }
     }
 

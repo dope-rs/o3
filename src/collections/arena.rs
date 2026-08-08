@@ -1,16 +1,16 @@
-use std::mem::MaybeUninit;
+use std::mem;
 
 use crate::collections;
 
 const NONE: u32 = u32::MAX;
 
 struct Node<T> {
-    value: MaybeUninit<T>,
+    value: mem::MaybeUninit<T>,
     next: u32,
 }
 
 struct NodePool<T> {
-    nodes: Box<[MaybeUninit<Node<T>>]>,
+    nodes: Box<[mem::MaybeUninit<Node<T>>]>,
     free: u32,
     initialized: u32,
     live: u32,
@@ -163,7 +163,7 @@ impl<T> NodePool<T> {
             debug_assert!((index as usize) < self.nodes.len());
             self.initialized += 1;
             self.nodes[index as usize].write(Node {
-                value: MaybeUninit::new(value),
+                value: mem::MaybeUninit::new(value),
                 next: NONE,
             });
             index

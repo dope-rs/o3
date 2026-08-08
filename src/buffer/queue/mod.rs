@@ -1,6 +1,6 @@
-use std::{collections::VecDeque, ops::Range, process::abort};
+use std::{collections, ops};
 
-use crate::buffer;
+use crate::buffer::{self, bytes};
 
 pub(super) mod ring;
 
@@ -11,7 +11,7 @@ pub use ring::Ring;
 /// protocol-specific byte and segment limits.
 #[derive(Debug)]
 pub struct Segments<T> {
-    segments: VecDeque<T>,
+    segments: collections::VecDeque<T>,
     len: usize,
 }
 
@@ -26,7 +26,7 @@ impl<T> Segments<T> {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            segments: VecDeque::new(),
+            segments: collections::VecDeque::new(),
             len: 0,
         }
     }
@@ -165,7 +165,7 @@ impl<T: AsRef<[u8]>> Segments<T> {
         front_offset: usize,
         offset: usize,
         len: usize,
-    ) -> Option<(&T, Range<usize>)> {
+    ) -> Option<(&T, ops::Range<usize>)> {
         if len == 0 || !self.range_available(front_offset, offset, len) {
             return None;
         }
@@ -221,7 +221,7 @@ impl<T: AsRef<[u8]>> Segments<T> {
     }
 }
 
-impl Segments<buffer::bytes::Bytes<buffer::bytes::Retained>> {
+impl Segments<bytes::Bytes<bytes::Retained>> {
     /// Consumes a prefix by advancing a partial front segment in place.
     pub fn try_consume_front(&mut self, mut amount: usize) -> bool {
         if amount > self.len {
@@ -320,7 +320,7 @@ impl<T: AsRef<[u8]>> Cursor<T> {
             .copy_range_into(self.front_offset, offset, output)
     }
 
-    pub fn contiguous_segment(&self, offset: usize, len: usize) -> Option<(&T, Range<usize>)> {
+    pub fn contiguous_segment(&self, offset: usize, len: usize) -> Option<(&T, ops::Range<usize>)> {
         self.queue
             .contiguous_segment(self.front_offset, offset, len)
     }
@@ -358,6 +358,8 @@ struct SegmentMutation<'a, T: AsRef<[u8]>> {
 
 impl<T: AsRef<[u8]>> Drop for SegmentMutation<'_, T> {
     fn drop(&mut self) {
+        use std::process::abort;
+
         let after = self.segment.as_ref().len();
         if after > self.segment_ceiling {
             abort();

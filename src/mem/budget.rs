@@ -1,8 +1,8 @@
-use std::cell::Cell;
+use std::cell;
 
 pub struct Bytes {
     limit: usize,
-    used: Cell<usize>,
+    used: cell::Cell<usize>,
     _thread: crate::ThreadBound,
 }
 
@@ -11,7 +11,7 @@ impl Bytes {
         use crate::ThreadBound;
         Self {
             limit,
-            used: Cell::new(0),
+            used: cell::Cell::new(0),
             _thread: ThreadBound::NEW,
         }
     }

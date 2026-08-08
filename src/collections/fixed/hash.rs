@@ -1,4 +1,4 @@
-use std::{alloc::Layout, fmt, marker::PhantomData, mem::MaybeUninit};
+use std::{fmt, marker, mem};
 
 const EMPTY: u8 = u8::MAX;
 
@@ -10,7 +10,7 @@ enum Probe {
 
 pub struct Plan<V> {
     capacity: usize,
-    marker: PhantomData<fn() -> V>,
+    marker: marker::PhantomData<fn() -> V>,
 }
 
 impl<V> Copy for Plan<V> {}
@@ -35,7 +35,7 @@ impl<V> Plan<V> {
         if Self::fits(capacity) {
             Some(Self {
                 capacity,
-                marker: PhantomData,
+                marker: marker::PhantomData,
             })
         } else {
             None
@@ -49,7 +49,7 @@ impl<V> Plan<V> {
         );
         Self {
             capacity: N,
-            marker: PhantomData,
+            marker: marker::PhantomData,
         }
     }
 
@@ -58,6 +58,8 @@ impl<V> Plan<V> {
     }
 
     const fn fits(capacity: usize) -> bool {
+        use std::alloc::Layout;
+
         if capacity > 1 << (usize::BITS - 2) {
             return false;
         }
@@ -70,8 +72,8 @@ impl<V> Plan<V> {
 
 pub struct Map<V> {
     controls: Box<[u8]>,
-    hashes: Box<[MaybeUninit<u64>]>,
-    values: Box<[MaybeUninit<V>]>,
+    hashes: Box<[mem::MaybeUninit<u64>]>,
+    values: Box<[mem::MaybeUninit<V>]>,
     len: usize,
     capacity: usize,
     _thread: crate::ThreadBound,
@@ -81,7 +83,7 @@ impl<V: Clone> Clone for Map<V> {
     fn clone(&self) -> Self {
         let mut cloned = Self::from_plan(Plan {
             capacity: self.capacity,
-            marker: PhantomData,
+            marker: marker::PhantomData,
         });
         for index in 0..self.controls.len() {
             if self.controls[index] == EMPTY {

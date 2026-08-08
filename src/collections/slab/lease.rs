@@ -1,10 +1,4 @@
-use std::{
-    cell::{Cell, UnsafeCell},
-    marker::PhantomData,
-    mem::{MaybeUninit, size_of},
-    ops::{Deref, DerefMut},
-    ptr::NonNull,
-};
+use std::{cell, marker, mem, ops, ptr};
 
 use crate::collections::slab;
 
@@ -19,30 +13,30 @@ enum State {
 }
 
 struct Slot<T> {
-    owner: Cell<NonNull<Group<T>>>,
-    link: Cell<u32>,
-    state: Cell<State>,
-    value: UnsafeCell<MaybeUninit<T>>,
+    owner: cell::Cell<ptr::NonNull<Group<T>>>,
+    link: cell::Cell<u32>,
+    state: cell::Cell<State>,
+    value: cell::UnsafeCell<mem::MaybeUninit<T>>,
 }
 
 impl<T> Slot<T> {
     fn new(index: u32, capacity: u32) -> Self {
         Self {
-            owner: Cell::new(NonNull::dangling()),
-            link: Cell::new(if index + 1 == capacity {
+            owner: cell::Cell::new(ptr::NonNull::dangling()),
+            link: cell::Cell::new(if index + 1 == capacity {
                 NONE
             } else {
                 index + 1
             }),
-            state: Cell::new(State::Free),
-            value: UnsafeCell::new(MaybeUninit::uninit()),
+            state: cell::Cell::new(State::Free),
+            value: cell::UnsafeCell::new(mem::MaybeUninit::uninit()),
         }
     }
 }
 
 struct Group<T> {
     slots: Box<[Slot<T>]>,
-    free: Cell<u32>,
+    free: cell::Cell<u32>,
 }
 
 impl<T> Group<T> {
@@ -103,7 +97,7 @@ impl<T> Pool<T> {
         Self {
             group: Group {
                 slots,
-                free: Cell::new(if capacity == 0 { NONE } else { 0 }),
+                free: cell::Cell::new(if capacity == 0 { NONE } else { 0 }),
             },
         }
     }
@@ -128,7 +122,7 @@ impl<'a, T> VacantEntry<'a, T> {
     pub fn insert(mut self, value: T) -> Lease<'a, T> {
         let slot = self.slab.group.slot(self.index);
         debug_assert!(slot.state.get() == State::Reserved);
-        slot.owner.set(NonNull::from(&self.slab.group));
+        slot.owner.set(ptr::NonNull::from(&self.slab.group));
         // SAFETY: this entry exclusively owns the uninitialized slot, and the
         // owner pointer is derived after the slab reaches its borrowed location.
         unsafe { (*slot.value.get()).write(value) };
@@ -136,8 +130,8 @@ impl<'a, T> VacantEntry<'a, T> {
         slot.state.set(State::Occupied);
         self.armed = false;
         Lease {
-            slot: NonNull::from(slot),
-            owner: PhantomData,
+            slot: ptr::NonNull::from(slot),
+            owner: marker::PhantomData,
         }
     }
 }
@@ -152,11 +146,11 @@ impl<T> Drop for VacantEntry<'_, T> {
 
 /// Exclusive ownership of one initialized [`Pool`] slot.
 pub struct Lease<'a, T> {
-    slot: NonNull<Slot<T>>,
-    owner: PhantomData<&'a Pool<T>>,
+    slot: ptr::NonNull<Slot<T>>,
+    owner: marker::PhantomData<&'a Pool<T>>,
 }
 
-const _: () = assert!(size_of::<Lease<'static, ()>>() == size_of::<usize>());
+const _: () = assert!(mem::size_of::<Lease<'static, ()>>() == mem::size_of::<usize>());
 
 impl<T> Lease<'_, T> {
     fn slot(&self) -> &Slot<T> {
@@ -166,7 +160,7 @@ impl<T> Lease<'_, T> {
     }
 }
 
-impl<T> Deref for Lease<'_, T> {
+impl<T> ops::Deref for Lease<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -178,7 +172,7 @@ impl<T> Deref for Lease<'_, T> {
     }
 }
 
-impl<T> DerefMut for Lease<'_, T> {
+impl<T> ops::DerefMut for Lease<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         let slot = self.slot();
         debug_assert!(slot.state.get() == State::Occupied);
@@ -188,7 +182,7 @@ impl<T> DerefMut for Lease<'_, T> {
 }
 
 struct Reclaim<T> {
-    owner: NonNull<Group<T>>,
+    owner: ptr::NonNull<Group<T>>,
     index: u32,
 }
 
