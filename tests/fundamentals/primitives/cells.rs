@@ -1,10 +1,10 @@
 use o3::{
     buffer::{
-        BLOCK_CAPACITY, PrefixConsumer,
-        pool::{Cursor, FixedCapacity, Layout, LayoutError, Pool, state::Uninitialized},
-        storage::shared::{Shared, strings::Str},
+        BLOCK_CAPACITY, Layout, Pool, PrefixConsumer,
+        pool::{Cursor, FixedCapacity, LayoutError, state::Uninitialized},
+        storage::{Shared, strings::Str},
     },
-    cell::branded::{Brand, BrandToken, Region},
+    cell::{brand, region},
     mem::{
         budget::Bytes,
         fair::{Credits, State},
@@ -197,18 +197,18 @@ fn local_pool_owners_are_movable() {
 
 #[test]
 fn brand_cells_mutate_in_place() {
-    BrandToken::scope(|mut brand| {
-        let value = Brand::new(1);
-        *value.borrow_mut(&mut brand) = 2;
-        assert_eq!(*value.borrow(&brand), 2);
+    brand::Token::scope(|mut token| {
+        let value = brand::Value::new(1);
+        *value.borrow_mut(&mut token) = 2;
+        assert_eq!(*value.borrow(&token), 2);
     });
 }
 
 #[test]
 fn application_and_state_permissions_are_independent() {
-    BrandToken::scope_with_region(|mut app, mut state| {
-        let dispatcher = Brand::new(1);
-        let storage = Region::new(2);
+    brand::Token::scope_with_region(|mut app, mut state| {
+        let dispatcher = brand::Value::new(1);
+        let storage = region::Value::new(2);
 
         let dispatcher = dispatcher.borrow_mut(&mut app);
         *storage.borrow_mut(&mut state) += *dispatcher;

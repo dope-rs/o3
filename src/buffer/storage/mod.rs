@@ -3,11 +3,11 @@ use std::{error, fmt};
 use crate::buffer;
 
 pub mod inline;
-mod owned;
 pub(in crate::buffer) mod raw;
-pub mod shared;
+mod sealed;
+pub mod strings;
 
-pub use owned::Owned;
+pub use sealed::{Owned, Shared};
 
 /// Failure to construct an exact-length [`Owned`] buffer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

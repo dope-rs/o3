@@ -1,4 +1,4 @@
-mod snapshot;
+mod sealed;
 pub mod window;
 
-pub use snapshot::Snapshot;
+pub use sealed::Snapshot;

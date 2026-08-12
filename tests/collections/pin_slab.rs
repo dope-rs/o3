@@ -17,7 +17,9 @@ fn dynamic_and_fixed_slots_stay_pinned() {
     slab.get_parts(first_parts).unwrap().bind();
 
     let mut moved = slab;
-    moved.get_parts_mut(first_parts).unwrap().set(2);
+    let (indexed, mut first_value) = moved.get_index_mut(first.index()).unwrap();
+    assert_eq!(indexed, first);
+    first_value.as_mut().set(2);
     assert_eq!(moved.get(first).unwrap().value(), 2);
     assert!(moved.remove_parts(first_parts));
     assert!(!moved.contains_parts(first_parts));

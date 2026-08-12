@@ -1,16 +1,19 @@
-use o3::buffer::pool::{self, LayoutError};
+use o3::buffer::{
+    self,
+    pool::{self, LayoutError},
+};
 
 use crate::confined::assert_confined;
 
-assert_confined!(pool::Pool);
-assert_confined!(pool::Lease);
-assert_confined!(pool::Pool<pool::state::Initialized>);
-assert_confined!(pool::Lease<pool::state::Initialized>);
-assert_confined!(pool::Frozen);
+assert_confined!(buffer::Pool);
+assert_confined!(buffer::Lease);
+assert_confined!(buffer::Pool<pool::state::Initialized>);
+assert_confined!(buffer::Lease<pool::state::Initialized>);
+assert_confined!(buffer::Frozen);
 
 #[test]
 fn frozen_slots_return_after_the_last_clone() {
-    let pool = pool::Pool::<pool::state::Uninitialized>::try_new(1, 16).unwrap();
+    let pool = buffer::Pool::<pool::state::Uninitialized>::try_new(1, 16).unwrap();
     let mut lease = pool.try_acquire().unwrap();
     lease.try_extend(b"body").unwrap();
     let body = lease.freeze();
@@ -21,7 +24,7 @@ fn frozen_slots_return_after_the_last_clone() {
     drop(clone);
     assert!(pool.try_acquire().is_some());
 
-    let empty = pool::Pool::<pool::state::Uninitialized>::try_new(0, 16).unwrap();
+    let empty = buffer::Pool::<pool::state::Uninitialized>::try_new(0, 16).unwrap();
     assert_eq!(empty.capacity(), 16);
     assert_eq!(empty.available(), 0);
     assert!(empty.try_acquire().is_none());
@@ -30,7 +33,7 @@ fn frozen_slots_return_after_the_last_clone() {
 #[test]
 fn frozen_slot_outlives_the_pool_handle() {
     let body = {
-        let pool = pool::Pool::<pool::state::Uninitialized>::try_new(1, 8).unwrap();
+        let pool = buffer::Pool::<pool::state::Uninitialized>::try_new(1, 8).unwrap();
         let mut lease = pool.try_acquire().unwrap();
         lease.try_extend(b"abc").unwrap();
         assert_eq!(lease.len(), 3);
@@ -43,33 +46,41 @@ fn frozen_slot_outlives_the_pool_handle() {
 #[test]
 fn invalid_layout_is_reported_before_allocation() {
     assert!(matches!(
-        pool::Pool::<pool::state::Uninitialized>::try_new(1, 0),
+        buffer::Pool::<pool::state::Uninitialized>::try_new(1, 0),
         Err(LayoutError::ZeroCapacity)
     ));
     assert!(matches!(
-        pool::Pool::<pool::state::Uninitialized>::try_new(usize::MAX, 1),
+        buffer::Pool::<pool::state::Uninitialized>::try_new(usize::MAX, 1),
         Err(LayoutError::SlotOverflow)
     ));
     assert!(matches!(
-        pool::Pool::<pool::state::Uninitialized>::try_new(u32::MAX as usize, u32::MAX as usize,),
+        buffer::Pool::<pool::state::Uninitialized>::try_new(u32::MAX as usize, u32::MAX as usize,),
         Err(LayoutError::CapacityOverflow)
     ));
 }
 
 #[test]
 fn validated_layout_constructs_multiple_infallible_pool_instances() {
-    let layout = pool::Layout::new(2, 32).unwrap();
+    let layout = buffer::Layout::new(2, 32).unwrap();
     assert_eq!(layout.slots(), 2);
 
-    let first = pool::Pool::<pool::state::Uninitialized>::from_layout(layout);
-    let second = pool::Pool::<pool::state::Initialized>::from_layout(layout);
+    let first = buffer::Pool::<pool::state::Uninitialized>::from_layout(layout);
+    let second = buffer::Pool::<pool::state::Initialized>::from_layout(layout);
     assert_eq!(first.available(), 2);
     assert_eq!(second.available(), 2);
 }
 
 #[test]
+fn validated_layout_can_report_allocation_failure() {
+    let layout = buffer::Layout::new(1, 8).unwrap();
+    let pool = buffer::Pool::<pool::state::Uninitialized>::try_from_layout(layout).unwrap();
+    assert_eq!(pool.capacity(), 8);
+    assert_eq!(pool.available(), 1);
+}
+
+#[test]
 fn fixed_plan_proves_every_smaller_layout() {
-    let plan = pool::Plan::fixed::<8, 256>();
+    let plan = buffer::Plan::fixed::<8, 256>();
     let full = plan.layout_up_to(usize::MAX);
     assert_eq!(full.slots(), 8);
     assert_eq!(plan.layout_up_to(3).slots(), 3);
@@ -78,15 +89,15 @@ fn fixed_plan_proves_every_smaller_layout() {
 #[test]
 fn initialized_slots_expose_spare_capacity_without_clearing_on_reuse() {
     assert_eq!(
-        std::mem::size_of::<pool::Pool<pool::state::Initialized>>(),
-        std::mem::size_of::<pool::Pool>(),
+        std::mem::size_of::<buffer::Pool<pool::state::Initialized>>(),
+        std::mem::size_of::<buffer::Pool>(),
     );
     assert_eq!(
-        std::mem::size_of::<pool::Lease<pool::state::Initialized>>(),
-        std::mem::size_of::<pool::Lease>(),
+        std::mem::size_of::<buffer::Lease<pool::state::Initialized>>(),
+        std::mem::size_of::<buffer::Lease>(),
     );
 
-    let pool = pool::Pool::<pool::state::Initialized>::try_new(1, 8).unwrap();
+    let pool = buffer::Pool::<pool::state::Initialized>::try_new(1, 8).unwrap();
     let mut lease = pool.try_acquire().expect("initialized slot");
     assert_eq!(lease.spare_mut(), &[0; 8]);
     lease.spare_mut()[..4].copy_from_slice(b"body");

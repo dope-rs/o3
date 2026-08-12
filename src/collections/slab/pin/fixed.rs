@@ -3,13 +3,13 @@ use std::{marker, pin};
 use crate::collections::slab::key;
 
 pub struct Pool<T, const N: usize, Tag = (), const MAX: u32 = { u32::MAX }> {
-    core: super::Core<T, Tag, [super::Slot<T, MAX>; N], MAX>,
+    core: super::raw::Core<T, Tag, [super::raw::Slot<T, MAX>; N], MAX>,
     _pin: marker::PhantomPinned,
 }
 
 #[must_use]
 pub struct VacantEntry<'a, T, const N: usize, Tag = (), const MAX: u32 = { u32::MAX }> {
-    entry: super::CoreVacantEntry<'a, T, Tag, [super::Slot<T, MAX>; N], MAX>,
+    entry: super::raw::VacantEntry<'a, T, Tag, [super::raw::Slot<T, MAX>; N], MAX>,
 }
 
 impl<T, const N: usize, Tag, const MAX: u32> VacantEntry<'_, T, N, Tag, MAX> {
@@ -22,9 +22,9 @@ impl<T, const N: usize, Tag, const MAX: u32> Pool<T, N, Tag, MAX> {
     pub fn new() -> Self {
         use std::array::from_fn;
 
-        use crate::collections::slab::pin::{Core, Slot};
+        use crate::collections::slab::pin::raw::{Core, Slot};
         Self {
-            core: Core::new(from_fn(|index| Slot::new(index, N))),
+            core: Core::new(from_fn(|index| Slot::linked(index, N))),
             _pin: marker::PhantomPinned,
         }
     }

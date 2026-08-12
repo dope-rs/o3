@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
 use o3::buffer::{
-    self, BLOCK_CAPACITY, PrefixConsumer,
-    pool::{Cursor, FixedCapacity, Pool, state::Uninitialized},
+    self, BLOCK_CAPACITY, Frozen, Lease, Pool, PrefixConsumer,
+    pool::{Cursor, FixedCapacity, state::Uninitialized},
 };
 
 struct FixedEgress {
@@ -25,10 +25,7 @@ impl FixedEgress {
     }
 }
 
-fn compress_into(
-    mut lease: buffer::pool::Lease<buffer::pool::state::Initialized>,
-    input: &[u8],
-) -> buffer::pool::Frozen {
+fn compress_into(mut lease: Lease<buffer::pool::state::Initialized>, input: &[u8]) -> Frozen {
     let output = &mut lease.spare_mut()[..input.len()];
     for (output, input) in output.iter_mut().zip(input) {
         *output = input.to_ascii_uppercase();
@@ -55,7 +52,7 @@ fn dope_fixed_egress_reuses_one_compile_time_sized_lease() {
 
 #[test]
 fn sark_compression_can_commit_only_initialized_spare_capacity() {
-    let pool = buffer::pool::Pool::<buffer::pool::state::Initialized>::try_new(1, 16).unwrap();
+    let pool = Pool::<buffer::pool::state::Initialized>::try_new(1, 16).unwrap();
     let lease = pool.try_acquire().expect("initialized compression slot");
     let compressed = compress_into(lease, b"body");
 

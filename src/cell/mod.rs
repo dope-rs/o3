@@ -1,4 +1,5 @@
-pub mod branded;
-mod checked;
+pub mod brand;
+pub mod region;
+mod sealed;
 
-pub use checked::Checked;
+pub use sealed::Checked;

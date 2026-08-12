@@ -3,25 +3,28 @@ use std::{cell, marker, mem};
 use crate::collections::slab;
 
 pub(super) mod entries;
-mod guards;
+pub(in crate::collections::slab) mod guards;
 mod reservations;
 
 pub(super) const NONE: u32 = u32::MAX;
 
 pub(super) trait Mode {
     const REENTRANT: bool;
+    const RECYCLE_GENERATIONS: bool;
 }
 
-pub(super) struct Exclusive;
+pub(super) struct Exclusive<const RECYCLE: bool>;
 
-impl Mode for Exclusive {
+impl<const RECYCLE: bool> Mode for Exclusive<RECYCLE> {
     const REENTRANT: bool = false;
+    const RECYCLE_GENERATIONS: bool = RECYCLE;
 }
 
-pub(super) struct Interior;
+pub(super) struct Interior<const RECYCLE: bool>;
 
-impl Mode for Interior {
+impl<const RECYCLE: bool> Mode for Interior<RECYCLE> {
     const REENTRANT: bool = true;
+    const RECYCLE_GENERATIONS: bool = RECYCLE;
 }
 
 #[derive(Clone, Copy)]
@@ -107,6 +110,16 @@ pub(super) struct Ticket<G> {
     pub(super) generation: G,
 }
 
+pub(super) enum TryInsertError<T, E> {
+    Full(T),
+    Rejected(T, E),
+}
+
+pub(super) enum TryBuildError<I, T, E> {
+    Full(I),
+    Rejected(T, E),
+}
+
 pub(super) struct Core<T, G: slab::GenerationState, M: Mode> {
     slots: Box<[Slot<T, G>]>,
     occupied: Box<[cell::Cell<u32>]>,
@@ -117,11 +130,13 @@ pub(super) struct Core<T, G: slab::GenerationState, M: Mode> {
 }
 
 impl<T, G: slab::GenerationState, M: Mode> Core<T, G, M> {
-    pub(super) fn with_capacity(capacity: slab::Capacity) -> Self {
+    pub(super) fn try_with_capacity(
+        capacity: slab::Capacity,
+    ) -> Result<Self, crate::collections::AllocationError> {
         use crate::ThreadBound;
         let () = G::VALID;
         let raw_capacity = capacity.get();
-        let slots = capacity.collect_box((0..raw_capacity).map(|index| {
+        let slots = capacity.try_collect_box((0..raw_capacity).map(|index| {
             Slot::free(
                 G::MIN,
                 if index + 1 == raw_capacity {
@@ -131,16 +146,21 @@ impl<T, G: slab::GenerationState, M: Mode> Core<T, G, M> {
                 },
                 if index == 0 { NONE } else { index as u32 - 1 },
             )
-        }));
-        let occupied = capacity.collect_box((0..raw_capacity).map(|_| cell::Cell::new(NONE)));
-        Self {
+        }))?;
+        let occupied =
+            capacity.try_collect_box((0..raw_capacity).map(|_| cell::Cell::new(NONE)))?;
+        Ok(Self {
             slots,
             occupied,
             free: cell::Cell::new(if raw_capacity == 0 { NONE } else { 0 }),
             len: cell::Cell::new(0),
             _thread: ThreadBound::NEW,
             mode: marker::PhantomData,
-        }
+        })
+    }
+
+    pub(super) fn recycle_generations(&self) -> bool {
+        M::RECYCLE_GENERATIONS
     }
 
     pub(super) fn capacity(&self) -> usize {
@@ -200,6 +220,13 @@ impl<T, G: slab::GenerationState, M: Mode> Core<T, G, M> {
         self.free.get() == NONE
     }
 
+    pub(super) fn available(&self) -> usize {
+        self.slots
+            .iter()
+            .filter(|slot| slot.state.get() == State::Free)
+            .count()
+    }
+
     pub(in crate::collections::slab) fn entries(&self) -> entries::Entries<'_, T, G, M> {
         use crate::collections::slab::core::entries::Entries;
         Entries::new(self)
@@ -249,6 +276,60 @@ impl<T, G: slab::GenerationState, M: Mode> Core<T, G, M> {
 
     pub(in crate::collections::slab) fn clear(&mut self) {
         self.entries().clear();
+    }
+}
+
+impl<T, G: slab::GenerationState, const RECYCLE: bool> Core<T, G, Interior<RECYCLE>> {
+    pub(super) fn any_or_busy(&self, mut predicate: impl FnMut(&T) -> bool) -> bool {
+        for index in 0..self.slots.len() {
+            match self.slots[index].state.get() {
+                State::Busy => return true,
+                State::Occupied => {
+                    let Some(mut busy) = guards::Busy::take(self, index as u32) else {
+                        return true;
+                    };
+                    if predicate(busy.value_mut()) {
+                        return true;
+                    }
+                }
+                State::Free | State::Reserved | State::Retired => {}
+            }
+        }
+        false
+    }
+
+    pub(super) fn try_insert_with<R, E>(
+        &self,
+        value: T,
+        f: impl FnOnce(Ticket<G>, &mut T) -> Result<R, E>,
+    ) -> Result<(Ticket<G>, R), TryInsertError<T, E>> {
+        self.try_insert_build(value, |value| value, f)
+            .map_err(|error| match error {
+                TryBuildError::Full(value) => TryInsertError::Full(value),
+                TryBuildError::Rejected(value, error) => TryInsertError::Rejected(value, error),
+            })
+    }
+
+    pub(super) fn try_insert_build<I, R, E>(
+        &self,
+        input: I,
+        build: impl FnOnce(I) -> T,
+        f: impl FnOnce(Ticket<G>, &mut T) -> Result<R, E>,
+    ) -> Result<(Ticket<G>, R), TryBuildError<I, T, E>> {
+        use crate::collections::slab::pending::Pending;
+        let Some(ticket) = self.reservations().take_free() else {
+            return Err(TryBuildError::Full(input));
+        };
+        let value = build(input);
+        Pending::new(self, ticket).commit(value);
+        let mut inserted = guards::Inserted::new(self, ticket);
+        match f(ticket, inserted.value_mut()) {
+            Ok(result) => {
+                inserted.commit();
+                Ok((ticket, result))
+            }
+            Err(error) => Err(TryBuildError::Rejected(inserted.rollback(), error)),
+        }
     }
 }
 

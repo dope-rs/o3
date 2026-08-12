@@ -1,15 +1,18 @@
 use std::{cell::Cell, cmp::Ordering, collections::VecDeque};
 
-use o3::collections::{
-    arena::{Linked, Stack},
-    fixed::{
-        array::CopyInline,
-        hash::{Map, Plan},
-        index::Slots,
+use o3::{
+    collections::{
+        arena::{Linked, Stack},
+        fixed::{
+            array::CopyInline,
+            hash::{self, Entry, Map, Plan},
+            index::Slots,
+        },
+        heap::Min,
+        queue::{fixed, round::Robin, slot},
+        slab::{Capacity, Slab},
     },
-    heap::Min,
-    queue::{self, round::Robin, slot::CellFifo},
-    slab::{Capacity, Slab},
+    queue,
 };
 
 use crate::support::PanicDrop;
@@ -81,16 +84,16 @@ fn copy_array_vec_has_no_drop_glue() {
 }
 
 enum DropQueue<T> {
-    Fixed(queue::fixed::Fifo<T>),
-    Cell(queue::cell::Fifo<T>),
+    Fixed(fixed::Fifo<T>),
+    Cell(queue::Fifo<T>),
 }
 
 impl<T> DropQueue<T> {
     fn with_capacity(cell: bool, capacity: usize) -> Self {
         if cell {
-            Self::Cell(queue::cell::Fifo::with_capacity(capacity))
+            Self::Cell(queue::Fifo::with_capacity(capacity))
         } else {
-            Self::Fixed(queue::fixed::Fifo::with_capacity(capacity))
+            Self::Fixed(fixed::Fifo::with_capacity(capacity))
         }
     }
 
@@ -105,52 +108,62 @@ impl<T> DropQueue<T> {
 
 #[test]
 fn slot_queue_preserves_index_order_and_membership() {
-    let mut queue = queue::slot::Fifo::with_capacity(2);
+    let mut queue = slot::Fifo::with_capacity(4);
     queue.vacant_entry(1).unwrap().push_back("one");
     assert_eq!(queue.push_back(1, "again"), Err("again"));
-    assert_eq!(queue.push_back(2, "outside"), Err("outside"));
-    assert!(queue.push_front(0, "zero").is_ok());
+    assert_eq!(queue.push_back(4, "outside"), Err("outside"));
+    queue.vacant_entry(0).unwrap().push_front("zero");
     assert_eq!(queue.front_key_value(), Some((0, &"zero")));
+    let front = queue.front_entry().unwrap();
+    assert_eq!(front.index(), 0);
+    assert_eq!(front.remove(), "zero");
     assert_eq!(queue.remove(1), Some("one"));
-    assert_eq!(queue.pop_front_key_value(), Some((0, "zero")));
     assert!(queue.is_empty());
 
     assert!(queue.push_back(1, "one").is_ok());
     assert!(queue.push_front(0, "zero").is_ok());
-    queue.grow_to(4);
     assert_eq!(queue.capacity(), 4);
     assert_eq!(queue.pop_front_key_value(), Some((0, "zero")));
     assert_eq!(queue.pop_front_key_value(), Some((1, "one")));
+
+    assert!(queue.push_back(0, "first").is_ok());
+    assert!(queue.push_back(1, "second").is_ok());
+    assert_eq!(queue.remove_if(0, |value| *value == "stale"), None);
+    assert_eq!(queue.front_key_value(), Some((0, &"first")));
+    assert_eq!(queue.remove_if(0, |value| *value == "first"), Some("first"));
+    assert_eq!(queue.pop_front_key_value(), Some((1, "second")));
 }
 
 #[test]
 fn slot_queue_refreshes_an_entry_at_the_back() {
-    let mut queue = queue::slot::Fifo::with_capacity(2);
+    let mut queue = slot::Fifo::with_capacity(2);
     assert_eq!(queue.push_back(0, "old"), Ok(()));
     assert_eq!(queue.push_back(1, "one"), Ok(()));
 
-    assert_eq!(queue.refresh_back(1, "tail"), Ok(()));
+    assert_eq!(queue.refresh_back(1, "tail"), Ok(Some("one")));
     assert_eq!(queue.front_key_value(), Some((0, &"old")));
-    assert_eq!(queue.refresh_back(0, "new"), Ok(()));
+    assert_eq!(queue.refresh_back(0, "new"), Ok(Some("old")));
     assert_eq!(queue.front_key_value(), Some((1, &"tail")));
     assert_eq!(queue.pop_front_key_value(), Some((1, "tail")));
     assert_eq!(queue.pop_front_key_value(), Some((0, "new")));
-    assert_eq!(queue.refresh_back(0, "vacant"), Ok(()));
+    assert_eq!(queue.refresh_back(0, "vacant"), Ok(None));
     assert_eq!(queue.pop_front_key_value(), Some((0, "vacant")));
     assert_eq!(queue.refresh_back(2, "outside"), Err("outside"));
 }
 
 #[test]
 fn cell_slot_queue_preserves_shared_index_order_and_membership() {
-    let mut queue = CellFifo::with_capacity(2);
+    let queue = slot::Cell::with_capacity(4);
     assert_eq!(queue.push_back(1, 11), Ok(()));
     assert_eq!(queue.push_back(1, 12), Err(12));
-    assert_eq!(queue.push_back(2, 20), Err(20));
-    assert_eq!(queue.remove(1), Some(11));
+    assert_eq!(queue.push_back(4, 20), Err(20));
+    assert_eq!(queue.remove_if(1, |value| *value == 12), None);
+    assert_eq!(queue.remove_if(1, |value| *value == 11), Some(11));
     assert!(queue.is_empty());
 
     assert_eq!(queue.push_back(1, 11), Ok(()));
-    queue.grow_to(4);
+    assert_eq!(queue.remove(1), Some(11));
+    assert_eq!(queue.push_back(1, 11), Ok(()));
     assert_eq!(queue.pop_front(), Some(11));
     assert_eq!(queue.push_back(3, 13), Ok(()));
     assert_eq!(queue.pop_front(), Some(13));
@@ -173,7 +186,7 @@ fn indexed_heap_growth_preserves_live_order_and_positions() {
 
 #[test]
 fn bounded_queues_are_fifo() {
-    let mut queue = queue::fixed::Fifo::with_capacity(3);
+    let mut queue = fixed::Fifo::with_capacity(3);
     assert!(queue.is_empty());
     assert!(queue.push_back(1).is_ok());
     assert!(queue.push_back(2).is_ok());
@@ -191,7 +204,7 @@ fn bounded_queues_are_fifo() {
     assert_eq!(queue.pop_front(), Some(4));
     assert_eq!(queue.pop_front(), None);
 
-    let queue = queue::cell::Fifo::with_capacity(3);
+    let queue = queue::Fifo::with_capacity(3);
     assert!(queue.push_back(1).is_ok());
     assert!(queue.push_back(2).is_ok());
     assert_eq!(queue.pop_front(), Some(1));
@@ -202,6 +215,53 @@ fn bounded_queues_are_fifo() {
     assert_eq!(queue.pop_front(), Some(3));
     assert_eq!(queue.pop_front(), Some(4));
     assert_eq!(queue.pop_front(), None);
+}
+
+#[test]
+fn bounded_queue_pop_reserves_its_vacancy() {
+    let mut queue = fixed::Fifo::with_capacity(2);
+    assert_eq!(queue.push_back(1), Ok(()));
+    assert_eq!(queue.push_back(2), Ok(()));
+
+    let (value, vacant) = queue
+        .pop_front_reserved()
+        .expect("occupied queue must yield a value and its vacancy");
+    assert_eq!(value, 1);
+    vacant.push_front(value);
+
+    assert_eq!(queue.pop_front(), Some(1));
+    assert_eq!(queue.pop_front(), Some(2));
+    assert!(queue.pop_front_reserved().is_none());
+}
+
+#[test]
+fn coalescing_queue_keeps_one_position_per_index() {
+    let mut queue = fixed::Coalescing::with_capacity(2);
+    assert_eq!(queue.schedule(1, "old"), Ok(()));
+    assert_eq!(queue.schedule(0, "other"), Ok(()));
+    assert_eq!(queue.schedule(1, "new"), Ok(()));
+    assert_eq!(queue.schedule(2, "outside"), Err("outside"));
+    assert_eq!(queue.len(), 2);
+
+    assert_eq!(queue.pop_front(), Some((1, "new")));
+    assert_eq!(queue.pop_front(), Some((0, "other")));
+    assert_eq!(queue.pop_front(), None);
+}
+
+#[test]
+fn coalescing_queue_preserves_typed_indices() {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct Index(u32);
+
+    unsafe impl fixed::raw::Index for Index {
+        fn index(self) -> u32 {
+            self.0
+        }
+    }
+
+    let mut queue = fixed::Coalescing::with_index_capacity(2);
+    assert_eq!(queue.schedule(Index(1), "value"), Ok(()));
+    assert_eq!(queue.pop_front(), Some((Index(1), "value")));
 }
 
 #[test]
@@ -282,6 +342,34 @@ fn fixed_hash_table_owns_non_copy_values() {
 }
 
 #[test]
+fn fixed_hash_entries_bind_probe_to_mutation() {
+    let plan = Plan::new(1).unwrap();
+    let mut table = Map::from_plan(plan);
+
+    let entry = table.entry(7, |_| false).expect("vacant entry");
+    let Entry::Vacant(entry) = entry else {
+        panic!("new key must be vacant")
+    };
+    entry.insert(String::from("value"));
+
+    assert!(table.entry(9, |_| false).is_none());
+
+    let mut entry = unsafe {
+        hash::raw::Map::occupied_entry_unchecked(&mut table, 7, |value| value == "value")
+    };
+    entry.get_mut().push_str(" updated");
+    assert_eq!(entry.get(), "value updated");
+    assert_eq!(entry.remove(), "value updated");
+
+    let entry = unsafe { hash::raw::Map::entry_unchecked(&mut table, 11, |_| false) };
+    let Entry::Vacant(entry) = entry else {
+        panic!("removed slot must be vacant")
+    };
+    entry.insert(String::from("reused"));
+    assert_eq!(table.get(11, |_| true).map(String::as_str), Some("reused"));
+}
+
+#[test]
 fn fixed_hash_table_clear_restores_state_after_drop_panics() {
     let drops = Cell::new(0);
     let panic_once = Cell::new(true);
@@ -347,7 +435,7 @@ fn fixed_index_table_clear_restores_state_after_drop_panics() {
 
 #[test]
 fn fixed_queue_wrap_math_handles_zst_capacity() {
-    let mut queue = queue::fixed::Fifo::with_capacity(usize::MAX);
+    let mut queue = fixed::Fifo::with_capacity(usize::MAX);
     queue.push_front(()).unwrap();
     queue.push_back(()).unwrap();
     assert_eq!(queue.len(), 2);
@@ -357,7 +445,7 @@ fn fixed_queue_wrap_math_handles_zst_capacity() {
 
 #[test]
 fn fixed_queue_matches_vec_deque_under_mixed_wraparound() {
-    let mut fixed = queue::fixed::Fifo::with_capacity(17);
+    let mut fixed = fixed::Fifo::with_capacity(17);
     let mut model = VecDeque::with_capacity(17);
     let mut state = 1u64;
     for _ in 0..10_000 {
@@ -446,6 +534,27 @@ fn indexed_heap_matches_its_std_model_under_churn() {
 }
 
 #[test]
+fn indexed_heap_sets_and_conditionally_pops_in_one_operation() {
+    use o3::collections::slab::{Capacity, Slab};
+
+    let mut indexed = Min::with_capacity(1);
+    let mut slots: Slab<()> = Slab::with_capacity(Capacity::new(3));
+    let first = slots.vacant_entry_at(0).unwrap().insert(());
+    let last = slots.vacant_entry_at(2).unwrap().insert(());
+
+    indexed.set(first, 9);
+    indexed.set(last, 7);
+    assert_eq!(indexed.capacity(), 3);
+    assert_eq!(indexed.peek(), Some((2, &7)));
+    indexed.set(last, 11);
+    assert_eq!(indexed.peek(), Some((0, &9)));
+    indexed.set(first, 4);
+    assert_eq!(indexed.pop_if(|key| *key > 4), None);
+    assert_eq!(indexed.pop_if(|key| *key == 4), Some((0, 4)));
+    assert_eq!(indexed.pop(), Some((2, 11)));
+}
+
+#[test]
 fn heap_holes_close_when_comparison_panics() {
     let panic_once = Cell::new(false);
     let drops = Cell::new(0);
@@ -479,10 +588,13 @@ fn heap_holes_close_when_comparison_panics() {
 #[test]
 fn fixed_collections_keep_their_thin_layouts() {
     if usize::BITS == 64 {
-        assert_eq!(std::mem::size_of::<queue::fixed::Fifo<u64>>(), 32);
+        assert_eq!(std::mem::size_of::<queue::Fifo<u64>>(), 40);
+        assert_eq!(std::mem::size_of::<fixed::Fifo<u64>>(), 32);
+        assert_eq!(std::mem::size_of::<fixed::Coalescing<u32>>(), 48);
         assert_eq!(std::mem::size_of::<Map<u64>>(), 64);
         assert_eq!(std::mem::size_of::<Slots<u64>>(), 40);
-        assert_eq!(std::mem::size_of::<queue::slot::Fifo<u64>>(), 32);
+        assert_eq!(std::mem::size_of::<slot::Fifo<u64>>(), 32);
+        assert_eq!(std::mem::size_of::<slot::Cell<u64>>(), 32);
         assert_eq!(std::mem::size_of::<Slab<u64>>(), 40);
         assert_eq!(std::mem::size_of::<Robin>(), 32);
     }
@@ -539,7 +651,7 @@ fn collection_drop_finishes_after_one_element_panics() {
         });
     }
     assert_panicking_drop_finishes(&drops, &panic_once, |first, second| {
-        let mut queue = queue::slot::Fifo::with_capacity(2);
+        let mut queue = slot::Fifo::with_capacity(2);
         queue.push_back(0, first).ok();
         queue.push_back(1, second).ok();
         drop(queue);

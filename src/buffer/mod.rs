@@ -1,14 +1,15 @@
 pub mod bytes;
 pub mod pool;
 pub mod queue;
-mod seal;
+mod sealed;
 pub mod storage;
 pub mod view;
 pub mod write;
 
-use std::{error, fmt, mem, ops, ptr};
+use std::{error, fmt, ops};
 
-pub(crate) use seal::Seal;
+pub(crate) use sealed::Seal;
+pub use sealed::{Frozen, Layout, Lease, Plan, Pool};
 
 /// Reports the logical byte prefix that an exclusive owner may consume.
 pub trait PrefixLength {
@@ -153,29 +154,5 @@ trait RangeExt {
 impl RangeExt for ops::Range<usize> {
     fn is_within(&self, len: usize) -> bool {
         self.start <= self.end && self.end <= len
-    }
-}
-
-/// # Safety
-/// `buf` is valid through `*tail`, and `*head <= *tail`.
-unsafe fn compact(buf: *mut mem::MaybeUninit<u8>, head: &mut u32, tail: &mut u32) {
-    if *head == 0 {
-        return;
-    }
-    let len = (*tail - *head) as usize;
-    if len != 0 {
-        unsafe { ptr::copy(buf.add(*head as usize), buf, len) };
-    }
-    *head = 0;
-    *tail = len as u32;
-}
-
-/// # Safety
-/// `amount <= *tail - *head`.
-unsafe fn consume(head: &mut u32, tail: &mut u32, amount: usize) {
-    *head = head.wrapping_add(amount as u32);
-    if *head == *tail {
-        *head = 0;
-        *tail = 0;
     }
 }

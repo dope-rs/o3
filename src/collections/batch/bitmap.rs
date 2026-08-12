@@ -18,11 +18,19 @@ pub(super) enum Words {
 }
 
 impl Words {
-    pub(super) fn zeroed(word_count: usize) -> Self {
+    pub(super) fn try_zeroed(
+        word_count: usize,
+    ) -> Result<Self, crate::collections::AllocationError> {
         match word_count {
-            0 => Self::Empty,
-            1 => Self::Inline(cell::Cell::new(0)),
-            _ => Self::Heap((0..word_count).map(|_| cell::Cell::new(0)).collect()),
+            0 => Ok(Self::Empty),
+            1 => Ok(Self::Inline(cell::Cell::new(0))),
+            _ => {
+                let mut words = crate::collections::try_vec_with_capacity(word_count)?;
+                for _ in 0..word_count {
+                    words.push(cell::Cell::new(0));
+                }
+                Ok(Self::Heap(words))
+            }
         }
     }
 
@@ -37,17 +45,27 @@ impl Words {
 }
 
 impl Bitmap {
-    pub(super) fn with_capacity(capacity: usize) -> Self {
+    pub(super) fn try_with_capacity(
+        capacity: usize,
+    ) -> Result<Self, crate::collections::AllocationError> {
         use crate::ThreadBound;
         let word_count = capacity.div_ceil(WORD_BITS);
-        Self {
-            words: Words::zeroed(word_count),
-            summary: (word_count > 1).then(|| Box::new(Self::with_capacity(word_count))),
+        let words = Words::try_zeroed(word_count)?;
+        let summary = if word_count > 1 {
+            Some(crate::collections::try_box(Self::try_with_capacity(
+                word_count,
+            )?)?)
+        } else {
+            None
+        };
+        Ok(Self {
+            words,
+            summary,
             capacity: cell::Cell::new(capacity),
             len: cell::Cell::new(0),
             cursor: cell::Cell::new(0),
             _thread: ThreadBound::NEW,
-        }
+        })
     }
 
     pub(super) fn insert(&self, index: usize) -> bool {

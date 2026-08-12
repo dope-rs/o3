@@ -15,6 +15,21 @@ impl<T> Slice<T> {
         Some(unsafe { pin::Pin::new_unchecked(entry) })
     }
 
+    pub fn iter<'a>(
+        &'a self,
+    ) -> impl DoubleEndedIterator<Item = pin::Pin<&'a T>> + ExactSizeIterator + 'a
+    where
+        T: 'a,
+    {
+        self.entries.as_ref().get_ref().iter().map(|entry| {
+            // SAFETY: Slice never exposes ownership of or mutable unpinned
+            // access to its boxed storage. The allocation remains pinned
+            // through the returned shared borrow, so this element cannot move
+            // or be replaced.
+            unsafe { pin::Pin::new_unchecked(entry) }
+        })
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }

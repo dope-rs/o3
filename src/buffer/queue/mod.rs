@@ -2,9 +2,9 @@ use std::{collections, ops};
 
 use crate::buffer::{self, bytes};
 
-pub(super) mod ring;
+mod sealed;
 
-pub use ring::Ring;
+pub use sealed::Ring;
 
 /// A byte-length-aware queue of independently owned segments.
 /// It tracks ordering and aggregate length while callers retain
