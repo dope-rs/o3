@@ -61,6 +61,29 @@ fn cancelled_reservation_preserves_the_seed() {
 }
 
 #[test]
+fn rejected_build_restores_the_returned_seed() {
+    let pool = recycle::Pool::<Value>::with_capacity(Capacity::new(1), || Vec::with_capacity(32));
+    let allocation = match pool
+        .vacant_entry()
+        .expect("slot")
+        .try_insert_with(|mut bytes| {
+            let allocation = bytes.as_ptr();
+            bytes.extend_from_slice(b"returned");
+            Err((allocation, bytes))
+        }) {
+        Ok(_) => panic!("rejected build was inserted"),
+        Err(allocation) => allocation,
+    };
+
+    let value = pool
+        .vacant_entry()
+        .expect("restored slot")
+        .insert_with(|bytes| Value { bytes, uses: 1 });
+    assert_eq!(value.bytes.as_ptr(), allocation);
+    assert_eq!(value.bytes, b"returned");
+}
+
+#[test]
 fn zero_capacity_is_permanently_full() {
     let pool = recycle::Pool::<Value>::with_capacity(Capacity::EMPTY, Vec::new);
     assert!(pool.vacant_entry().is_none());
