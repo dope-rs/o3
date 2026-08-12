@@ -134,6 +134,41 @@ impl<'pool, T: recycle::Recycle> VacantEntry<'pool, T> {
             owner: marker::PhantomData,
         }
     }
+
+    /// Builds a value transactionally, restoring the returned seed on failure.
+    pub fn try_insert_with<E>(
+        mut self,
+        build: impl FnOnce(T::Seed) -> Result<T, (E, T::Seed)>,
+    ) -> Result<Lease<'pool, T>, E> {
+        let slot = self.pool.group.slot(self.index);
+        debug_assert!(slot.state.get() == State::Reserved);
+        // SAFETY: the reservation uniquely owns this slot until it is either
+        // inserted or released by VacantEntry::drop.
+        let value = unsafe { &mut *slot.value.get() };
+        let Value::Seed(seed) = mem::replace(value, Value::Transition) else {
+            // SAFETY: only free seed slots can enter the reservation list.
+            unsafe { hint::unreachable_unchecked() }
+        };
+        match build(seed) {
+            Ok(item) => {
+                *value = Value::Item(item);
+                slot.owner.set(ptr::NonNull::from(&self.pool.group));
+                slot.link.set(self.index);
+                slot.state.set(State::Occupied);
+                self.armed = false;
+                Ok(Lease {
+                    slot: ptr::NonNull::from(slot),
+                    owner: marker::PhantomData,
+                })
+            }
+            Err((error, seed)) => {
+                *value = Value::Seed(seed);
+                self.pool.group.release(self.index);
+                self.armed = false;
+                Err(error)
+            }
+        }
+    }
 }
 
 impl<T: recycle::Recycle> Drop for VacantEntry<'_, T> {
