@@ -55,16 +55,23 @@ pub struct StackDrain<'a, T> {
 
 impl<T> NodePool<T> {
     fn with_capacity(capacity: usize) -> Self {
+        match Self::try_with_capacity(capacity) {
+            Ok(pool) => pool,
+            Err(error) => error.abort(),
+        }
+    }
+
+    fn try_with_capacity(capacity: usize) -> Result<Self, collections::AllocationError> {
         assert!(
             u32::try_from(capacity).is_ok(),
             "linked node capacity overflow"
         );
-        Self {
-            nodes: Box::<[Node<T>]>::new_uninit_slice(capacity),
+        Ok(Self {
+            nodes: collections::try_box_uninit(capacity)?,
             free: NONE,
             initialized: 0,
             live: 0,
-        }
+        })
     }
 
     fn is_full(&self) -> bool {
@@ -214,12 +221,22 @@ impl<T> NodePool<T> {
 
 impl<T> Linked<T> {
     pub fn with_capacity(capacity: usize, lanes: usize) -> Self {
-        use crate::ThreadBound;
-        Self {
-            nodes: NodePool::with_capacity(capacity),
-            lanes: vec![ChainState::EMPTY; lanes].into_boxed_slice(),
-            _thread: ThreadBound::NEW,
+        match Self::try_with_capacity(capacity, lanes) {
+            Ok(arena) => arena,
+            Err(error) => error.abort(),
         }
+    }
+
+    pub fn try_with_capacity(
+        capacity: usize,
+        lanes: usize,
+    ) -> Result<Self, collections::AllocationError> {
+        use crate::ThreadBound;
+        Ok(Self {
+            nodes: NodePool::try_with_capacity(capacity)?,
+            lanes: collections::try_box_with(lanes, |_| ChainState::EMPTY)?,
+            _thread: ThreadBound::NEW,
+        })
     }
 
     pub fn is_full(&self) -> bool {

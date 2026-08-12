@@ -2,7 +2,7 @@
 
 use o3::buffer::{
     CapacityError,
-    storage::{BuildError, Owned, shared::Shared},
+    storage::{BuildError, Owned, Shared},
     write::SpareWriter,
 };
 

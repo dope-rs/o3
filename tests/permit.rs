@@ -1,10 +1,10 @@
 use std::cell::Cell;
 
-use o3::{ReturnPermit, ReturnTo};
+use o3::permit::{Permit, Return};
 
 struct Sink<'a>(&'a Cell<Option<u8>>);
 
-impl ReturnTo for Sink<'_> {
+impl Return for Sink<'_> {
     type Item = u8;
 
     fn return_item(&self, item: u8) {
@@ -16,7 +16,7 @@ impl ReturnTo for Sink<'_> {
 fn drop_returns_the_item() {
     let returned = Cell::new(None);
     {
-        let _permit = ReturnPermit::new(Sink(&returned), 7);
+        let _permit = Permit::new(Sink(&returned), 7);
     }
     assert_eq!(returned.get(), Some(7));
 }

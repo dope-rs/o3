@@ -119,6 +119,7 @@ impl<'a, T, G: slab::GenerationState, M: core::Mode> Reservations<'a, T, G, M> {
         let slot = reserved_slot(self.core, ticket);
         match ticket.generation.next() {
             Some(generation) => self.release(ticket.index, generation),
+            None if self.core.recycle_generations() => self.release(ticket.index, G::MIN),
             None => slot.state.set(core::State::Retired),
         }
     }

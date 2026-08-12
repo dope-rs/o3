@@ -131,6 +131,16 @@ impl<const N: usize> Lane<'_, N> {
 impl<const N: usize> Credits<N> {
     /// Builds independent dimensions using the default balanced reserve.
     pub fn from_capacities(capacity: [usize; N], lane_count: usize) -> Self {
+        match Self::try_from_capacities(capacity, lane_count) {
+            Ok(credits) => credits,
+            Err(error) => error.abort(),
+        }
+    }
+
+    pub fn try_from_capacities(
+        capacity: [usize; N],
+        lane_count: usize,
+    ) -> Result<Self, crate::collections::AllocationError> {
         assert!(N > 0, "credit dimension count must be positive");
         assert!(lane_count > 0, "credit lane count must be positive");
         let reserve = capacity.map(|amount| {
@@ -140,10 +150,21 @@ impl<const N: usize> Credits<N> {
                 amount / lane_count / 2
             }
         });
-        Self::with_reserve_per_lane(capacity, lane_count, reserve)
+        Self::try_with_reserve_per_lane(capacity, lane_count, reserve)
     }
 
     fn with_reserve_per_lane(capacity: [usize; N], lane_count: usize, reserve: [usize; N]) -> Self {
+        match Self::try_with_reserve_per_lane(capacity, lane_count, reserve) {
+            Ok(credits) => credits,
+            Err(error) => error.abort(),
+        }
+    }
+
+    fn try_with_reserve_per_lane(
+        capacity: [usize; N],
+        lane_count: usize,
+        reserve: [usize; N],
+    ) -> Result<Self, crate::collections::AllocationError> {
         assert!(N > 0, "credit dimension count must be positive");
         assert!(lane_count > 0, "credit lane count must be positive");
         let reserved: [usize; N] = array::from_fn(|dimension| {
@@ -153,14 +174,14 @@ impl<const N: usize> Credits<N> {
             );
             reserve[dimension] * lane_count
         });
-        Self {
+        Ok(Self {
             used: cell::Cell::new([0; N]),
             pool: Pool::new(array::from_fn(|dimension| {
                 capacity[dimension] - reserved[dimension]
             })),
-            held: (0..lane_count).map(|_| cell::Cell::new([0; N])).collect(),
+            held: crate::collections::try_box_with(lane_count, |_| cell::Cell::new([0; N]))?,
             reserve,
-        }
+        })
     }
 
     fn credit(&self, lane: usize) -> Option<Lane<'_, N>> {
@@ -217,6 +238,14 @@ impl<const N: usize> Credits<N> {
 impl Credits {
     pub fn with_reserve(capacity: usize, lane_count: usize, reserve_per_lane: usize) -> Self {
         Self::with_reserve_per_lane([capacity], lane_count, [reserve_per_lane])
+    }
+
+    pub fn try_with_reserve(
+        capacity: usize,
+        lane_count: usize,
+        reserve_per_lane: usize,
+    ) -> Result<Self, crate::collections::AllocationError> {
+        Self::try_with_reserve_per_lane([capacity], lane_count, [reserve_per_lane])
     }
 
     pub fn used(&self) -> usize {

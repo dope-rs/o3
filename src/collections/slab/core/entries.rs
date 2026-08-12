@@ -113,6 +113,15 @@ impl<'a, T, G: slab::GenerationState, M: core::Mode> Entries<'a, T, G, M> {
         Some(f(busy.value_mut()))
     }
 
+    pub(in crate::collections::slab) fn update_index<R>(
+        self,
+        index: u32,
+        f: impl FnOnce(&mut T) -> R,
+    ) -> Option<R> {
+        let mut busy = guards::Busy::take(self.core, index)?;
+        Some(f(busy.value_mut()))
+    }
+
     pub(super) fn remove_occupied(self, index: core::SlotIndex) {
         let slot = unsafe { self.core.slots.get_unchecked(index.get() as usize) };
         let position = slot.position.replace(core::NONE);

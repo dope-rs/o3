@@ -1,21 +1,15 @@
 use o3::{
     ThreadBound,
     buffer::{
-        BLOCK_CAPACITY, CapacityError,
+        self, BLOCK_CAPACITY, CapacityError,
         bytes::Retained,
         pool,
         queue::Ring,
-        storage::{
-            Owned,
-            shared::{Shared, strings::Str},
-        },
+        storage::{Owned, Shared, strings::Str},
         view::{Snapshot, window::Inline},
         write::SpareWriter,
     },
-    cell::{
-        Checked,
-        branded::{Brand, BrandToken},
-    },
+    cell::{Checked, brand, region},
     collections::{
         arena::{Linked, Stack},
         fixed::{hash::Map, index::Slots},
@@ -32,8 +26,8 @@ use o3::{
 use crate::confined::assert_confined;
 
 assert_confined!(o3::collections::queue::fixed::Fifo<u8>);
-assert_confined!(o3::collections::queue::cell::Fifo<u8>);
-assert_confined!(o3::collections::queue::slot::CellFifo<u8>);
+assert_confined!(o3::queue::Fifo<u8>);
+assert_confined!(o3::collections::queue::slot::Cell<u8>);
 assert_confined!(o3::collections::queue::slot::Fifo<u8>);
 assert_confined!(Robin);
 assert_confined!(Linked<u8>);
@@ -54,9 +48,9 @@ assert_confined!(Shared);
 assert_confined!(Str);
 assert_confined!(o3::buffer::bytes::Bytes<Retained>);
 assert_confined!(Snapshot<16_384>);
-assert_confined!(pool::Pool);
-assert_confined!(pool::Lease);
-assert_confined!(pool::Pool<pool::state::Uninitialized, pool::FixedCapacity<BLOCK_CAPACITY>>);
+assert_confined!(buffer::Pool);
+assert_confined!(buffer::Lease);
+assert_confined!(buffer::Pool<pool::state::Uninitialized, pool::FixedCapacity<BLOCK_CAPACITY>>);
 assert_confined!(pool::Cursor<pool::FixedCapacity<BLOCK_CAPACITY>>);
 assert_confined!(Inline<64>);
 assert_confined!(Ring);
@@ -67,8 +61,10 @@ assert_confined!(Credits);
 assert_confined!(Pool);
 assert_confined!(Lane<'static>);
 assert_confined!(ThreadBound);
-assert_confined!(BrandToken<'static>);
-assert_confined!(Brand<'static, u8>);
+assert_confined!(brand::Token<'static>);
+assert_confined!(brand::Value<'static, u8>);
+assert_confined!(region::Token<'static>);
+assert_confined!(region::Value<'static, u8>);
 assert_confined!(Checked<u8>);
 
 const _: fn() = || {
@@ -90,7 +86,24 @@ const _: fn() = || {
 #[test]
 fn state_is_confined_and_keys_are_word_sized() {
     assert_eq!(std::mem::size_of::<ThreadBound>(), 0);
-    assert_eq!(std::mem::size_of::<BrandToken<'static>>(), 0);
+    assert_eq!(std::mem::size_of::<brand::Token<'static>>(), 0);
+    assert_eq!(std::mem::size_of::<region::Token<'static>>(), 0);
+    assert_eq!(
+        std::mem::size_of::<brand::Value<'static, u64>>(),
+        std::mem::size_of::<u64>(),
+    );
+    assert_eq!(
+        std::mem::size_of::<region::Value<'static, u64>>(),
+        std::mem::size_of::<u64>(),
+    );
+    assert_eq!(
+        std::mem::align_of::<brand::Value<'static, u64>>(),
+        std::mem::align_of::<u64>(),
+    );
+    assert_eq!(
+        std::mem::align_of::<region::Value<'static, u64>>(),
+        std::mem::align_of::<u64>(),
+    );
     assert_eq!(std::mem::size_of::<slab::key::Key>(), 8);
     assert_eq!(std::mem::size_of::<slab::key::Parts>(), 8);
     assert_eq!(std::mem::size_of::<slab::key::Generation>(), 4);

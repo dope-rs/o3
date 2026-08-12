@@ -1,6 +1,39 @@
 use o3::collections::batch::Set;
 
 #[test]
+fn membership_covers_pending_and_draining_batches() {
+    let set = Set::with_capacity(3);
+    assert!(!set.contains(1));
+    assert!(!set.contains(3));
+
+    assert!(set.insert(1));
+    assert!(set.contains(1));
+    let mut batch = set.drain_batch().unwrap();
+    assert!(set.contains(1));
+    assert_eq!(batch.next(), Some(1));
+    assert!(!set.contains(1));
+
+    assert!(set.insert(1));
+    assert!(set.contains(1));
+    drop(batch);
+    assert_eq!(set.drain_batch().unwrap().collect::<Vec<_>>(), [1]);
+    assert!(!set.contains(1));
+}
+
+#[test]
+fn pop_from_uses_the_requested_start_and_wraps_once() {
+    let set = Set::with_capacity(130);
+    for index in [3, 65, 129] {
+        assert!(set.insert(index));
+    }
+
+    assert_eq!(set.pop_from(64), Some(65));
+    assert_eq!(set.pop_from(100), Some(129));
+    assert_eq!(set.pop_from(100), Some(3));
+    assert_eq!(set.pop_from(0), None);
+}
+
+#[test]
 fn coalesces_across_the_draining_and_pending_batches() {
     let set = Set::with_capacity(4);
     assert!(set.insert(0));
@@ -34,6 +67,83 @@ fn dropping_a_partial_batch_returns_each_index_once() {
     let mut returned = set.drain_batch().unwrap().collect::<Vec<_>>();
     returned.sort_unstable();
     assert_eq!(returned, [0, 1, 2, 3]);
+    assert!(set.is_empty());
+}
+
+#[test]
+fn pausing_a_partial_batch_resumes_without_admitting_the_next_batch() {
+    let set = Set::with_capacity(130);
+    for index in 0..130 {
+        assert!(set.insert(index));
+    }
+
+    let mut batch = set.drain_batch().unwrap();
+    assert_eq!(batch.peek(), Some(0));
+    assert_eq!(batch.peek(), Some(0));
+    for expected in 0..32 {
+        assert_eq!(batch.next(), Some(expected));
+    }
+    assert_eq!(batch.peek(), Some(32));
+    assert!(set.insert(0));
+    batch.pause();
+
+    assert_eq!(
+        set.drain_batch().unwrap().collect::<Vec<_>>(),
+        (32..130).collect::<Vec<_>>()
+    );
+    assert_eq!(set.drain_batch().unwrap().collect::<Vec<_>>(), [0]);
+    assert!(set.is_empty());
+}
+
+#[test]
+fn removing_a_paused_batch_opens_the_pending_batch_immediately() {
+    let set = Set::with_capacity(4);
+    assert!(set.insert(0));
+    assert!(set.insert(1));
+
+    let mut batch = set.drain_batch().unwrap();
+    assert_eq!(batch.next(), Some(0));
+    assert!(set.insert(2));
+    batch.pause();
+
+    assert!(set.remove(1));
+    assert_eq!(set.drain_batch().unwrap().collect::<Vec<_>>(), [2]);
+    assert!(set.is_empty());
+}
+
+#[test]
+fn emptying_a_live_batch_does_not_admit_a_nested_drain() {
+    let set = Set::with_capacity(3);
+    assert!(set.insert(0));
+
+    let batch = set.drain_batch().unwrap();
+    assert!(set.insert(1));
+    assert!(set.remove(0));
+    assert!(set.drain_batch().is_none());
+    drop(batch);
+
+    assert_eq!(set.drain_batch().unwrap().collect::<Vec<_>>(), [1]);
+    assert!(set.is_empty());
+}
+
+#[test]
+fn unwinding_a_partial_batch_restores_each_index_once() {
+    let set = Set::with_capacity(4);
+    for index in 0..3 {
+        assert!(set.insert(index));
+    }
+
+    let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut batch = set.drain_batch().unwrap();
+        assert_eq!(batch.next(), Some(0));
+        assert!(set.insert(0));
+        panic!("stop partial drain");
+    }));
+    assert!(unwind.is_err());
+
+    let mut restored = set.drain_batch().unwrap().collect::<Vec<_>>();
+    restored.sort_unstable();
+    assert_eq!(restored, [0, 1, 2]);
     assert!(set.is_empty());
 }
 

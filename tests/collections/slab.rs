@@ -1,16 +1,73 @@
 use o3::collections::slab::{Capacity, Cell, Slab, key::Parts};
 
 #[test]
+fn capacity_preserves_its_exact_index_width() {
+    assert_eq!(Capacity::EMPTY.raw(), 0);
+    assert_eq!(Capacity::MAX.raw(), u32::MAX);
+    assert_eq!(Capacity::new(17).raw(), 17);
+}
+
+#[test]
+fn cell_transactions_commit_reject_and_rollback_without_exposing_busy_values() {
+    use o3::collections::slab::{BuildError, InsertError};
+
+    let slab = Cell::<u32>::with_capacity(Capacity::new(1));
+    let inserted = slab.try_insert_with(3, |key, value| {
+        assert_eq!(slab.remove(key), None);
+        assert!(slab.any_or_busy(|_| false));
+        *value = 5;
+        Ok::<_, ()>(7)
+    });
+    let (key, result) = match inserted {
+        Ok(inserted) => inserted,
+        Err(_) => panic!("transaction should commit"),
+    };
+    assert_eq!(result, 7);
+    assert_eq!(slab.update(key, |value| *value), Some(5));
+    assert!(slab.any_or_busy(|value| *value == 5));
+    assert_eq!(slab.remove(key), Some(5));
+
+    let rejected = slab.try_insert_with(11, |_, value| {
+        *value = 13;
+        Err::<(), _>(17)
+    });
+    match rejected {
+        Err(InsertError::Rejected(value, error)) => assert_eq!((value, error), (13, 17)),
+        _ => panic!("transaction should reject"),
+    }
+    assert!(slab.is_empty());
+
+    let built = slab.try_insert_build(19, |input| input + 1, |_, _| Err::<(), _>(23));
+    match built {
+        Err(BuildError::Rejected(value, error)) => assert_eq!((value, error), (20, 23)),
+        _ => panic!("built transaction should reject"),
+    }
+
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = slab.try_insert_with(29, |_, _| -> Result<(), ()> {
+            panic!("rollback");
+        });
+    }));
+    assert!(caught.is_err());
+    assert!(slab.is_empty());
+    assert_eq!(slab.available(), 1);
+}
+
+#[test]
 fn generational_reuse_and_capacity() {
     let mut slab: Slab<&str> = Slab::with_capacity(Capacity::new(3));
+    assert_eq!(slab.available(), 3);
     let first = slab.insert("a").unwrap();
     let recycled = slab.insert("b").unwrap();
     let last = slab.insert("c").unwrap();
+    assert_eq!(slab.available(), 0);
     assert!(slab.is_full());
     assert!(slab.insert("overflow").is_err());
 
     assert_eq!(slab.remove(recycled), Some("b"));
+    assert_eq!(slab.available(), 1);
     let replacement = slab.insert("B").unwrap();
+    assert_eq!(slab.available(), 0);
     assert_eq!(replacement.index(), recycled.index());
     assert_ne!(replacement.generation(), recycled.generation());
     assert_eq!(slab.get(recycled), None);
@@ -20,6 +77,24 @@ fn generational_reuse_and_capacity() {
     *slab.get_mut(last).unwrap() = "C";
     assert_eq!(slab.get(first), Some(&"a"));
     assert_eq!(slab.get(last), Some(&"C"));
+}
+
+#[test]
+fn private_generations_can_wrap_for_a_wider_identity_wrapper() {
+    let capacity = Capacity::new(1);
+    // SAFETY: this test never treats the returned physical keys as an external
+    // stale-identity authority; it only verifies private slot availability.
+    let mut slab = unsafe {
+        Slab::<u32, (), 2, true>::try_with_capacity_recycling(capacity).expect("recycling slab")
+    };
+
+    let first = slab.insert(1).expect("generation one");
+    assert_eq!(slab.remove(first), Some(1));
+    let second = slab.insert(2).expect("generation two");
+    assert_eq!(slab.remove(second), Some(2));
+    let wrapped = slab.insert(3).expect("wrapped generation one");
+    assert_eq!(wrapped.generation().get(), 1);
+    assert_eq!(slab.remove(wrapped), Some(3));
 }
 
 #[test]
@@ -53,6 +128,60 @@ fn entry_and_explicit_index_paths_preserve_the_free_list() {
     let replacement = slab.vacant_entry_at(130).unwrap().insert(7);
     assert_ne!(high, replacement);
     assert_eq!(slab.get(replacement), Some(&7));
+}
+
+#[test]
+fn range_reservation_never_escapes_its_partition() {
+    let mut slab = Slab::<u32>::with_capacity(Capacity::new(6));
+    let occupied = slab.vacant_entry_at(2).unwrap().insert(2);
+    let occupied_next = slab.vacant_entry_at(3).unwrap().insert(3);
+
+    let selected = slab.vacant_entry_in(2..5).expect("free slot in range");
+    assert_eq!(selected.key().index(), 4);
+    let selected = selected.insert(4);
+    assert_eq!(slab.get(selected), Some(&4));
+
+    assert!(slab.vacant_entry_in(2..4).is_none());
+    assert!(slab.vacant_entry_in(5..5).is_none());
+    assert_eq!(slab.vacant_entry_in(5..6).unwrap().key().index(), 5);
+
+    assert_eq!(slab.remove(occupied), Some(2));
+    assert_eq!(slab.remove(occupied_next), Some(3));
+}
+
+#[test]
+fn occupied_entry_carries_exclusive_generation_proof_through_removal() {
+    let mut slab = Slab::<u32>::with_capacity(Capacity::new(2));
+    let key = slab.insert(7).expect("first slot");
+
+    {
+        let mut entry = slab
+            .occupied_entry_parts(key.parts())
+            .expect("current generation");
+        assert_eq!(entry.key(), key);
+        assert_eq!(entry.get(), &7);
+        *entry.get_mut() = 11;
+    }
+    assert_eq!(slab.get(key), Some(&11));
+
+    let entry = slab.occupied_entry_at(key.index()).expect("occupied index");
+    assert_eq!(entry.remove(), 11);
+    assert!(slab.occupied_entry(key).is_none());
+
+    let replacement = slab.insert(13).expect("recycled slot");
+    assert_eq!(replacement.index(), key.index());
+    assert_ne!(replacement.generation(), key.generation());
+    assert!(slab.occupied_entry(key).is_none());
+    assert_eq!(slab.occupied_entry(replacement).unwrap().get(), &13);
+
+    let inserted = slab
+        .vacant_entry_at(1)
+        .expect("second slot")
+        .insert_occupied(17);
+    assert_eq!(inserted.get(), &17);
+    let inserted_key = inserted.key();
+    drop(inserted);
+    assert_eq!(slab.get(inserted_key), Some(&17));
 }
 
 #[test]

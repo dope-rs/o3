@@ -20,17 +20,24 @@ pub struct Robin {
 
 impl Robin {
     pub fn with_capacity(capacity: usize) -> Self {
+        match Self::try_with_capacity(capacity) {
+            Ok(queue) => queue,
+            Err(error) => error.abort(),
+        }
+    }
+
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, crate::collections::AllocationError> {
         use crate::ThreadBound;
         assert!(
             u32::try_from(capacity).is_ok(),
             "round-robin set capacity overflow"
         );
-        Self {
-            links: vec![VACANT; capacity].into_boxed_slice(),
+        Ok(Self {
+            links: crate::collections::try_box_with(capacity, |_| VACANT)?,
             head: NONE,
             len: 0,
             _thread: ThreadBound::NEW,
-        }
+        })
     }
 
     pub fn contains(&self, index: usize) -> bool {

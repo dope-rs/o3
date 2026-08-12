@@ -8,12 +8,12 @@ Pinned values require the pin-aware branded borrow:
 
 ```compile_fail,E0277
 use std::marker::PhantomPinned;
-use o3::cell::branded::{Brand, BrandToken};
+use o3::cell::brand;
 
 struct Pinned(PhantomPinned);
 
-BrandToken::scope(|mut token| {
-    let cell = Brand::new(Pinned(PhantomPinned));
+brand::Token::scope(|mut token| {
+    let cell = brand::Value::new(Pinned(PhantomPinned));
     let _ = cell.borrow_mut(&mut token);
 });
 ```
@@ -26,6 +26,58 @@ use o3::cell::Checked;
 fn escape(cell: &Checked<u8>) -> &mut u8 {
     cell.with_mut(|value| value)
 }
+```
+
+Unchecked queue insertion remains an explicit caller obligation:
+
+```compile_fail,E0133
+use o3::queue;
+
+let queue = queue::Fifo::with_capacity(1);
+queue::raw::Fifo::push_back_unchecked(&queue, 1_u8);
+```
+
+A raw hash entry cannot outlive the map borrow that proves its storage:
+
+```compile_fail,E0515
+use o3::collections::fixed::hash;
+
+fn escape<'a>() -> hash::Entry<'a, u8> {
+    let mut map = hash::Map::from_plan(hash::Plan::fixed::<1>());
+    unsafe { hash::raw::Map::entry_unchecked(&mut map, 1, |_| false) }
+}
+```
+
+An unchecked vacancy keeps its queue exclusively borrowed:
+
+```compile_fail,E0515
+use o3::collections::queue::fixed;
+
+fn escape<'a>() -> fixed::Vacant<'a, u8> {
+    let mut queue = fixed::Fifo::with_capacity(1);
+    unsafe { fixed::raw::Fifo::vacant_entry_unchecked(&mut queue) }
+}
+```
+
+An indexed queue vacancy retains its exclusive queue borrow:
+
+```compile_fail,E0515
+use o3::collections::queue::slot;
+
+fn escape<'a>() -> slot::Vacant<'a, u8> {
+    let mut queue = slot::Fifo::with_capacity(1);
+    queue.vacant_entry(0).unwrap()
+}
+```
+
+Shared queue mutation cannot expose a borrowed value:
+
+```compile_fail,E0599
+use o3::collections::queue::slot;
+
+let queue = slot::Cell::with_capacity(1);
+queue.push_back(0, 1_u8).unwrap();
+let _ = queue.front();
 ```
 
 Slab keys cannot be fabricated from public parts:
@@ -58,6 +110,25 @@ use o3::collections::slab::{Capacity, lease};
 fn escape() -> lease::Lease<'static, u8> {
     let slab = lease::Pool::with_capacity(Capacity::new(1));
     slab.vacant_entry().unwrap().insert(1)
+}
+```
+
+A recycling lease retains the pool that owns its reusable seed:
+
+```compile_fail,E0515
+use o3::collections::slab::{Capacity, recycle};
+
+struct Value;
+
+impl recycle::Recycle for Value {
+    type Seed = ();
+
+    fn into_seed(self) {}
+}
+
+fn escape() -> recycle::Lease<'static, Value> {
+    let pool = recycle::Pool::with_capacity(Capacity::new(1), || ());
+    pool.vacant_entry().unwrap().insert_with(|()| Value)
 }
 ```
 
@@ -116,22 +187,30 @@ prefix.commit();
 Brand and region permissions are distinct domains:
 
 ```compile_fail,E0308
-use o3::cell::branded::{BrandToken, Region};
+use o3::cell::{brand, region};
 
-BrandToken::scope(|mut token| {
-    let cell = Region::new(0_u8);
+brand::Token::scope(|mut token| {
+    let cell = region::Value::new(0_u8);
     *cell.borrow_mut(&mut token) = 1;
 });
+```
+
+Tokens can be issued only by their generative scope:
+
+```compile_fail,E0624
+use o3::cell::region;
+
+let _ = region::Token::new();
 ```
 
 Cells from one generative brand cannot be accessed through another:
 
 ```compile_fail,E0521
-use o3::cell::branded::{Brand, BrandToken};
+use o3::cell::brand;
 
-BrandToken::scope(|mut first| {
-    BrandToken::scope(|mut second| {
-        let cell = Brand::new(0_u8);
+brand::Token::scope(|mut first| {
+    brand::Token::scope(|mut second| {
+        let cell = brand::Value::new(0_u8);
         let _ = cell.borrow_mut(&mut first);
         let _ = cell.borrow_mut(&mut second);
     });

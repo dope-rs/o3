@@ -17,7 +17,9 @@ fn generations_advance_and_retired_heads_are_skipped() {
     let third = slab.vacant_entry_at(0).unwrap().insert(3);
     assert_eq!(third.generation().get(), 3);
     assert_eq!(slab.remove(third), Some(3));
+    assert_eq!(slab.available(), 1);
     assert_eq!(slab.insert(4).unwrap().index(), 1);
+    assert_eq!(slab.available(), 0);
 
     let slab: slab::Cell<u32, Short, 3> = slab::Cell::with_capacity(Capacity::new(2));
     let first = slab.insert(1).unwrap();
@@ -28,9 +30,11 @@ fn generations_advance_and_retired_heads_are_skipped() {
     let third = slab.insert(3).unwrap();
     assert_eq!(third.generation().get(), 3);
     assert_eq!(slab.remove(third), Some(3));
+    assert_eq!(slab.available(), 1);
     assert_eq!(slab.update(first, |_| ()), None);
     assert_eq!(slab.update(second, |_| ()), None);
     assert_eq!(slab.insert(4).unwrap().index(), 1);
+    assert_eq!(slab.available(), 0);
 }
 
 #[test]
@@ -64,6 +68,7 @@ fn reservation_rollback_advances_or_retires_generations() {
     assert_eq!(slab.remove(third), Some(3));
     assert!(slab.insert(4).is_err());
     assert!(slab.is_full());
+    assert_eq!(slab.available(), 0);
 
     let mut slab: Slab<u32> = Slab::with_capacity(Capacity::new(1));
     let reservation = slab.vacant_entry().unwrap();

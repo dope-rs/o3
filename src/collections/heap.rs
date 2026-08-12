@@ -1,6 +1,6 @@
 use std::{marker, mem, ptr};
 
-use crate::collections;
+use crate::{collections, collections::slab::key};
 
 const NONE: u32 = u32::MAX;
 
@@ -231,17 +231,33 @@ impl<K: Ord> Vacant<'_, K> {
 }
 
 impl<K: Ord> Min<K> {
+    pub fn new() -> Self {
+        Self {
+            entries: Box::default(),
+            positions: Box::default(),
+            len: 0,
+            _thread: Default::default(),
+        }
+    }
+
     pub fn with_capacity(capacity: usize) -> Self {
+        match Self::try_with_capacity(capacity) {
+            Ok(heap) => heap,
+            Err(error) => error.abort(),
+        }
+    }
+
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, collections::AllocationError> {
         assert!(
             u32::try_from(capacity).is_ok(),
             "index heap capacity overflow"
         );
-        Self {
-            entries: Box::<[Entry<K>]>::new_uninit_slice(capacity),
-            positions: vec![NONE; capacity].into_boxed_slice(),
+        Ok(Self {
+            entries: collections::try_box_uninit(capacity)?,
+            positions: collections::try_box_with(capacity, |_| NONE)?,
             len: 0,
             _thread: Default::default(),
-        }
+        })
     }
 
     pub fn vacant_entry(&mut self, index: usize) -> Option<Vacant<'_, K>> {
@@ -261,6 +277,38 @@ impl<K: Ord> Min<K> {
         }
         unsafe { self.insert_unchecked(index, key) };
         Ok(())
+    }
+
+    /// Inserts or replaces one indexed key, growing to the proven slot when needed.
+    pub fn set<Tag, const MAX: u32>(&mut self, slot: key::Key<Tag, MAX>, key: K) {
+        let index = slot.index() as usize;
+        if index >= self.capacity() {
+            self.grow_to(index + 1);
+        }
+        let position = self.positions[index];
+        if position == NONE {
+            unsafe { self.insert_unchecked(index, key) };
+            return;
+        }
+
+        let position = position as usize;
+        let previous = unsafe { self.entries.get_unchecked(position).assume_init_read() };
+        debug_assert_eq!(previous.index, index);
+        let value = Entry { index, key };
+        let positions = &mut self.positions;
+        let on_move = |entry: &Entry<K>, position: usize| unsafe {
+            *positions.get_unchecked_mut(entry.index) = position as u32;
+        };
+        let mut hole = unsafe {
+            Hole::with_value(
+                self.entries.get_unchecked_mut(..self.len),
+                position,
+                value,
+                on_move,
+            )
+        };
+        hole.repair(&mut |left, right| left.key < right.key);
+        drop(previous.key);
     }
 
     /// # Safety
@@ -299,6 +347,12 @@ impl<K: Ord> Min<K> {
 
     pub fn pop(&mut self) -> Option<(usize, K)> {
         (self.len != 0).then(|| unsafe { self.remove_position(0) })
+    }
+
+    /// Removes the minimum only when it satisfies `predicate`.
+    pub fn pop_if(&mut self, predicate: impl FnOnce(&K) -> bool) -> Option<(usize, K)> {
+        let (_, key) = self.peek()?;
+        if predicate(key) { self.pop() } else { None }
     }
 
     pub fn remove(&mut self, index: usize) -> Option<K> {
@@ -378,6 +432,12 @@ impl<K: Ord> Min<K> {
     fn entry(&self, position: usize) -> &Entry<K> {
         debug_assert!(position < self.len);
         unsafe { self.entries.get_unchecked(position).assume_init_ref() }
+    }
+}
+
+impl<K: Ord> Default for Min<K> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

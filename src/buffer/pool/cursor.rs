@@ -6,12 +6,12 @@ use crate::buffer::{
 
 /// A pooled byte cursor over one logical readable range.
 pub struct Cursor<C: pool::Capacity = pool::RuntimeCapacity> {
-    pub(super) lease: pool::Lease<state::Uninitialized, C>,
+    pub(super) lease: buffer::Lease<state::Uninitialized, C>,
     pub(super) head: u32,
 }
 
 impl<C: pool::Capacity> Cursor<C> {
-    pub(super) const fn new(lease: pool::Lease<state::Uninitialized, C>) -> Self {
+    pub(in crate::buffer) const fn new(lease: buffer::Lease<state::Uninitialized, C>) -> Self {
         Self { lease, head: 0 }
     }
     #[must_use]

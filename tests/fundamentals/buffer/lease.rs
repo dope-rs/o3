@@ -9,7 +9,7 @@ fn shared_lease_cursor_keeps_the_former_wrapper_layout() {
 
 #[test]
 fn shared_lease_buffer_compacts_only_for_an_admissible_append() {
-    let pool = buffer::pool::Pool::try_new(1, 16).unwrap();
+    let pool = buffer::Pool::try_new(1, 16).unwrap();
     let mut buffer = pool.try_acquire_buffer().unwrap();
     buffer.try_extend(b"discardpayload").unwrap();
     buffer.try_consume_prefix(7).unwrap().commit();
@@ -21,7 +21,7 @@ fn shared_lease_buffer_compacts_only_for_an_admissible_append() {
 
 #[test]
 fn freezing_preserves_only_the_unconsumed_range_without_copying() {
-    let pool = buffer::pool::Pool::try_new(1, 16).unwrap();
+    let pool = buffer::Pool::try_new(1, 16).unwrap();
     let mut buffer = pool.try_acquire_buffer().unwrap();
     buffer.try_extend(b"discardpayload").unwrap();
     let expected = buffer.as_slice()[7..].as_ptr();
@@ -38,7 +38,7 @@ fn freezing_preserves_only_the_unconsumed_range_without_copying() {
 
 #[test]
 fn exact_transaction_rolls_back_until_it_is_complete() {
-    let pool = buffer::pool::Pool::try_new(1, 16).unwrap();
+    let pool = buffer::Pool::try_new(1, 16).unwrap();
     let mut buffer = pool.try_acquire_buffer().unwrap();
     let mut writer = buffer.spare_writer();
     {

@@ -1,6 +1,6 @@
 use std::{fmt, hash, ops};
 
-use crate::buffer::{self, RangeExt as _, pool, storage::shared};
+use crate::buffer::{self, RangeExt as _, storage};
 
 #[doc(hidden)]
 pub trait Storage: buffer::Seal {
@@ -23,11 +23,11 @@ pub struct Borrowed<'a> {
 #[derive(Clone)]
 enum RetainedRepr {
     Frozen {
-        frozen: pool::Frozen,
+        frozen: buffer::Frozen,
         start: u32,
         len: u32,
     },
-    Shared(shared::Shared),
+    Shared(storage::Shared),
 }
 
 /// Bytes retained beyond their callback through pooled or shared ownership.
@@ -37,11 +37,9 @@ pub struct Retained {
 }
 
 /// Read-only bytes that can be retained beyond their current callback.
-pub trait Retainable: buffer::Seal + Sized {
-    fn as_slice(&self) -> &[u8];
-
+pub trait Retainable: buffer::Seal + AsRef<[u8]> + Sized {
     fn is_empty(&self) -> bool {
-        self.as_slice().is_empty()
+        self.as_ref().is_empty()
     }
 
     /// Promotes borrowed bytes by copying and owned bytes by transferring ownership.
@@ -66,13 +64,13 @@ impl<'a> Bytes<Borrowed<'a>> {
 impl Bytes<Retained> {
     #[must_use]
     pub fn copy_from_slice(slice: &[u8]) -> Self {
-        Self::from(shared::Shared::copy_from_slice(slice))
+        Self::from(storage::Shared::copy_from_slice(slice))
     }
 
     #[must_use]
-    pub fn into_shared(self) -> shared::Shared {
+    pub fn into_shared(self) -> storage::Shared {
         match self.storage.repr {
-            RetainedRepr::Frozen { frozen, start, len } => shared::Shared::copy_from_slice(
+            RetainedRepr::Frozen { frozen, start, len } => storage::Shared::copy_from_slice(
                 &frozen.as_slice()[start as usize..(start + len) as usize],
             ),
             RetainedRepr::Shared(shared) => shared,
@@ -92,7 +90,7 @@ impl Bytes<Retained> {
     fn consume_valid(&mut self, amount: usize) {
         debug_assert!(amount <= self.len());
         if amount == self.storage.len() {
-            self.storage.repr = RetainedRepr::Shared(shared::Shared::new());
+            self.storage.repr = RetainedRepr::Shared(storage::Shared::new());
             return;
         }
         match &mut self.storage.repr {
@@ -126,7 +124,7 @@ impl Retained {
                     return false;
                 }
                 if range.is_empty() {
-                    self.repr = RetainedRepr::Shared(shared::Shared::new());
+                    self.repr = RetainedRepr::Shared(storage::Shared::new());
                     return true;
                 }
                 *start += range.start as u32;
@@ -186,22 +184,18 @@ impl Storage for Retained {
 impl buffer::Seal for Bytes<Borrowed<'_>> {}
 
 impl Retainable for Bytes<Borrowed<'_>> {
-    fn as_slice(&self) -> &[u8] {
-        Bytes::as_slice(self)
-    }
-
     fn into_retained(self) -> Bytes<Retained> {
-        Bytes::<Retained>::copy_from_slice(self.as_slice())
+        Bytes {
+            storage: Retained {
+                repr: RetainedRepr::Shared(storage::Shared::copy_from_slice(self.storage.slice)),
+            },
+        }
     }
 }
 
 impl buffer::Seal for Bytes<Retained> {}
 
 impl Retainable for Bytes<Retained> {
-    fn as_slice(&self) -> &[u8] {
-        Bytes::as_slice(self)
-    }
-
     fn is_empty(&self) -> bool {
         match &self.storage.repr {
             RetainedRepr::Frozen { frozen, len, .. } => frozen.is_empty() || *len == 0,
@@ -214,11 +208,7 @@ impl Retainable for Bytes<Retained> {
     }
 }
 
-impl Retainable for shared::Shared {
-    fn as_slice(&self) -> &[u8] {
-        shared::Shared::as_slice(self)
-    }
-
+impl Retainable for storage::Shared {
     fn into_retained(self) -> Bytes<Retained> {
         Bytes {
             storage: Retained {
@@ -284,8 +274,8 @@ impl<'a, const N: usize> From<&'a [u8; N]> for Bytes<Borrowed<'a>> {
     }
 }
 
-impl From<shared::Shared> for Bytes<Retained> {
-    fn from(value: shared::Shared) -> Self {
+impl From<storage::Shared> for Bytes<Retained> {
+    fn from(value: storage::Shared) -> Self {
         Self {
             storage: Retained {
                 repr: RetainedRepr::Shared(value),
@@ -294,8 +284,8 @@ impl From<shared::Shared> for Bytes<Retained> {
     }
 }
 
-impl From<pool::Frozen> for Bytes<Retained> {
-    fn from(value: pool::Frozen) -> Self {
+impl From<buffer::Frozen> for Bytes<Retained> {
+    fn from(value: buffer::Frozen) -> Self {
         let len = value.len() as u32;
         Self {
             storage: Retained {

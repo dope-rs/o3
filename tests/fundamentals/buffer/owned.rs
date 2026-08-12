@@ -1,6 +1,6 @@
 use o3::buffer::{
     BLOCK_CAPACITY, CapacityError,
-    storage::{Owned, shared::Shared},
+    storage::{Owned, Shared},
     view::Snapshot,
 };
 
@@ -41,20 +41,32 @@ fn clone_copies_and_freeze_transfers_the_fixed_allocation() {
     let shared = owned.freeze();
     assert_eq!(shared.as_ptr(), ptr);
     assert_eq!(shared.as_slice(), b"fixed block");
+    assert_eq!(shared.resident_bytes(), FIXED_CAPACITY);
     assert_eq!(shared.clone().as_slice(), b"fixed block");
 }
 
 #[test]
 fn large_vec_transfers_and_shares_its_allocation() {
-    let payload = vec![b'x'; 4096];
+    let mut payload = Vec::with_capacity(8192);
+    payload.resize(4096, b'x');
     let ptr = payload.as_ptr();
+    let capacity = payload.capacity();
     let shared = Shared::from(payload);
     assert_eq!(shared.as_ptr(), ptr);
+    assert_eq!(shared.resident_bytes(), capacity);
 
     let slice = shared.get(1024..3072).unwrap();
     drop(shared);
     assert_eq!(slice.as_slice(), &[b'x'; 2048]);
     assert_eq!(slice.as_ptr(), ptr.wrapping_add(1024));
+    assert_eq!(slice.resident_bytes(), capacity);
+}
+
+#[test]
+fn static_shared_bytes_have_no_resident_allocation_charge() {
+    let shared = Shared::from_static(b"static");
+    assert_eq!(shared.resident_bytes(), 0);
+    assert_eq!(shared.get(1..3).unwrap().resident_bytes(), 0);
 }
 
 #[test]

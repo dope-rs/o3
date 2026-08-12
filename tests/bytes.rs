@@ -3,11 +3,11 @@ use std::mem::{needs_drop, size_of};
 use o3::buffer::{
     self,
     bytes::{Borrowed, Bytes, Retainable, Retained},
-    storage::shared::Shared,
+    storage::Shared,
 };
 
 fn span(value: &impl Retainable) -> &[u8] {
-    value.as_slice()
+    value.as_ref()
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn borrowed_retention_is_an_explicit_copy() {
 
 #[test]
 fn pooled_ranges_enter_owned_storage_directly() {
-    let pool = buffer::pool::Pool::<buffer::pool::state::Uninitialized>::try_new(1, 16).unwrap();
+    let pool = buffer::Pool::<buffer::pool::state::Uninitialized>::try_new(1, 16).unwrap();
     let mut lease = pool.try_acquire().expect("pool slot");
     lease.try_extend(b"abcdef").expect("slot capacity");
     let source = lease.as_slice()[1..5].as_ptr();
@@ -52,7 +52,7 @@ fn pooled_ranges_enter_owned_storage_directly() {
 
 #[test]
 fn empty_pooled_slice_releases_its_slot() {
-    let pool = buffer::pool::Pool::<buffer::pool::state::Uninitialized>::try_new(1, 8).unwrap();
+    let pool = buffer::Pool::<buffer::pool::state::Uninitialized>::try_new(1, 8).unwrap();
     let mut lease = pool.try_acquire().expect("pool slot");
     lease.try_extend(b"abcdef").expect("slot capacity");
 
@@ -72,7 +72,7 @@ fn retained_storage_stays_compact() {
 
 #[test]
 fn retained_storage_advances_and_slices_without_copying() {
-    let pool = buffer::pool::Pool::<buffer::pool::state::Uninitialized>::try_new(1, 8).unwrap();
+    let pool = buffer::Pool::<buffer::pool::state::Uninitialized>::try_new(1, 8).unwrap();
     let mut lease = pool.try_acquire().expect("pool slot");
     lease.try_extend(b"abcdef").expect("slot capacity");
     let source = lease.as_slice().as_ptr();

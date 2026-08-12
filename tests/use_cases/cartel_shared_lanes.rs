@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use o3::{
-    cell::branded::{Region, RegionToken},
+    cell::region,
     collections::{
         arena::Linked,
         slab::{Capacity, Slab, key::Key},
@@ -149,14 +149,14 @@ impl ReplyCredits {
 }
 
 struct QueueArena<'region, T> {
-    state: Region<'region, State<T>>,
+    state: region::Value<'region, State<T>>,
     lanes: usize,
 }
 
 impl<'region, T: Unpin> QueueArena<'region, T> {
     fn with_capacity(capacity: usize, lanes: usize) -> Self {
         Self {
-            state: Region::new(State::<T>::with_capacity(capacity, lanes)),
+            state: region::Value::new(State::<T>::with_capacity(capacity, lanes)),
             lanes,
         }
     }
@@ -181,26 +181,26 @@ impl<T> Clone for QueueLane<'_, '_, T> {
 }
 
 impl<'region, T: Unpin> QueueLane<'_, 'region, T> {
-    fn can_push(self, token: &RegionToken<'region>) -> bool {
+    fn can_push(self, token: &region::Token<'region>) -> bool {
         self.arena.state.borrow(token).can_push(self.lane)
     }
 
-    fn len(self, token: &RegionToken<'region>) -> usize {
+    fn len(self, token: &region::Token<'region>) -> usize {
         self.arena.state.borrow(token).items.lane_len(self.lane)
     }
 
-    fn weight(self, token: &RegionToken<'region>) -> usize {
+    fn weight(self, token: &region::Token<'region>) -> usize {
         self.arena.state.borrow(token).weights[self.lane]
     }
 
-    fn try_push(self, token: &mut RegionToken<'region>, item: T, weight: usize) -> Result<(), T> {
+    fn try_push(self, token: &mut region::Token<'region>, item: T, weight: usize) -> Result<(), T> {
         self.arena
             .state
             .borrow_mut(token)
             .try_push(self.lane, item, weight)
     }
 
-    fn pop_front(self, token: &mut RegionToken<'region>) -> Option<T> {
+    fn pop_front(self, token: &mut region::Token<'region>) -> Option<T> {
         self.arena
             .state
             .borrow_mut(token)
@@ -208,7 +208,11 @@ impl<'region, T: Unpin> QueueLane<'_, 'region, T> {
             .map(|(item, _)| item)
     }
 
-    fn drain(self, token: &mut RegionToken<'region>, mut consume: impl FnMut(T) -> Result<(), T>) {
+    fn drain(
+        self,
+        token: &mut region::Token<'region>,
+        mut consume: impl FnMut(T) -> Result<(), T>,
+    ) {
         while let Some((item, weight)) = self.arena.state.borrow_mut(token).pop_front(self.lane) {
             if let Err(item) = consume(item) {
                 self.arena
@@ -223,7 +227,7 @@ impl<'region, T: Unpin> QueueLane<'_, 'region, T> {
 
 #[test]
 fn cartel_request_lanes_share_fixed_storage_without_losing_reserve_or_fifo_order() {
-    RegionToken::scope(|mut token| {
+    region::Token::scope(|mut token| {
         let arena = QueueArena::with_capacity(4, 2);
         let left = arena.lane(0);
         let right = arena.lane(1);

@@ -1,12 +1,14 @@
-use std::{alloc, marker, mem, ops, ptr, rc};
+use std::{alloc, marker, mem, ops, ptr, rc, slice};
 
 use crate::buffer::write;
 
-pub(in crate::buffer) mod refs;
+mod refs;
+
+pub(in crate::buffer) use refs::LocalRefCount;
 
 #[repr(C)]
 struct Header {
-    refs: refs::LocalRefCount,
+    refs: LocalRefCount,
     capacity: u32,
 }
 
@@ -44,7 +46,6 @@ impl Header {
             handle_alloc_error(layout);
         };
         unsafe {
-            use crate::buffer::storage::raw::refs::LocalRefCount;
             ptr.write(Header {
                 refs: LocalRefCount::one(),
                 capacity,
@@ -130,11 +131,15 @@ impl AllocationMut {
         let len = *target as usize;
         let capacity = self.capacity();
         debug_assert!(len <= capacity);
-        let ptr = unsafe { Header::data_mut_ptr(self.ptr).add(len).cast() };
-        unsafe {
-            use crate::buffer::write::SpareWriter;
-            SpareWriter::new(ptr, capacity - len, target)
-        }
+        // SAFETY: `len..capacity` lies in this uniquely borrowed allocation and
+        // is precisely the uninitialized suffix represented by the writer.
+        let spare = unsafe {
+            slice::from_raw_parts_mut(
+                Header::data_mut_ptr(self.ptr).add(len).cast(),
+                capacity - len,
+            )
+        };
+        write::SpareWriter::new(spare, target)
     }
 
     pub(in crate::buffer) fn is_unique(&self) -> bool {
@@ -274,6 +279,10 @@ impl AllocationOwner {
     unsafe fn release(self) {
         unsafe { Header::release(self.0) };
     }
+
+    fn capacity(self) -> usize {
+        unsafe { self.0.as_ref() }.capacity as usize
+    }
 }
 
 #[repr(transparent)]
@@ -358,6 +367,14 @@ impl Owner {
         Self {
             tagged: Some(TaggedOwner::from_vec(buf)),
             _thread: Default::default(),
+        }
+    }
+
+    pub(in crate::buffer) fn resident_bytes(&self) -> usize {
+        match self.tagged.map(TaggedOwner::decode) {
+            None => 0,
+            Some(OwnerPtr::Allocation(owner)) => owner.capacity(),
+            Some(OwnerPtr::Vec(ptr)) => unsafe { ptr.as_ref() }.capacity(),
         }
     }
 }

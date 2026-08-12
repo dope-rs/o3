@@ -94,7 +94,7 @@ impl<const MAX: u32> fmt::Debug for Parts<MAX> {
 }
 
 impl<Tag, const MAX: u32> Key<Tag, MAX> {
-    pub(super) const fn new(index: u32, generation: Generation<MAX>) -> Self {
+    pub(crate) const fn new(index: u32, generation: Generation<MAX>) -> Self {
         Self::from_parts(Parts::from_generation(index, generation))
     }
 
@@ -115,6 +115,17 @@ impl<Tag, const MAX: u32> Key<Tag, MAX> {
 
     pub const fn parts(self) -> Parts<MAX> {
         self.parts
+    }
+
+    pub const fn retag<Other>(self) -> Key<Other, MAX> {
+        Key {
+            parts: self.parts,
+            marker: marker::PhantomData,
+        }
+    }
+
+    pub const fn with_generation(self, generation: Generation<MAX>) -> Self {
+        Self::new(self.index(), generation)
     }
 }
 

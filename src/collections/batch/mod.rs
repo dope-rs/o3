@@ -14,6 +14,13 @@ enum Side {
     B,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DrainState {
+    Idle,
+    Active(Side),
+    Paused(Side),
+}
+
 impl Side {
     const fn index(self) -> usize {
         self as usize
@@ -37,30 +44,37 @@ pub struct Set {
     len: [cell::Cell<usize>; 2],
     cursor: [cell::Cell<usize>; 2],
     active: cell::Cell<Side>,
-    draining: cell::Cell<bool>,
+    draining: cell::Cell<DrainState>,
     _thread: crate::ThreadBound,
 }
 
 impl Set {
     pub fn with_capacity(capacity: usize) -> Self {
+        match Self::try_with_capacity(capacity) {
+            Ok(set) => set,
+            Err(error) => error.abort(),
+        }
+    }
+
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, crate::collections::AllocationError> {
         use crate::{
             ThreadBound,
             collections::batch::bitmap::{Bitmap, Words},
         };
         let word_count = capacity.div_ceil(ENTRIES_PER_WORD);
-        Self {
-            words: Words::zeroed(word_count),
+        Ok(Self {
+            words: Words::try_zeroed(word_count)?,
             summaries: [
-                Bitmap::with_capacity(word_count),
-                Bitmap::with_capacity(word_count),
+                Bitmap::try_with_capacity(word_count)?,
+                Bitmap::try_with_capacity(word_count)?,
             ],
             capacity: cell::Cell::new(capacity),
             len: [cell::Cell::new(0), cell::Cell::new(0)],
             cursor: [cell::Cell::new(0), cell::Cell::new(0)],
             active: cell::Cell::new(Side::A),
-            draining: cell::Cell::new(false),
+            draining: cell::Cell::new(DrainState::Idle),
             _thread: ThreadBound::NEW,
-        }
+        })
     }
 
     /// Inserts an index into the pending batch.
@@ -89,6 +103,17 @@ impl Set {
         }
         self.len[side_index].set(self.len[side_index].get() + 1);
         true
+    }
+
+    /// Returns whether either batch contains `index`.
+    pub fn contains(&self, index: usize) -> bool {
+        if index >= self.capacity.get() {
+            return false;
+        }
+
+        let word_index = index / ENTRIES_PER_WORD;
+        let shift = (index % ENTRIES_PER_WORD) * 2;
+        self.word(word_index).get() & (3usize << shift) != 0
     }
 
     /// Removes an index from either batch.
@@ -125,16 +150,33 @@ impl Set {
         self.pop_side(self.active.get())
     }
 
-    /// Starts draining a stable batch.
+    /// Removes the first pending index at or after `start`, wrapping once.
+    ///
+    /// The hierarchical summaries keep lookup bounded by the bitmap depth,
+    /// independent of the number of occupied indices skipped.
+    pub fn pop_from(&self, start: usize) -> Option<usize> {
+        self.pop_side_from(self.active.get(), start)
+    }
+
+    /// Starts or resumes draining a stable batch.
     ///
     /// Returns `None` during another drain; concurrent inserts enter the next batch.
     pub fn drain_batch(&self) -> Option<Drain<'_>> {
-        if self.draining.replace(true) {
-            return None;
-        }
-        let side = self.active.get();
-        self.active.set(side.other());
-        Some(Drain { set: self, side })
+        let side = match self.draining.get() {
+            DrainState::Active(_) => return None,
+            DrainState::Paused(side) if self.len[side.index()].get() != 0 => side,
+            DrainState::Paused(_) | DrainState::Idle => {
+                let side = self.active.get();
+                self.active.set(side.other());
+                side
+            }
+        };
+        self.draining.set(DrainState::Active(side));
+        Some(Drain {
+            set: self,
+            side,
+            active: true,
+        })
     }
 
     pub fn capacity(&self) -> usize {
@@ -150,11 +192,31 @@ impl Set {
     }
 
     fn pop_side(&self, side: Side) -> Option<usize> {
+        let index = self.peek_side(side)?;
+        self.take(side, index);
+        Some(index)
+    }
+
+    fn peek_side(&self, side: Side) -> Option<usize> {
         let side_index = side.index();
         if self.len[side_index].get() == 0 {
             return None;
         }
-        let start = self.cursor[side_index].get();
+        let capacity = self.capacity.get();
+        debug_assert!(capacity != 0);
+        let start = self.cursor[side_index].get() % capacity;
+        self.find_at_or_after(side, start)
+            .or_else(|| self.find_at_or_after(side, 0))
+    }
+
+    fn pop_side_from(&self, side: Side, start: usize) -> Option<usize> {
+        let side_index = side.index();
+        if self.len[side_index].get() == 0 {
+            return None;
+        }
+        let capacity = self.capacity.get();
+        debug_assert!(capacity != 0);
+        let start = start % capacity;
         let index = self
             .find_at_or_after(side, start)
             .or_else(|| self.find_at_or_after(side, 0))?;
@@ -255,6 +317,27 @@ impl Set {
 pub struct Drain<'a> {
     set: &'a Set,
     side: Side,
+    active: bool,
+}
+
+impl Drain<'_> {
+    /// Returns the next index without removing it from this batch.
+    pub fn peek(&self) -> Option<usize> {
+        self.set.peek_side(self.side)
+    }
+
+    /// Preserves the unconsumed part of this batch for the next drain.
+    ///
+    /// Unlike dropping a partial drain, pausing performs no bitmap transfer.
+    pub fn pause(mut self) {
+        let state = if self.set.len[self.side.index()].get() == 0 {
+            DrainState::Idle
+        } else {
+            DrainState::Paused(self.side)
+        };
+        self.set.draining.set(state);
+        self.active = false;
+    }
 }
 
 impl Iterator for Drain<'_> {
@@ -267,7 +350,11 @@ impl Iterator for Drain<'_> {
 
 impl Drop for Drain<'_> {
     fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        debug_assert!(self.set.draining.get() == DrainState::Active(self.side));
         self.set.return_remaining(self.side);
-        self.set.draining.set(false);
+        self.set.draining.set(DrainState::Idle);
     }
 }
