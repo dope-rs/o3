@@ -1,3 +1,4 @@
+pub mod narrow;
 pub mod raw;
 mod sealed;
 
