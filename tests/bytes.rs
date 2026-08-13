@@ -2,7 +2,7 @@ use std::mem::{needs_drop, size_of};
 
 use o3::buffer::{
     self,
-    bytes::{Borrowed, Bytes, Retainable, Retained},
+    bytes::{Borrowed, Bytes, Pooled, Retainable, Retained},
     storage::Shared,
 };
 
@@ -33,6 +33,27 @@ fn borrowed_retention_is_an_explicit_copy() {
     let source = [1, 2, 3, 4];
     let retained = Retainable::into_retained(Bytes::<Borrowed<'_>>::from(&source));
     assert_eq!(retained.as_slice(), source);
+}
+
+#[test]
+fn borrow_scoped_pool_bytes_promote_without_copying() {
+    let retained = {
+        let pool = buffer::Pool::<buffer::pool::state::Uninitialized>::try_new(1, 16).unwrap();
+        let mut cursor = pool.try_acquire_borrowed_buffer().expect("pool slot");
+        cursor.try_extend(b"abcdef").expect("slot capacity");
+        let source = cursor.as_slice()[1..5].as_ptr();
+        let pooled = cursor.freeze().get(1..5).expect("pooled range");
+
+        assert_eq!(pooled.as_slice(), b"bcde");
+        assert_eq!(pooled.as_slice().as_ptr(), source);
+        assert_eq!(pool.available(), 0);
+
+        let retained = Bytes::<Pooled<'_>>::into_retained(pooled);
+        assert_eq!(retained.as_slice().as_ptr(), source);
+        retained
+    };
+
+    assert_eq!(retained.as_slice(), b"bcde");
 }
 
 #[test]

@@ -1,11 +1,89 @@
-use std::{error, fmt, io};
+use std::{error, fmt, io, marker, ops};
 
-use crate::buffer;
+use crate::buffer::{self, bytes};
 
 mod cursor;
 pub mod state;
 
 pub use cursor::Cursor;
+
+#[repr(transparent)]
+pub struct BorrowedCursor<'pool, C: Capacity = RuntimeCapacity> {
+    cursor: Cursor<C, Borrowed<'pool>>,
+}
+
+impl<'pool, C: Capacity> BorrowedCursor<'pool, C> {
+    pub(in crate::buffer) const fn new(
+        lease: buffer::Lease<state::Uninitialized, C, Borrowed<'pool>>,
+    ) -> Self {
+        Self {
+            cursor: Cursor { lease, head: 0 },
+        }
+    }
+
+    #[must_use]
+    pub fn freeze(self) -> bytes::Bytes<bytes::Pooled<'pool>> {
+        use crate::buffer::PrefixConsumer;
+        let Cursor { lease, head } = self.cursor;
+        let mut bytes = bytes::Bytes::<bytes::Pooled<'pool>>::from(lease.freeze());
+        let _ = PrefixConsumer::consume_prefix_up_to(&mut bytes, head as usize);
+        bytes
+    }
+}
+
+impl<'pool, C: Capacity> ops::Deref for BorrowedCursor<'pool, C> {
+    type Target = Cursor<C, Borrowed<'pool>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cursor
+    }
+}
+
+impl<'pool, C: Capacity> ops::DerefMut for BorrowedCursor<'pool, C> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cursor
+    }
+}
+
+impl<C: Capacity> AsRef<[u8]> for BorrowedCursor<'_, C> {
+    fn as_ref(&self) -> &[u8] {
+        self.cursor.as_slice()
+    }
+}
+
+impl<C: Capacity> buffer::PrefixLength for BorrowedCursor<'_, C> {
+    fn prefix_len(&self) -> usize {
+        self.cursor.len()
+    }
+}
+
+impl<C: Capacity> buffer::PrefixConsumer for BorrowedCursor<'_, C> {
+    fn consume_validated_prefix(&mut self, proof: buffer::PrefixProof) {
+        self.cursor.consume_valid(proof.amount());
+    }
+}
+
+#[doc(hidden)]
+pub trait Ownership: buffer::Seal {
+    const RETAINS_CORE: bool;
+}
+
+#[doc(hidden)]
+pub struct Owned;
+
+#[doc(hidden)]
+pub struct Borrowed<'pool>(marker::PhantomData<&'pool ()>);
+
+impl buffer::Seal for Owned {}
+impl buffer::Seal for Borrowed<'_> {}
+
+impl Ownership for Owned {
+    const RETAINS_CORE: bool = true;
+}
+
+impl Ownership for Borrowed<'_> {
+    const RETAINS_CORE: bool = false;
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AllocationError;

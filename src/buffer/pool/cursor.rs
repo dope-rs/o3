@@ -5,13 +5,13 @@ use crate::buffer::{
 };
 
 /// A pooled byte cursor over one logical readable range.
-pub struct Cursor<C: pool::Capacity = pool::RuntimeCapacity> {
-    pub(super) lease: buffer::Lease<state::Uninitialized, C>,
+pub struct Cursor<C: pool::Capacity = pool::RuntimeCapacity, O: pool::Ownership = pool::Owned> {
+    pub(super) lease: buffer::Lease<state::Uninitialized, C, O>,
     pub(super) head: u32,
 }
 
-impl<C: pool::Capacity> Cursor<C> {
-    pub(in crate::buffer) const fn new(lease: buffer::Lease<state::Uninitialized, C>) -> Self {
+impl<C: pool::Capacity, O: pool::Ownership> Cursor<C, O> {
+    pub(in crate::buffer) const fn new(lease: buffer::Lease<state::Uninitialized, C, O>) -> Self {
         Self { lease, head: 0 }
     }
     #[must_use]
@@ -97,15 +97,6 @@ impl<C: pool::Capacity> Cursor<C> {
         self.lease.spare_writer()
     }
 
-    #[must_use]
-    pub fn freeze(self) -> bytes::Bytes<bytes::Retained> {
-        use crate::buffer::PrefixConsumer;
-        let head = self.head as usize;
-        let mut bytes = bytes::Bytes::<bytes::Retained>::from(self.lease.freeze());
-        let _ = PrefixConsumer::consume_prefix_up_to(&mut bytes, head);
-        bytes
-    }
-
     fn compact(&mut self) {
         if self.head == 0 {
             return;
@@ -118,7 +109,7 @@ impl<C: pool::Capacity> Cursor<C> {
         self.lease.truncate(len);
     }
 
-    fn consume_valid(&mut self, amount: usize) {
+    pub(super) fn consume_valid(&mut self, amount: usize) {
         debug_assert!(amount <= self.len());
         self.head += amount as u32;
         if self.head as usize == self.lease.len() {
@@ -128,19 +119,30 @@ impl<C: pool::Capacity> Cursor<C> {
     }
 }
 
-impl<C: pool::Capacity> AsRef<[u8]> for Cursor<C> {
+impl<C: pool::Capacity> Cursor<C> {
+    #[must_use]
+    pub fn freeze(self) -> bytes::Bytes<bytes::Retained> {
+        use crate::buffer::PrefixConsumer;
+        let head = self.head as usize;
+        let mut bytes = bytes::Bytes::<bytes::Retained>::from(self.lease.freeze());
+        let _ = PrefixConsumer::consume_prefix_up_to(&mut bytes, head);
+        bytes
+    }
+}
+
+impl<C: pool::Capacity, O: pool::Ownership> AsRef<[u8]> for Cursor<C, O> {
     fn as_ref(&self) -> &[u8] {
         self.as_slice()
     }
 }
 
-impl<C: pool::Capacity> buffer::PrefixLength for Cursor<C> {
+impl<C: pool::Capacity, O: pool::Ownership> buffer::PrefixLength for Cursor<C, O> {
     fn prefix_len(&self) -> usize {
         self.len()
     }
 }
 
-impl<C: pool::Capacity> buffer::PrefixConsumer for Cursor<C> {
+impl<C: pool::Capacity, O: pool::Ownership> buffer::PrefixConsumer for Cursor<C, O> {
     fn consume_validated_prefix(&mut self, proof: buffer::PrefixProof) {
         self.consume_valid(proof.amount());
     }

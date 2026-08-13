@@ -80,13 +80,18 @@ impl Core {
         Ok(ptr)
     }
 
-    pub(super) fn acquire(ptr: ptr::NonNull<Self>) -> Option<u32> {
+    pub(super) fn acquire_owned(ptr: ptr::NonNull<Self>) -> Option<u32> {
+        let index = Self::acquire_borrowed(ptr)?;
+        unsafe { ptr.as_ref() }.refs.retain();
+        Some(index)
+    }
+
+    pub(super) fn acquire_borrowed(ptr: ptr::NonNull<Self>) -> Option<u32> {
         let core = unsafe { ptr.as_ref() };
         let index = core.free.get();
         if index == NONE {
             return None;
         }
-        core.refs.retain();
         let slot = unsafe { &*Self::slot(ptr, index) };
         debug_assert!(slot.refs.is_empty());
         core.free.set(slot.next.get());
