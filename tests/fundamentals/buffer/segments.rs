@@ -2,7 +2,7 @@ use std::mem::size_of;
 
 use o3::buffer::{
     bytes::{Bytes, Retained},
-    queue::Segments,
+    queue::{ConsumePrefix, Segments},
 };
 
 #[test]

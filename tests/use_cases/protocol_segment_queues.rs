@@ -1,6 +1,6 @@
 use o3::buffer::{
     bytes::{Bytes, Retained},
-    queue::Segments,
+    queue::{ConsumePrefix, Segments},
 };
 
 #[test]

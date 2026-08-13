@@ -193,9 +193,9 @@ fn bounded_queues_are_fifo() {
     assert!(queue.push_back(1).is_ok());
     assert!(queue.push_back(2).is_ok());
     assert_eq!(queue.len(), 2);
-    assert!(queue.contains(&1));
+    assert!(queue.iter().any(|value| value == &1));
     assert_eq!(queue.pop_front(), Some(1));
-    assert!(!queue.contains(&1));
+    assert!(!queue.iter().any(|value| value == &1));
     assert!(queue.push_back(3).is_ok());
     assert!(queue.push_back(4).is_ok());
     assert!(queue.is_full());

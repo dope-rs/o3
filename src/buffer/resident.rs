@@ -76,15 +76,6 @@ impl<'d> Budget<'d> {
     }
 }
 
-pub fn copy_from_slice<'d>(
-    budget: &Budget<'d>,
-    bytes: &[u8],
-) -> Result<storage::Shared, buffer::CapacityError> {
-    let mut snapshot = Snapshot::<{ u32::MAX as usize }>::with_capacity_up_to(budget, bytes.len())?;
-    snapshot.try_extend(bytes)?;
-    Ok(snapshot.snapshot().unwrap_or_default())
-}
-
 impl Drop for Charge {
     fn drop(&mut self) {
         let resident = self.core.resident.get();

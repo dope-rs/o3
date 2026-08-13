@@ -1,6 +1,6 @@
 use std::{cell::Cell, mem::size_of, pin::Pin};
 
-use o3::collections::pinned::Slice;
+use o3::collections::fixed::pinned::Slice;
 
 use crate::support::PinnedItem;
 

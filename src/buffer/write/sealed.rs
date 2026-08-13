@@ -1,6 +1,6 @@
 use std::{convert, error, fmt, mem, ptr, slice};
 
-use crate::buffer::{self, pool, queue, storage};
+use crate::buffer::{self, pool, queue, storage::inline};
 
 fn append_vec_slices<const N: usize>(out: &mut Vec<u8>, slices: [&[u8]; N]) {
     let additional = slices
@@ -293,55 +293,46 @@ impl ByteSink for queue::Ring {
 impl<C: pool::Capacity> ByteSink for pool::Cursor<C> {
     type Error = buffer::CapacityError;
 
-    #[inline]
     fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
         self.try_push(byte)
     }
 
-    #[inline]
     fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
         self.try_extend(bytes)
     }
 
-    #[inline]
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
         self.try_extend_from_slices(slices)
     }
 }
 
-impl<const CAP: usize> ByteSink for storage::inline::Bytes<CAP> {
+impl<const CAP: usize> ByteSink for inline::Bytes<CAP> {
     type Error = buffer::CapacityError;
 
-    #[inline]
     fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
         self.try_push(byte)
     }
 
-    #[inline]
     fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
         self.try_extend(bytes)
     }
 
-    #[inline]
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
         self.try_extend_from_slices(slices)
     }
 }
 
-impl<const CAP: usize> ByteSink for storage::inline::WideBytes<CAP> {
+impl<const CAP: usize> ByteSink for inline::WideBytes<CAP> {
     type Error = buffer::CapacityError;
 
-    #[inline]
     fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
         self.try_push(byte)
     }
 
-    #[inline]
     fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
         self.try_extend(bytes)
     }
 
-    #[inline]
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
         self.try_extend_from_slices(slices)
     }

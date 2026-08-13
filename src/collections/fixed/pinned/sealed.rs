@@ -7,7 +7,6 @@ pub struct Slice<T> {
 }
 
 impl<T> Slice<T> {
-    #[inline]
     pub fn get(&self, index: usize) -> Option<pin::Pin<&T>> {
         let entry = self.entries.as_ref().get_ref().get(index)?;
         // SAFETY: Slice never exposes ownership of or mutable unpinned access
@@ -16,7 +15,6 @@ impl<T> Slice<T> {
         Some(unsafe { pin::Pin::new_unchecked(entry) })
     }
 
-    #[inline]
     pub fn get_mut(&mut self, index: usize) -> Option<pin::Pin<&mut T>> {
         if index >= self.entries.len() {
             return None;
@@ -46,12 +44,10 @@ impl<T> Slice<T> {
         })
     }
 
-    #[inline]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    #[inline]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

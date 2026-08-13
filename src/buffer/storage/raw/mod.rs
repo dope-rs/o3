@@ -1,16 +1,17 @@
 use std::{alloc, marker, mem, ops, ptr, slice};
 
-use crate::buffer::{self, resident, write};
+use crate::{
+    buffer::{self, resident, write},
+    cell,
+};
 
 mod owner;
 
 pub(in crate::buffer) use owner::Owner;
 
-pub(in crate::buffer) use crate::cell::LocalRefCount;
-
 #[repr(C)]
 pub(super) struct Prefix {
-    pub(super) refs: LocalRefCount,
+    pub(super) refs: cell::LocalRefCount,
     pub(super) capacity: u32,
 }
 
@@ -64,7 +65,7 @@ impl<P> Header<P> {
         unsafe {
             ptr.write(Self {
                 prefix: Prefix {
-                    refs: LocalRefCount::one(),
+                    refs: cell::LocalRefCount::one(),
                     capacity,
                 },
                 policy,

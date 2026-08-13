@@ -1,12 +1,11 @@
-use std::{cell, marker, mem, pin};
+use std::{cell, mem};
 
-use crate::{collections, mem::quota};
+use crate::collections;
 
 mod bitmap;
-mod inline;
+pub mod inline;
 pub mod raw;
-
-pub use inline::{Fill, FrontVacant, Inline, Vacant};
+pub mod set;
 
 const WORD_BITS: usize = usize::BITS as usize;
 const ENTRIES_PER_WORD: usize = WORD_BITS / 2;
@@ -40,63 +39,7 @@ impl Side {
     }
 }
 
-/// A single-threaded set of indices drained in isolated batches.
-///
-/// Duplicates coalesce; reinserting a drained index defers it to the next batch.
-#[repr(transparent)]
-pub struct Set<I = usize> {
-    raw: RawSet,
-    index: marker::PhantomData<fn(I) -> I>,
-}
-
-/// A located front entry which leaves its set unchanged until consumed.
-#[must_use]
-pub struct Front<'a, I = usize> {
-    set: &'a mut RawSet,
-    side: Side,
-    raw: usize,
-    index: marker::PhantomData<fn(I) -> I>,
-}
-
-/// A stable dense index accepted and yielded by a [`Set`].
-///
-/// # Safety
-/// `from_usize_unchecked(value.into_usize())` must reproduce `value`, and the
-/// conversion must remain valid for every copy of `value`.
-pub unsafe trait DenseIndex: Copy {
-    fn into_usize(self) -> usize;
-
-    /// Reconstructs an index previously returned by [`into_usize`](Self::into_usize).
-    ///
-    /// # Safety
-    /// `raw` must have been produced by `into_usize` for this exact index type.
-    unsafe fn from_usize_unchecked(raw: usize) -> Self;
-}
-
-macro_rules! dense_integer {
-    ($($index:ty),+ $(,)?) => {$(
-        unsafe impl DenseIndex for $index {
-            #[inline]
-            fn into_usize(self) -> usize {
-                self as usize
-            }
-
-            #[inline]
-            unsafe fn from_usize_unchecked(raw: usize) -> Self {
-                raw as Self
-            }
-        }
-    )+};
-}
-
-dense_integer!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
-
-/// Type-erased storage retained by heterogeneous pinned queue infrastructure.
-///
-/// Safe users should use [`Set`]. A typed set can expose this storage only
-/// through [`Set::erase`], whose caller preserves its index invariant.
-#[doc(hidden)]
-pub struct RawSet {
+struct RawSet {
     words: bitmap::Words,
     summaries: [bitmap::Tree; 2],
     capacity: cell::Cell<usize>,
@@ -222,7 +165,6 @@ impl RawSet {
         Some(RawDrain { set: self, side })
     }
 
-    #[inline]
     pub fn capacity(&self) -> usize {
         self.capacity.get()
     }
@@ -389,200 +331,3 @@ impl Drop for RawDrain<'_> {
         self.set.draining.set(DrainState::Idle);
     }
 }
-
-impl<I> Set<I> {
-    pub fn with_capacity(capacity: usize) -> Self {
-        match Self::try_with_capacity(capacity) {
-            Ok(set) => set,
-            Err(error) => error.abort(),
-        }
-    }
-
-    pub fn try_with_capacity(capacity: usize) -> Result<Self, collections::AllocationError> {
-        Ok(Self {
-            raw: RawSet::try_with_capacity(capacity)?,
-            index: marker::PhantomData,
-        })
-    }
-
-    #[inline]
-    pub fn capacity(&self) -> usize {
-        self.raw.capacity()
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.raw.len()
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.raw.is_empty()
-    }
-
-    /// Exposes the type-erased pinned storage used by heterogeneous queues.
-    ///
-    /// # Safety
-    /// Every value inserted through the returned storage must have been
-    /// produced by `DenseIndex::into_usize` for `I`. The storage must remain
-    /// structurally pinned for as long as the returned reference can be used.
-    ///
-    /// ```compile_fail
-    /// use std::pin::Pin;
-    /// use o3::collections::batch::{RawSet, Set};
-    ///
-    /// fn widen<'short, 'long>(set: Pin<&'short Set>) -> Pin<&'long RawSet> {
-    ///     unsafe { Set::erase(set) }
-    /// }
-    /// ```
-    #[inline]
-    pub unsafe fn erase(self: pin::Pin<&Self>) -> pin::Pin<&RawSet> {
-        unsafe { self.map_unchecked(|set| &set.raw) }
-    }
-}
-
-impl<I: DenseIndex> Set<I> {
-    /// Inserts an index into the pending batch.
-    ///
-    /// Returns `false` outside capacity or when either batch already contains it.
-    #[inline]
-    pub fn insert(&self, index: I) -> bool {
-        self.raw.insert(index.into_usize())
-    }
-
-    /// Returns whether either batch contains `index`.
-    #[inline]
-    pub fn contains(&self, index: I) -> bool {
-        self.raw.contains(index.into_usize())
-    }
-
-    /// Removes an index from either batch.
-    #[inline]
-    pub fn remove(&self, index: I) -> bool {
-        self.raw.remove(index.into_usize())
-    }
-
-    /// Removes the next index from the pending batch.
-    #[inline]
-    pub fn pop(&self) -> Option<I> {
-        self.raw.pop().map(|raw| {
-            // SAFETY: safe insertion accepts only an `I`; erased insertion is
-            // restricted by `erase` to raw values produced by that same type.
-            unsafe { I::from_usize_unchecked(raw) }
-        })
-    }
-
-    pub fn front(&mut self) -> Option<Front<'_, I>> {
-        let side = self.raw.active.get();
-        let raw = self.raw.peek_side(side)?;
-        Some(Front {
-            set: &mut self.raw,
-            side,
-            raw,
-            index: marker::PhantomData,
-        })
-    }
-
-    /// Removes the first pending index at or after `start`, wrapping once.
-    /// Lookup is bounded by bitmap depth, not skipped occupancy.
-    #[inline]
-    pub fn pop_from(&self, start: I) -> Option<I> {
-        self.raw.pop_from(start.into_usize()).map(|raw| {
-            // SAFETY: the returned raw value was previously inserted under
-            // this set's typed or erased insertion contract.
-            unsafe { I::from_usize_unchecked(raw) }
-        })
-    }
-
-    /// Starts or resumes draining a stable batch.
-    ///
-    /// Returns `None` during another drain; concurrent inserts enter the next batch.
-    #[inline]
-    pub fn drain_batch(&self) -> Option<Drain<'_, I>> {
-        Some(Drain {
-            raw: self.raw.drain_batch()?,
-            index: marker::PhantomData,
-        })
-    }
-}
-
-impl<I: DenseIndex> Front<'_, I> {
-    pub fn get(&self) -> I {
-        // SAFETY: `raw` was located in this typed set and remains unchanged.
-        unsafe { I::from_usize_unchecked(self.raw) }
-    }
-
-    pub fn take(self) -> I {
-        self.set.take(self.side, self.raw);
-        // SAFETY: `raw` was located in this typed set and removed unchanged.
-        unsafe { I::from_usize_unchecked(self.raw) }
-    }
-}
-
-/// A consuming iterator over one stable [`Set`] batch.
-#[repr(transparent)]
-pub struct Drain<'a, I = usize> {
-    raw: RawDrain<'a>,
-    index: marker::PhantomData<fn(I) -> I>,
-}
-
-#[must_use = "the result determines whether the ready index was consumed"]
-pub enum Next<I> {
-    Item(I),
-    Empty,
-    Exhausted(I),
-}
-
-impl<I: DenseIndex> Drain<'_, I> {
-    /// Returns the next index without removing it from this batch.
-    #[inline]
-    pub fn peek(&self) -> Option<I> {
-        self.raw.peek().map(|raw| {
-            // SAFETY: every raw entry was inserted under the owning set's
-            // typed or erased insertion contract.
-            unsafe { I::from_usize_unchecked(raw) }
-        })
-    }
-
-    pub fn next_with_quota<Tag>(&mut self, quota: &quota::Ledger<Tag>) -> Next<I> {
-        let Some(raw) = self.raw.peek() else {
-            return Next::Empty;
-        };
-        if !quota.take() {
-            // SAFETY: `raw` was read from this typed drain and remains present.
-            let index = unsafe { I::from_usize_unchecked(raw) };
-            return Next::Exhausted(index);
-        }
-        self.raw.set.take(self.raw.side, raw);
-        // SAFETY: `raw` was removed from this typed drain.
-        let index = unsafe { I::from_usize_unchecked(raw) };
-        Next::Item(index)
-    }
-
-    /// Preserves the unconsumed part of this batch for the next drain.
-    /// Pausing performs no bitmap transfer.
-    #[inline]
-    pub fn pause(self) {
-        self.raw.pause();
-    }
-}
-
-impl<I: DenseIndex> Iterator for Drain<'_, I> {
-    type Item = I;
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        self.raw.next().map(|raw| {
-            // SAFETY: every raw entry was inserted under the owning set's
-            // typed or erased insertion contract.
-            unsafe { I::from_usize_unchecked(raw) }
-        })
-    }
-}
-
-const _: () = {
-    assert!(mem::size_of::<Set<usize>>() == mem::size_of::<RawSet>());
-    assert!(mem::align_of::<Set<usize>>() == mem::align_of::<RawSet>());
-    assert!(mem::size_of::<Drain<'static, usize>>() == mem::size_of::<RawDrain<'static>>());
-    assert!(mem::align_of::<Drain<'static, usize>>() == mem::align_of::<RawDrain<'static>>());
-};

@@ -1,10 +1,6 @@
 use std::{cell, pin, process, ptr};
 
-/// A non-atomic reference count for single-threaded ownership graphs.
-///
-/// A final [`release`](Self::release) leaves the count active at one so the
-/// caller can complete its terminal ownership transition before calling
-/// [`deactivate`](Self::deactivate).
+/// A non-atomic reference count with an explicit terminal transition.
 #[repr(transparent)]
 pub struct LocalRefCount(cell::Cell<u32>);
 
@@ -17,12 +13,10 @@ impl LocalRefCount {
         Self(cell::Cell::new(1))
     }
 
-    #[inline]
     pub fn is_empty(&self) -> bool {
         self.0.get() == 0
     }
 
-    #[inline]
     pub fn is_unique(&self) -> bool {
         self.0.get() == 1
     }
@@ -30,7 +24,6 @@ impl LocalRefCount {
     /// Activates an empty count with one reference.
     ///
     /// Aborts if the count is already active.
-    #[inline]
     pub fn activate(&self) {
         if !self.try_activate() {
             process::abort();
@@ -38,7 +31,6 @@ impl LocalRefCount {
     }
 
     /// Activates an empty count, returning `false` if it is already active.
-    #[inline]
     pub fn try_activate(&self) -> bool {
         if !self.is_empty() {
             return false;
@@ -50,7 +42,6 @@ impl LocalRefCount {
     /// Deactivates a uniquely held count.
     ///
     /// Aborts unless exactly one terminal reference remains.
-    #[inline]
     pub fn deactivate(&self) {
         if !self.try_deactivate() {
             process::abort();
@@ -58,7 +49,6 @@ impl LocalRefCount {
     }
 
     /// Deactivates a uniquely held count, returning `false` otherwise.
-    #[inline]
     pub fn try_deactivate(&self) -> bool {
         if !self.is_unique() {
             return false;
@@ -70,7 +60,6 @@ impl LocalRefCount {
     /// Adds one reference.
     ///
     /// Aborts if the count is empty or exhausted.
-    #[inline]
     pub fn retain(&self) {
         if !self.try_retain() {
             process::abort();
@@ -79,7 +68,6 @@ impl LocalRefCount {
 
     /// Adds one reference, returning `false` if the count is empty or
     /// exhausted.
-    #[inline]
     pub fn try_retain(&self) -> bool {
         let current = self.0.get();
         let Some(next) = current.checked_add(1) else {
@@ -92,14 +80,8 @@ impl LocalRefCount {
         true
     }
 
-    /// Releases one reference and returns whether the terminal reference
-    /// remains.
-    ///
-    /// Aborts if the count is empty. A `true` result must be followed by
-    /// [`deactivate`](Self::deactivate) after the caller completes its
-    /// terminal ownership transition.
+    /// Releases once; `true` leaves a terminal reference to deactivate.
     #[must_use]
-    #[inline]
     pub fn release(&self) -> bool {
         let Some(last) = self.try_release() else {
             process::abort();
@@ -107,12 +89,8 @@ impl LocalRefCount {
         last
     }
 
-    /// Releases one reference, returning `None` if the count is empty.
-    ///
-    /// `Some(true)` leaves the terminal reference active at one; the caller
-    /// must subsequently deactivate it.
+    /// Returns `None` when empty and `Some(true)` for the terminal reference.
     #[must_use]
-    #[inline]
     pub fn try_release(&self) -> Option<bool> {
         let current = self.0.get();
         if current == 0 {
@@ -147,25 +125,13 @@ pub struct StableLink<T> {
     pointer: ptr::NonNull<T>,
 }
 
-/// Owner proof for a retained pinned link.
-///
-/// # Safety
-/// `pointer` must identify a valid, initialized `T` that remains pinned and
-/// live while any link constructed from this source can be accessed. Before
-/// the target can move or drop, every copied link must be destroyed or made
-/// inaccessible.
-pub unsafe trait StableLinkSource<T> {
-    fn pointer(self) -> ptr::NonNull<T>;
-}
-
 impl<T> StableLink<T> {
-    pub fn from_stable(source: impl StableLinkSource<T>) -> Self {
+    pub fn from_stable(source: impl crate::cell::raw::StableLinkSource<T>) -> Self {
         Self {
             pointer: source.pointer(),
         }
     }
 
-    #[inline]
     pub fn get(&self) -> pin::Pin<&T> {
         // SAFETY: StableLinkSource guarantees that the target remains pinned
         // and live whenever this link can be borrowed. The returned reference

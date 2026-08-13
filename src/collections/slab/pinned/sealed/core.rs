@@ -226,10 +226,6 @@ impl<T, Tag, S: Slots<T, MAX>, const MAX: u32> Core<T, Tag, S, MAX> {
         })
     }
 
-    pub(super) fn contains_parts(&self, parts: key::Parts<MAX>) -> bool {
-        self.slot(parts).is_some()
-    }
-
     pub(super) fn parts(&self, parts: key::Parts<MAX>) -> Option<pin::Pin<&T>> {
         let slot = self.slot(parts)?;
         Some(unsafe { pin::Pin::new_unchecked(slot.value.assume_init_ref()) })

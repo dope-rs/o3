@@ -22,19 +22,16 @@ impl<R: Return> Lease<R> {
         }
     }
 
-    #[inline]
     pub fn sink(&self) -> &R {
         &self.sink
     }
 
-    #[inline]
     pub fn item(&self) -> &R::Item {
         &self.item
     }
 
     /// Disarms this lease and returns its sink and item without returning the
     /// item to the sink.
-    #[inline]
     pub fn into_parts(self) -> (R, R::Item) {
         let mut this = mem::ManuallyDrop::new(self);
         // SAFETY: ManuallyDrop suppresses Lease::drop. Each initialized field

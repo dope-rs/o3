@@ -1,4 +1,4 @@
-use std::hint;
+use std::{hint, ops};
 
 use crate::collections::slab::sealed::{self, core};
 
@@ -31,7 +31,7 @@ impl<'a, T, G: sealed::GenerationState, M: core::Mode, const PARTITIONS: usize>
 
     pub(in crate::collections::slab::sealed) fn take_range(
         &self,
-        mut range: std::ops::Range<u32>,
+        mut range: ops::Range<u32>,
     ) -> Option<core::Ticket<G>> {
         let capacity = self.core.capacity() as u32;
         if range == (0..capacity) {

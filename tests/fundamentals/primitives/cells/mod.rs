@@ -1,4 +1,4 @@
-use std::{marker::PhantomPinned, pin::Pin, ptr::NonNull};
+use std::{marker::PhantomPinned, ptr};
 
 use o3::{
     buffer::{
@@ -6,11 +6,11 @@ use o3::{
         pool::{Cursor, FixedCapacity, LayoutError, state::Uninitialized},
         storage::{Shared, strings::Str},
     },
-    cell::{LocalRefCount, StableLink, StableLinkSource, brand, region},
+    cell::{LocalRefCount, StableLink, brand, region},
     mem::{
         budget::Bytes,
         credit::Ledger,
-        fair::{Credits, Pool as FairPool},
+        fair::{self, Credits},
     },
 };
 
@@ -19,15 +19,7 @@ struct StableValue {
     _pin: PhantomPinned,
 }
 
-struct StableSource<'a>(Pin<&'a StableValue>);
-
-// SAFETY: this private source is used only while its pinned owner and every
-// copied link remain in this test's scope.
-unsafe impl StableLinkSource<StableValue> for StableSource<'_> {
-    fn pointer(self) -> NonNull<StableValue> {
-        NonNull::from(self.0.get_ref())
-    }
-}
+mod sealed;
 
 type FixedPool = Pool<Uninitialized, FixedCapacity<BLOCK_CAPACITY>>;
 type FixedLease = Cursor<FixedCapacity<BLOCK_CAPACITY>>;
@@ -39,7 +31,7 @@ fn stable_links_are_one_word_and_borrow_their_pinned_target() {
         value: 7,
         _pin: PhantomPinned,
     });
-    let link = StableLink::from_stable(StableSource(value.as_ref()));
+    let link = StableLink::from_stable(sealed::StableSource(value.as_ref()));
     let copy = link;
 
     assert_eq!(link.get().value, 7);
@@ -47,7 +39,7 @@ fn stable_links_are_one_word_and_borrow_their_pinned_target() {
     assert!(link == copy);
     assert_eq!(
         size_of::<StableLink<StableValue>>(),
-        size_of::<NonNull<StableValue>>()
+        size_of::<ptr::NonNull<StableValue>>()
     );
 }
 
@@ -194,7 +186,7 @@ fn fair_credits_acquire_multiple_dimensions_atomically() {
 
 #[test]
 fn fair_credits_split_exact_total_reserves_without_stranding_remainders() {
-    let pool = FairPool::split([0, 9], [3, 21], 2);
+    let pool = fair::Pool::split([0, 9], [3, 21], 2);
     let first_credit = pool.lane(0).unwrap();
     let second_credit = pool.lane(1).unwrap();
 
@@ -207,8 +199,8 @@ fn fair_credits_split_exact_total_reserves_without_stranding_remainders() {
 
 #[test]
 fn fair_pool_owns_each_lanes_accounting_identity() {
-    let first = FairPool::split([10], [0], 1);
-    let second = FairPool::split([10], [0], 1);
+    let first = fair::Pool::split([10], [0], 1);
+    let second = fair::Pool::split([10], [0], 1);
     let first_lane = first.lane(0).unwrap();
     let second_lane = second.lane(0).unwrap();
 

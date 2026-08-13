@@ -2,13 +2,13 @@ use std::{cell, ptr};
 
 use pool::state;
 
-use crate::buffer::{self, pool, storage};
+use crate::buffer::{self, pool};
 
 const NONE: u32 = u32::MAX;
 
 #[repr(C)]
 pub(super) struct Core {
-    pub(super) refs: storage::raw::LocalRefCount,
+    pub(super) refs: crate::cell::LocalRefCount,
     pub(super) free: cell::Cell<u32>,
     pub(super) free_len: cell::Cell<u32>,
     pub(super) slots: u32,
@@ -19,7 +19,7 @@ pub(super) struct Core {
 
 #[repr(C)]
 pub(super) struct Slot {
-    pub(super) refs: storage::raw::LocalRefCount,
+    pub(super) refs: crate::cell::LocalRefCount,
     pub(super) next: cell::Cell<u32>,
 }
 
@@ -53,7 +53,7 @@ impl Core {
         let ptr = ptr::NonNull::new(raw.cast::<Self>()).ok_or(pool::AllocationError)?;
         unsafe {
             ptr.write(Self {
-                refs: storage::raw::LocalRefCount::one(),
+                refs: crate::cell::LocalRefCount::one(),
                 free: cell::Cell::new(if layout.slot_count() == 0 { NONE } else { 0 }),
                 free_len: cell::Cell::new(layout.slot_count()),
                 slots: layout.slot_count(),
@@ -68,7 +68,7 @@ impl Core {
                 .cast::<Slot>();
             for index in 0..layout.slot_count() {
                 slot_ptr.add(index as usize).write(Slot {
-                    refs: storage::raw::LocalRefCount::empty(),
+                    refs: crate::cell::LocalRefCount::empty(),
                     next: cell::Cell::new(if index + 1 == layout.slot_count() {
                         NONE
                     } else {

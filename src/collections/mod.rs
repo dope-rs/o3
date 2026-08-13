@@ -3,7 +3,6 @@ pub mod completion;
 pub mod fixed;
 pub mod heap;
 pub mod intrusive;
-pub mod pinned;
 pub mod queue;
 mod sealed;
 pub mod slab;

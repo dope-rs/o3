@@ -1,10 +1,6 @@
 use std::{cell, marker, mem, pin, ptr};
 
-use super::{PoolOwner, Recycle};
-use crate::{
-    ThreadBound,
-    collections::{self, slab},
-};
+use crate::collections::{self, fixed::pinned::recycle, slab};
 
 const OCCUPIED: usize = 1;
 type Invariant<'owner> = marker::PhantomData<fn(&'owner ()) -> &'owner ()>;
@@ -17,34 +13,34 @@ struct Entry<T> {
 struct Group<T> {
     entries: pin::Pin<Box<[Entry<T>]>>,
     free: cell::Cell<*mut Entry<T>>,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 /// Fixed storage for values which remain pinned and are reset in place.
 #[repr(transparent)]
-pub struct Pool<T: Recycle> {
+pub struct Pool<T: recycle::Recycle> {
     group: Box<Group<T>>,
 }
 
 /// Exclusive ownership of one recyclable slot before it is committed.
 #[must_use = "a pinned reservation must be committed or released"]
 #[repr(transparent)]
-pub struct Reservation<'owner, T: Recycle> {
+pub struct Reservation<'owner, T: recycle::Recycle> {
     entry: ptr::NonNull<Entry<T>>,
     owner: Invariant<'owner>,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
 /// Detached exclusive ownership of one pinned recyclable value.
 #[must_use = "dropping the lease recycles its pinned value"]
 #[repr(transparent)]
-pub struct Lease<'owner, T: Recycle> {
+pub struct Lease<'owner, T: recycle::Recycle> {
     entry: ptr::NonNull<Entry<T>>,
     owner: Invariant<'owner>,
-    _thread: ThreadBound,
+    _thread: crate::ThreadBound,
 }
 
-impl<T: Recycle> Pool<T> {
+impl<T: recycle::Recycle> Pool<T> {
     pub fn try_with_capacity(
         capacity: slab::Capacity,
         mut initialize: impl FnMut(usize) -> T,
@@ -56,7 +52,7 @@ impl<T: Recycle> Pool<T> {
         let mut group: Box<Group<T>> = collections::BoxExt::try_box(Group {
             entries: Box::into_pin(entries),
             free: cell::Cell::new(ptr::null_mut()),
-            _thread: ThreadBound::NEW,
+            _thread: crate::ThreadBound::NEW,
         })?;
         group.chain();
         Ok(Self { group })
@@ -70,22 +66,17 @@ impl<T: Recycle> Pool<T> {
     }
 
     /// Reserves a value while retaining a borrow of this pool.
-    #[inline]
     pub fn reserve(&self) -> Option<Reservation<'_, T>> {
         Some(Reservation {
             entry: self.group.reserve()?,
             owner: marker::PhantomData,
-            _thread: ThreadBound::NEW,
+            _thread: crate::ThreadBound::NEW,
         })
     }
 
-    /// Reserves a value under an external proof that its pool remains alive.
-    ///
-    /// The reservation can be safely committed into a lease detached from the
-    /// temporary pool access used by `owner`.
-    #[inline]
+    /// Reserves under an external proof that keeps the pool alive.
     pub fn reserve_owned<'owner>(
-        owner: impl PoolOwner<'owner, T>,
+        owner: impl recycle::raw::PoolOwner<'owner, T>,
     ) -> Option<Reservation<'owner, T>> {
         let pool = owner.pool();
         // SAFETY: PoolOwner keeps this pool valid for the call and its backing
@@ -94,11 +85,10 @@ impl<T: Recycle> Pool<T> {
         Some(Reservation {
             entry,
             owner: marker::PhantomData,
-            _thread: ThreadBound::NEW,
+            _thread: crate::ThreadBound::NEW,
         })
     }
 
-    #[inline]
     pub fn capacity(&self) -> usize {
         self.group.entries.len()
     }
@@ -118,7 +108,6 @@ impl<T> Group<T> {
         self.free.set(next);
     }
 
-    #[inline]
     fn reserve(&self) -> Option<ptr::NonNull<Entry<T>>> {
         let owner = ptr::NonNull::from(self);
         let entry = ptr::NonNull::new(self.free.get())?;
@@ -139,76 +128,66 @@ impl<T> Group<T> {
     }
 }
 
-impl<'owner, T: Recycle> Reservation<'owner, T> {
-    #[inline]
+impl<'owner, T: recycle::Recycle> Reservation<'owner, T> {
     pub fn get(&self) -> pin::Pin<&T> {
         self.entry.get()
     }
 
-    #[inline]
     pub fn get_mut(&mut self) -> pin::Pin<&mut T> {
         self.entry.get_mut()
     }
 
-    #[inline]
     pub fn commit(self) -> Lease<'owner, T> {
         let this = mem::ManuallyDrop::new(self);
         Lease {
             entry: this.entry,
             owner: marker::PhantomData,
-            _thread: ThreadBound::NEW,
+            _thread: crate::ThreadBound::NEW,
         }
     }
 }
 
-impl<T: Recycle> Drop for Reservation<'_, T> {
-    #[inline]
+impl<T: recycle::Recycle> Drop for Reservation<'_, T> {
     fn drop(&mut self) {
         self.entry.release();
     }
 }
 
-impl<T: Recycle> Lease<'_, T> {
-    #[inline]
+impl<T: recycle::Recycle> Lease<'_, T> {
     pub fn get(&self) -> pin::Pin<&T> {
         self.entry.get()
     }
 
-    #[inline]
     pub fn get_mut(&mut self) -> pin::Pin<&mut T> {
         self.entry.get_mut()
     }
 }
 
-impl<T: Recycle> Drop for Lease<'_, T> {
-    #[inline]
+impl<T: recycle::Recycle> Drop for Lease<'_, T> {
     fn drop(&mut self) {
         self.entry.release();
     }
 }
 
-trait EntryPointer<T: Recycle> {
+trait EntryPointer<T: recycle::Recycle> {
     fn get(&self) -> pin::Pin<&T>;
     fn get_mut(&mut self) -> pin::Pin<&mut T>;
     fn release(self);
 }
 
-impl<T: Recycle> EntryPointer<T> for ptr::NonNull<Entry<T>> {
-    #[inline]
+impl<T: recycle::Recycle> EntryPointer<T> for ptr::NonNull<Entry<T>> {
     fn get(&self) -> pin::Pin<&T> {
         // SAFETY: every live reservation or lease exclusively owns an entry in
         // a pinned boxed slice, and a shared borrow cannot move its value.
         unsafe { pin::Pin::new_unchecked(&self.as_ref().value) }
     }
 
-    #[inline]
     fn get_mut(&mut self) -> pin::Pin<&mut T> {
         // SAFETY: the unique reservation or lease owns this occupied entry and
         // the pinned backing slice prevents its value from moving.
         unsafe { pin::Pin::new_unchecked(&mut self.as_mut().value) }
     }
 
-    #[inline]
     fn release(mut self) {
         // SAFETY: only the unique live reservation or lease releases an entry.
         // Its tagged state identifies the pinned group kept alive by either the
@@ -228,7 +207,7 @@ impl<T: Recycle> EntryPointer<T> for ptr::NonNull<Entry<T>> {
 
 struct StaticAssert;
 
-impl Recycle for StaticAssert {
+impl recycle::Recycle for StaticAssert {
     fn recycle(self: pin::Pin<&mut Self>) {}
 }
 

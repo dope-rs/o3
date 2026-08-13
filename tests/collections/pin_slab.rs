@@ -14,7 +14,7 @@ fn dynamic_and_fixed_slots_stay_pinned() {
     };
     assert_eq!(slab.len(), 1);
     let first_parts = first.parts();
-    assert!(slab.contains_parts(first_parts));
+    assert!(slab.parts(first_parts).is_some());
     assert_eq!(slab.key(first.index()), Some(first));
     slab.parts(first_parts).unwrap().bind();
 
@@ -25,7 +25,7 @@ fn dynamic_and_fixed_slots_stay_pinned() {
     assert_eq!(moved.get(first).unwrap().value(), 2);
     assert!(moved.remove_parts(first_parts));
     assert!(moved.is_empty());
-    assert!(!moved.contains_parts(first_parts));
+    assert!(moved.parts(first_parts).is_none());
     assert_eq!(drops.get(), 1);
 
     let Ok(second) = moved.insert(PinnedItem::new(3, &drops)) else {

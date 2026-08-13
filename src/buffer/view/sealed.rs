@@ -1,3 +1,5 @@
+use std::process;
+
 use crate::buffer::{self, resident, storage};
 
 trait Mode<P> {
@@ -328,11 +330,11 @@ impl<const MAX_CAPACITY: usize> Raw<resident::Lease, MAX_CAPACITY> {
 
     pub(in crate::buffer) fn release_empty(&mut self) {
         if !self.is_empty() {
-            std::process::abort();
+            process::abort();
         }
         let fresh = match self.buf.sibling(0) {
             Ok(fresh) => fresh,
-            Err(_) => std::process::abort(),
+            Err(_) => process::abort(),
         };
         self.buf = fresh;
         self.cap = 0;

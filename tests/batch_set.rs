@@ -1,7 +1,7 @@
-use std::{mem, pin};
+use std::mem;
 
 use o3::{
-    collections::batch::{self, Next, Set},
+    collections::batch::set::{DenseIndex, Next, Set},
     mem::quota::Ledger,
 };
 
@@ -9,12 +9,12 @@ use o3::{
 #[repr(transparent)]
 struct Key(u16);
 
-unsafe impl batch::DenseIndex for Key {
+impl DenseIndex for Key {
     fn into_usize(self) -> usize {
         usize::from(self.0)
     }
 
-    unsafe fn from_usize_unchecked(raw: usize) -> Self {
+    fn from_usize(raw: usize) -> Self {
         Self(raw as u16)
     }
 }
@@ -37,22 +37,8 @@ fn located_front_changes_the_set_only_when_taken() {
     assert!(set.contains(Key(2)));
 
     let front = set.front().expect("front");
-    assert_eq!(front.get(), Key(2));
     assert_eq!(front.take(), Key(2));
     assert!(set.is_empty());
-}
-
-#[test]
-fn erased_pinned_storage_round_trips_the_typed_index() {
-    let set = Box::pin(Set::<Key>::with_capacity(4));
-    let raw = unsafe { Set::erase(set.as_ref()) };
-    assert!(raw.insert(Key(3).0.into()));
-    assert_eq!(set.pop(), Some(Key(3)));
-
-    fn same_lifetime(set: pin::Pin<&Set<Key>>) -> pin::Pin<&batch::RawSet> {
-        unsafe { Set::erase(set) }
-    }
-    let _ = same_lifetime(set.as_ref());
 }
 
 #[test]
@@ -86,33 +72,6 @@ fn pop_from_uses_the_requested_start_and_wraps_once() {
     assert_eq!(set.pop_from(100), Some(129));
     assert_eq!(set.pop_from(100), Some(3));
     assert_eq!(set.pop_from(0), None);
-}
-
-#[test]
-fn raw_restore_returns_a_removed_index_without_validation() {
-    use batch::raw::Set as _;
-
-    let set = Set::with_capacity(4);
-    assert!(set.insert(2));
-    let index = set.pop().expect("index");
-    unsafe { set.restore_unchecked(index) };
-    assert_eq!(set.pop(), Some(2));
-}
-
-#[test]
-fn raw_insert_and_remove_use_proven_membership() {
-    use batch::raw::Set as _;
-
-    let set = Set::with_capacity(4);
-    assert!(set.insert(1));
-    let mut batch = set.drain_batch().expect("batch");
-    unsafe { set.remove_unchecked(1) };
-    assert_eq!(batch.next(), None);
-
-    unsafe { set.insert_unchecked(2) };
-    assert!(set.contains(2));
-    unsafe { set.remove_unchecked(2) };
-    assert!(!set.contains(2));
 }
 
 #[test]

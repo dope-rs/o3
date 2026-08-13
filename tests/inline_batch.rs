@@ -4,7 +4,7 @@ use o3::collections::batch;
 
 #[test]
 fn fill_requires_an_empty_batch() {
-    let mut values = batch::Inline::<u32, 2>::new();
+    let mut values = batch::inline::Inline::<u32, 2>::new();
     let mut fill = values.fill().expect("a new batch is empty");
     fill.vacant_entry().unwrap().insert(1);
     fill.vacant_entry().unwrap().insert(2);
@@ -23,7 +23,7 @@ fn fill_requires_an_empty_batch() {
 
 #[test]
 fn reserved_pop_can_restore_the_original_front() {
-    let mut values = batch::Inline::<u32, 2>::new();
+    let mut values = batch::inline::Inline::<u32, 2>::new();
     let mut fill = values.fill().unwrap();
     fill.vacant_entry().unwrap().insert(1);
     fill.vacant_entry().unwrap().insert(2);
@@ -37,7 +37,7 @@ fn reserved_pop_can_restore_the_original_front() {
 
 #[test]
 fn dropping_a_reserved_vacancy_commits_the_pop() {
-    let mut values = batch::Inline::<u32, 2>::new();
+    let mut values = batch::inline::Inline::<u32, 2>::new();
     let mut fill = values.fill().unwrap();
     fill.vacant_entry().unwrap().insert(1);
     fill.vacant_entry().unwrap().insert(2);
@@ -60,7 +60,7 @@ fn live_values_drop_exactly_once() {
     }
 
     let drops = Cell::new(0);
-    let mut values = batch::Inline::<Count<'_>, 3>::new();
+    let mut values = batch::inline::Inline::<Count<'_>, 3>::new();
     let mut fill = values.fill().unwrap();
     fill.vacant_entry().unwrap().insert(Count(&drops));
     fill.vacant_entry().unwrap().insert(Count(&drops));
@@ -75,19 +75,19 @@ fn live_values_drop_exactly_once() {
 #[test]
 fn inline_layout_is_payload_plus_two_indices() {
     assert_eq!(
-        mem::size_of::<batch::Inline<u64, 3>>(),
+        mem::size_of::<batch::inline::Inline<u64, 3>>(),
         3 * mem::size_of::<u64>() + 2 * mem::size_of::<usize>()
     );
     assert_eq!(
-        mem::size_of::<batch::Fill<'static, u64, 3>>(),
+        mem::size_of::<batch::inline::Fill<'static, u64, 3>>(),
         mem::size_of::<usize>()
     );
     assert_eq!(
-        mem::size_of::<batch::Vacant<'static, u64, 3>>(),
+        mem::size_of::<batch::inline::Vacant<'static, u64, 3>>(),
         mem::size_of::<usize>()
     );
     assert_eq!(
-        mem::size_of::<batch::FrontVacant<'static, u64, 3>>(),
+        mem::size_of::<batch::inline::FrontVacant<'static, u64, 3>>(),
         mem::size_of::<usize>()
     );
 }
