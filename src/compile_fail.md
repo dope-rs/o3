@@ -28,6 +28,17 @@ fn escape(cell: &Checked<u8>) -> &mut u8 {
 }
 ```
 
+A quota cycle cannot reset while an earlier reservation can still refund:
+
+```compile_fail
+use o3::mem::quota::{Lease, Ledger};
+
+let mut ledger = Ledger::new(1);
+let lease = Lease::<()>::reserve_all(&ledger);
+ledger.reset(1);
+drop(lease);
+```
+
 Unchecked queue insertion remains an explicit caller obligation:
 
 ```compile_fail,E0133
@@ -80,24 +91,24 @@ queue.push_back(0, 1_u8).unwrap();
 let _ = queue.front();
 ```
 
-Slab keys cannot be fabricated from public parts:
+Typed slab handles cannot be fabricated from public parts:
 
 ```compile_fail,E0624
-use o3::collections::slab::key::{Key, Parts};
+use o3::collections::slab::key::{Handle, Parts};
 
 let parts = Parts::new(0, 1).unwrap();
-let _ = Key::<()>::from_parts(parts);
+let _ = Handle::<()>::from_parts(parts);
 ```
 
 Keys from distinct tag domains cannot be mixed:
 
 ```compile_fail,E0308
-use o3::collections::slab::{Slab, key::Key};
+use o3::collections::slab::{Exclusive, key::Handle};
 
 struct Read;
 struct Write;
 
-fn remove(slab: &mut Slab<u8, Write>, key: Key<Read>) {
+fn remove(slab: &mut Exclusive<u8, Write>, key: Handle<Read>) {
     slab.remove(key);
 }
 ```
@@ -130,6 +141,60 @@ fn escape() -> recycle::Lease<'static, Value> {
     let pool = recycle::Pool::with_capacity(Capacity::new(1), || ());
     pool.vacant_entry().unwrap().insert_with(|()| Value)
 }
+```
+
+A borrowed pinned recycling lease cannot escape its pool:
+
+```compile_fail,E0515
+use std::pin::Pin;
+use o3::collections::{pinned::recycle, slab::Capacity};
+
+struct Value;
+
+impl recycle::Recycle for Value {
+    fn recycle(self: Pin<&mut Self>) {}
+}
+
+fn escape() -> recycle::Lease<'static, Value> {
+    let pool = recycle::Pool::with_capacity(Capacity::new(1), |_| Value);
+    pool.reserve().unwrap().commit()
+}
+```
+
+An owner-backed pinned recycling lease retains its exact owner domain:
+
+```compile_fail
+use std::pin::Pin;
+use o3::collections::pinned::recycle;
+
+struct Value;
+
+impl recycle::Recycle for Value {
+    fn recycle(self: Pin<&mut Self>) {}
+}
+
+fn shorten<'long: 'short, 'short>(
+    lease: recycle::Lease<'long, Value>,
+) -> recycle::Lease<'short, Value> {
+    lease
+}
+```
+
+Pinned recycling leases cannot cross their owning thread:
+
+```compile_fail,E0277
+use std::pin::Pin;
+use o3::collections::pinned::recycle;
+
+struct Value;
+
+impl recycle::Recycle for Value {
+    fn recycle(self: Pin<&mut Self>) {}
+}
+
+fn require_send<T: Send>() {}
+
+require_send::<recycle::Lease<'static, Value>>();
 ```
 
 Initialized pool storage cannot expose an uninitialized writer:
@@ -228,12 +293,12 @@ const _: Generation<0> = Generation::MIN;
 Pinned slab keys retain their tag domain:
 
 ```compile_fail,E0308
-use o3::collections::slab::{key::Key, pin};
+use o3::collections::slab::{key::Handle, pinned};
 
 struct Read;
 struct Write;
 
-fn remove(pool: &mut pin::Pool<u8, Write>, key: Key<Read>) {
+fn remove(pool: &mut pinned::Pool<u8, Write>, key: Handle<Read>) {
     pool.remove(key);
 }
 ```

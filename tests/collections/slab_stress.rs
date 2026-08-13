@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
-use o3::collections::slab::{Capacity, Slab, key::Key};
+use o3::collections::slab::{Capacity, Exclusive, key::Handle};
 
 struct Lcg(u64);
 impl Lcg {
@@ -16,9 +16,9 @@ impl Lcg {
 #[test]
 fn free_list_matches_a_reference_set() {
     const CAP: u32 = if cfg!(miri) { 128 } else { 5000 };
-    let mut s: Slab<u32> = Slab::with_capacity(Capacity::new(CAP));
+    let mut s: Exclusive<u32> = Exclusive::with_capacity(Capacity::new(CAP));
     let mut free: BTreeSet<u32> = (0..CAP).collect();
-    let mut live: HashMap<u32, Key> = HashMap::new();
+    let mut live: HashMap<u32, Handle> = HashMap::new();
     let mut rng = Lcg(0x1234_5678_9abc_def0);
 
     let boundaries: &[u32] = if cfg!(miri) {
@@ -27,11 +27,11 @@ fn free_list_matches_a_reference_set() {
         &[0, 63, 64, 127, 4095, 4096, 4999]
     };
     for &index in boundaries {
-        let first = s.vacant_entry_at(index).unwrap().insert(2);
+        let first = s.slots().vacant_entry_at(index).unwrap().insert(2);
         assert!(free.remove(&index));
         assert_eq!(s.remove(first), Some(2));
         free.insert(index);
-        let replacement = s.vacant_entry_at(index).unwrap().insert(2);
+        let replacement = s.slots().vacant_entry_at(index).unwrap().insert(2);
         assert_ne!(first, replacement);
         assert!(free.remove(&index));
         assert!(live.insert(index, replacement).is_none());
@@ -51,7 +51,7 @@ fn free_list_matches_a_reference_set() {
             },
             1 => {
                 let idx = (rng.next() as u32) % CAP;
-                let placed = s.vacant_entry_at(idx).map(|entry| entry.insert(2));
+                let placed = s.slots().vacant_entry_at(idx).map(|entry| entry.insert(2));
                 assert_eq!(
                     placed.is_some(),
                     free.contains(&idx),

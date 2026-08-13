@@ -1,7 +1,4 @@
-use o3::collections::{
-    arena::Stack,
-    fixed::{array::CopyInline, index::Slots},
-};
+use o3::collections::fixed::{arena::Stack, array::CopyInline, index::Slots};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Packet {

@@ -1,4 +1,59 @@
-use o3::collections::batch::Set;
+use std::{mem, pin};
+
+use o3::{
+    collections::batch::{self, Next, Set},
+    mem::quota::Ledger,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(transparent)]
+struct Key(u16);
+
+unsafe impl batch::DenseIndex for Key {
+    fn into_usize(self) -> usize {
+        usize::from(self.0)
+    }
+
+    unsafe fn from_usize_unchecked(raw: usize) -> Self {
+        Self(raw as u16)
+    }
+}
+
+#[test]
+fn typed_set_preserves_index_identity_and_layout() {
+    let set = Set::<Key>::with_capacity(4);
+    assert!(set.insert(Key(2)));
+    assert_eq!(set.pop(), Some(Key(2)));
+    assert_eq!(mem::size_of_val(&set), mem::size_of::<Set>());
+    assert_eq!(mem::align_of_val(&set), mem::align_of::<Set>());
+}
+
+#[test]
+fn located_front_changes_the_set_only_when_taken() {
+    let mut set = Set::<Key>::with_capacity(4);
+    assert!(set.insert(Key(2)));
+
+    drop(set.front().expect("front"));
+    assert!(set.contains(Key(2)));
+
+    let front = set.front().expect("front");
+    assert_eq!(front.get(), Key(2));
+    assert_eq!(front.take(), Key(2));
+    assert!(set.is_empty());
+}
+
+#[test]
+fn erased_pinned_storage_round_trips_the_typed_index() {
+    let set = Box::pin(Set::<Key>::with_capacity(4));
+    let raw = unsafe { Set::erase(set.as_ref()) };
+    assert!(raw.insert(Key(3).0.into()));
+    assert_eq!(set.pop(), Some(Key(3)));
+
+    fn same_lifetime(set: pin::Pin<&Set<Key>>) -> pin::Pin<&batch::RawSet> {
+        unsafe { Set::erase(set) }
+    }
+    let _ = same_lifetime(set.as_ref());
+}
 
 #[test]
 fn membership_covers_pending_and_draining_batches() {
@@ -31,6 +86,33 @@ fn pop_from_uses_the_requested_start_and_wraps_once() {
     assert_eq!(set.pop_from(100), Some(129));
     assert_eq!(set.pop_from(100), Some(3));
     assert_eq!(set.pop_from(0), None);
+}
+
+#[test]
+fn raw_restore_returns_a_removed_index_without_validation() {
+    use batch::raw::Set as _;
+
+    let set = Set::with_capacity(4);
+    assert!(set.insert(2));
+    let index = set.pop().expect("index");
+    unsafe { set.restore_unchecked(index) };
+    assert_eq!(set.pop(), Some(2));
+}
+
+#[test]
+fn raw_insert_and_remove_use_proven_membership() {
+    use batch::raw::Set as _;
+
+    let set = Set::with_capacity(4);
+    assert!(set.insert(1));
+    let mut batch = set.drain_batch().expect("batch");
+    unsafe { set.remove_unchecked(1) };
+    assert_eq!(batch.next(), None);
+
+    unsafe { set.insert_unchecked(2) };
+    assert!(set.contains(2));
+    unsafe { set.remove_unchecked(2) };
+    assert!(!set.contains(2));
 }
 
 #[test]
@@ -96,6 +178,28 @@ fn pausing_a_partial_batch_resumes_without_admitting_the_next_batch() {
 }
 
 #[test]
+fn quota_gated_drain_preserves_unadmitted_work() {
+    enum Work {}
+
+    let set = Set::with_capacity(3);
+    assert!(set.insert(1));
+    assert!(set.insert(2));
+    let mut ledger = Ledger::<Work>::new(1);
+    let mut batch = set.drain_batch().unwrap();
+
+    assert!(matches!(batch.next_with_quota(&ledger), Next::Item(1)));
+    assert_eq!(ledger.remaining(), 0);
+    assert!(matches!(batch.next_with_quota(&ledger), Next::Exhausted(2)));
+    assert_eq!(batch.peek(), Some(2));
+
+    ledger.reset(1);
+    assert!(matches!(batch.next_with_quota(&ledger), Next::Item(2)));
+    ledger.reset(1);
+    assert!(matches!(batch.next_with_quota(&ledger), Next::Empty));
+    assert_eq!(ledger.remaining(), 1);
+}
+
+#[test]
 fn removing_a_paused_batch_opens_the_pending_batch_immediately() {
     let set = Set::with_capacity(4);
     assert!(set.insert(0));
@@ -108,6 +212,20 @@ fn removing_a_paused_batch_opens_the_pending_batch_immediately() {
 
     assert!(set.remove(1));
     assert_eq!(set.drain_batch().unwrap().collect::<Vec<_>>(), [2]);
+    assert!(set.is_empty());
+}
+
+#[test]
+fn pausing_an_empty_batch_opens_the_pending_batch() {
+    let set = Set::with_capacity(2);
+    assert!(set.insert(0));
+
+    let mut batch = set.drain_batch().unwrap();
+    assert_eq!(batch.next(), Some(0));
+    assert!(set.insert(1));
+    batch.pause();
+
+    assert_eq!(set.drain_batch().unwrap().collect::<Vec<_>>(), [1]);
     assert!(set.is_empty());
 }
 

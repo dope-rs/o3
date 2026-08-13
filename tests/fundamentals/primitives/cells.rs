@@ -1,19 +1,86 @@
+use std::{marker::PhantomPinned, pin::Pin, ptr::NonNull};
+
 use o3::{
     buffer::{
         BLOCK_CAPACITY, Layout, Pool, PrefixConsumer,
         pool::{Cursor, FixedCapacity, LayoutError, state::Uninitialized},
         storage::{Shared, strings::Str},
     },
-    cell::{brand, region},
+    cell::{LocalRefCount, StableLink, StableLinkSource, brand, region},
     mem::{
         budget::Bytes,
-        fair::{Credits, State},
+        credit::Ledger,
+        fair::{Credits, Pool as FairPool},
     },
 };
+
+struct StableValue {
+    value: u32,
+    _pin: PhantomPinned,
+}
+
+struct StableSource<'a>(Pin<&'a StableValue>);
+
+// SAFETY: this private source is used only while its pinned owner and every
+// copied link remain in this test's scope.
+unsafe impl StableLinkSource<StableValue> for StableSource<'_> {
+    fn pointer(self) -> NonNull<StableValue> {
+        NonNull::from(self.0.get_ref())
+    }
+}
 
 type FixedPool = Pool<Uninitialized, FixedCapacity<BLOCK_CAPACITY>>;
 type FixedLease = Cursor<FixedCapacity<BLOCK_CAPACITY>>;
 const FIXED_CAPACITY: usize = BLOCK_CAPACITY as usize;
+
+#[test]
+fn stable_links_are_one_word_and_borrow_their_pinned_target() {
+    let value = Box::pin(StableValue {
+        value: 7,
+        _pin: PhantomPinned,
+    });
+    let link = StableLink::from_stable(StableSource(value.as_ref()));
+    let copy = link;
+
+    assert_eq!(link.get().value, 7);
+    assert_eq!(copy.get().value, 7);
+    assert!(link == copy);
+    assert_eq!(
+        size_of::<StableLink<StableValue>>(),
+        size_of::<NonNull<StableValue>>()
+    );
+}
+
+#[test]
+fn local_ref_counts_separate_strict_and_tolerant_transitions() {
+    let refs = LocalRefCount::empty();
+    assert_eq!(size_of::<LocalRefCount>(), size_of::<u32>());
+    assert!(refs.is_empty());
+    assert!(!refs.try_retain());
+    assert_eq!(refs.try_release(), None);
+
+    assert!(refs.try_activate());
+    assert!(!refs.try_activate());
+    assert!(refs.is_unique());
+    assert!(refs.try_retain());
+    assert!(!refs.is_unique());
+    assert_eq!(refs.try_release(), Some(false));
+    assert!(refs.is_unique());
+
+    assert_eq!(refs.try_release(), Some(true));
+    assert!(refs.is_unique());
+    assert!(refs.try_deactivate());
+    assert!(refs.is_empty());
+    assert!(!refs.try_deactivate());
+
+    let one = LocalRefCount::one();
+    one.retain();
+    assert!(!one.release());
+    assert!(one.release());
+    one.deactivate();
+    one.activate();
+    assert!(one.is_unique());
+}
 
 #[test]
 fn fixed_pool_capacity_adds_no_runtime_state() {
@@ -70,6 +137,23 @@ fn byte_budget_returns_capacity_when_a_lease_drops() {
 }
 
 #[test]
+fn credit_ledger_acquires_and_releases_without_allocation() {
+    let ledger = Ledger::new(5);
+    assert_eq!(ledger.limit(), 5);
+    assert_eq!(ledger.available(), 5);
+    assert!(ledger.try_acquire(3));
+    assert_eq!(ledger.used(), 3);
+    assert_eq!(ledger.available(), 2);
+    assert!(!ledger.try_acquire(usize::MAX));
+    assert_eq!(ledger.used(), 3);
+    ledger.release(2);
+    assert_eq!(ledger.used(), 1);
+    assert!(ledger.try_acquire(4));
+    ledger.release(5);
+    assert_eq!(ledger.available(), 5);
+}
+
+#[test]
 fn fair_credits_protect_each_lane_and_share_the_rest() {
     let credits = Credits::with_reserve(8, 2, 2);
     assert!(credits.try_acquire(0, 6));
@@ -110,17 +194,33 @@ fn fair_credits_acquire_multiple_dimensions_atomically() {
 
 #[test]
 fn fair_credits_split_exact_total_reserves_without_stranding_remainders() {
-    let pool = o3::mem::fair::Pool::new([0, 9]);
-    let first = State::split_at([3, 21], 2, 0);
-    let second = State::split_at([3, 21], 2, 1);
-    let first_credit = pool.bind(&first);
-    let second_credit = pool.bind(&second);
+    let pool = FairPool::split([0, 9], [3, 21], 2);
+    let first_credit = pool.lane(0).unwrap();
+    let second_credit = pool.lane(1).unwrap();
 
     assert!(second_credit.try_acquire_all([1, 10]));
     assert!(!second_credit.try_acquire_all([1, 1]));
     assert!(first_credit.try_acquire_all([2, 11]));
     first_credit.release_all([2, 11]);
     assert!(first_credit.try_acquire_all([2, 20]));
+}
+
+#[test]
+fn fair_pool_owns_each_lanes_accounting_identity() {
+    let first = FairPool::split([10], [0], 1);
+    let second = FairPool::split([10], [0], 1);
+    let first_lane = first.lane(0).unwrap();
+    let second_lane = second.lane(0).unwrap();
+
+    assert!(first_lane.try_acquire_all([5]));
+    let cross_release = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        second_lane.release_all([5]);
+    }));
+    assert!(cross_release.is_err());
+
+    first_lane.release_all([5]);
+    assert!(first_lane.try_acquire_all([10]));
+    assert!(second_lane.try_acquire_all([10]));
 }
 
 #[test]

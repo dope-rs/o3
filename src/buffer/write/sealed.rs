@@ -1,6 +1,6 @@
 use std::{convert, error, fmt, mem, ptr, slice};
 
-use crate::buffer::{self, queue};
+use crate::buffer::{self, pool, queue, storage};
 
 fn append_vec_slices<const N: usize>(out: &mut Vec<u8>, slices: [&[u8]; N]) {
     let additional = slices
@@ -242,13 +242,11 @@ pub trait ByteSink {
 impl ByteSink for Vec<u8> {
     type Error = convert::Infallible;
 
-    #[inline]
     fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
         self.push(byte);
         Ok(())
     }
 
-    #[inline]
     fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
         self.extend_from_slice(bytes);
         Ok(())
@@ -263,12 +261,10 @@ impl ByteSink for Vec<u8> {
 impl ByteSink for SpareWriter<'_> {
     type Error = buffer::CapacityError;
 
-    #[inline]
     fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
         self.try_push(byte)
     }
 
-    #[inline]
     fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
         self.try_extend(bytes)
     }
@@ -281,6 +277,22 @@ impl ByteSink for SpareWriter<'_> {
 impl ByteSink for queue::Ring {
     type Error = buffer::CapacityError;
 
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+        self.try_push(byte)
+    }
+
+    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.try_extend(bytes)
+    }
+
+    fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
+        self.try_extend_from_slices(slices)
+    }
+}
+
+impl<C: pool::Capacity> ByteSink for pool::Cursor<C> {
+    type Error = buffer::CapacityError;
+
     #[inline]
     fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
         self.try_push(byte)
@@ -291,6 +303,45 @@ impl ByteSink for queue::Ring {
         self.try_extend(bytes)
     }
 
+    #[inline]
+    fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
+        self.try_extend_from_slices(slices)
+    }
+}
+
+impl<const CAP: usize> ByteSink for storage::inline::Bytes<CAP> {
+    type Error = buffer::CapacityError;
+
+    #[inline]
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+        self.try_push(byte)
+    }
+
+    #[inline]
+    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.try_extend(bytes)
+    }
+
+    #[inline]
+    fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
+        self.try_extend_from_slices(slices)
+    }
+}
+
+impl<const CAP: usize> ByteSink for storage::inline::WideBytes<CAP> {
+    type Error = buffer::CapacityError;
+
+    #[inline]
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+        self.try_push(byte)
+    }
+
+    #[inline]
+    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.try_extend(bytes)
+    }
+
+    #[inline]
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
         self.try_extend_from_slices(slices)
     }
@@ -315,7 +366,6 @@ impl<'a> SliceWriter<'a> {
 impl ByteSink for SliceWriter<'_> {
     type Error = buffer::CapacityError;
 
-    #[inline]
     fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
         if self.written == self.out.len() {
             return Err(buffer::CapacityError::new(
@@ -328,7 +378,6 @@ impl ByteSink for SliceWriter<'_> {
         Ok(())
     }
 
-    #[inline]
     fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
         let end = self
             .written

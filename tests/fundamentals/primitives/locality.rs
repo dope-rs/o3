@@ -11,15 +11,19 @@ use o3::{
     },
     cell::{Checked, brand, region},
     collections::{
-        arena::{Linked, Stack},
-        fixed::{hash::Map, index::Slots},
+        fixed::{
+            arena::{Linked, Stack},
+            hash::Map,
+            index::Slots,
+        },
         heap::Min,
         queue::round::Robin,
         slab,
     },
     mem::{
         budget::{Bytes, Handle, Lease},
-        fair::{Credits, Lane, Pool, State},
+        credit::Ledger,
+        fair::{Credits, Lane, Pool},
     },
 };
 
@@ -33,13 +37,13 @@ assert_confined!(Robin);
 assert_confined!(Linked<u8>);
 assert_confined!(Min<u8>);
 assert_confined!(Map<u8>);
-assert_confined!(slab::pin::Pool<u8>);
-assert_confined!(slab::pin::VacantEntry<'static, u8>);
-assert_confined!(slab::pin::fixed::Pool<u8, 4>);
-assert_confined!(slab::pin::fixed::VacantEntry<'static, u8, 4>);
-assert_confined!(slab::Slab<u8>);
+assert_confined!(slab::pinned::Pool<u8>);
+assert_confined!(slab::pinned::VacantEntry<'static, u8>);
+assert_confined!(slab::pinned::Fixed<u8, 4>);
+assert_confined!(slab::pinned::FixedVacantEntry<'static, u8, 4>);
+assert_confined!(slab::Exclusive<u8>);
 assert_confined!(slab::key::Generation);
-assert_confined!(slab::key::Key);
+assert_confined!(slab::key::Handle);
 assert_confined!(slab::key::Parts);
 assert_confined!(Owned);
 assert_confined!(Owned<BLOCK_CAPACITY>);
@@ -57,6 +61,7 @@ assert_confined!(Ring);
 assert_confined!(Bytes);
 assert_confined!(Handle<'static>);
 assert_confined!(Lease<'static>);
+assert_confined!(Ledger);
 assert_confined!(Credits);
 assert_confined!(Pool);
 assert_confined!(Lane<'static>);
@@ -80,7 +85,7 @@ const _: fn() = || {
     impl<T: ?Sized + Unpin> AmbiguousIfUnpin<u8> for T {}
 
     fn not_unpin<T: ?Sized + AmbiguousIfUnpin<A>, A>() {}
-    not_unpin::<slab::pin::fixed::Pool<u8, 4>, _>();
+    not_unpin::<slab::pinned::Fixed<u8, 4>, _>();
 };
 
 #[test]
@@ -104,19 +109,17 @@ fn state_is_confined_and_keys_are_word_sized() {
         std::mem::align_of::<region::Value<'static, u64>>(),
         std::mem::align_of::<u64>(),
     );
-    assert_eq!(std::mem::size_of::<slab::key::Key>(), 8);
+    assert_eq!(std::mem::size_of::<slab::key::Handle>(), 8);
     assert_eq!(std::mem::size_of::<slab::key::Parts>(), 8);
     assert_eq!(std::mem::size_of::<slab::key::Generation>(), 4);
     assert_eq!(std::mem::size_of::<Linked<u8>>(), 48);
     assert_eq!(std::mem::size_of::<Stack<u8>>(), 48);
-    assert_eq!(std::mem::size_of::<Pool>(), 8);
-    assert_eq!(std::mem::size_of::<Pool<2>>(), 16);
-    assert_eq!(std::mem::size_of::<State>(), 16);
-    assert_eq!(std::mem::size_of::<State<2>>(), 32);
-    assert_eq!(std::mem::size_of::<Lane<'_>>(), 24);
-    assert_eq!(std::mem::size_of::<Lane<'_, 2>>(), 32);
-    assert_eq!(std::mem::size_of::<Credits>(), 40);
-    assert_eq!(std::mem::size_of::<Credits<2>>(), 64);
+    assert_eq!(std::mem::size_of::<Pool>(), 24);
+    assert_eq!(std::mem::size_of::<Pool<2>>(), 32);
+    assert_eq!(std::mem::size_of::<Lane<'_>>(), 16);
+    assert_eq!(std::mem::size_of::<Lane<'_, 2>>(), 16);
+    assert_eq!(std::mem::size_of::<Credits>(), 32);
+    assert_eq!(std::mem::size_of::<Credits<2>>(), 48);
     assert_eq!(
         std::mem::size_of::<CapacityError>(),
         std::mem::size_of::<usize>() * 2

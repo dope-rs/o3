@@ -1,13 +1,16 @@
 use std::{array, cell};
 
-/// Shared surplus for independently stored fair-lane states.
+use crate::collections;
+
+/// Shared surplus and every lane state in one accounting domain.
 pub struct Pool<const N: usize = 1> {
     shared: cell::Cell<[usize; N]>,
+    states: Box<[State<N>]>,
     _thread: crate::ThreadBound,
 }
 
 /// One lane's protected reserve and current holdings.
-pub struct State<const N: usize = 1> {
+struct State<const N: usize> {
     reserve: [usize; N],
     held: cell::Cell<[usize; N]>,
 }
@@ -16,34 +19,69 @@ pub struct State<const N: usize = 1> {
 #[derive(Clone, Copy)]
 pub struct Lane<'a, const N: usize = 1> {
     shared: &'a cell::Cell<[usize; N]>,
-    held: &'a cell::Cell<[usize; N]>,
-    reserve: [usize; N],
+    state: &'a State<N>,
 }
 
 /// Owned fair accounting with one uniform protected reserve per lane.
 pub struct Credits<const N: usize = 1> {
     used: cell::Cell<[usize; N]>,
     pool: Pool<N>,
-    held: Box<[cell::Cell<[usize; N]>]>,
-    reserve: [usize; N],
 }
 
 impl<const N: usize> Pool<N> {
-    pub fn new(shared: [usize; N]) -> Self {
-        use crate::ThreadBound;
-        assert!(N > 0, "credit dimension count must be positive");
-        Self {
-            shared: cell::Cell::new(shared),
-            _thread: ThreadBound::NEW,
+    /// Builds one accounting domain whose protected total is split exactly
+    /// across `lane_count` pool-owned states.
+    pub fn split(shared: [usize; N], protected: [usize; N], lane_count: usize) -> Self {
+        match Self::try_split(shared, protected, lane_count) {
+            Ok(pool) => pool,
+            Err(error) => error.abort(),
         }
     }
 
-    pub fn bind<'a>(&'a self, state: &'a State<N>) -> Lane<'a, N> {
-        Lane {
+    pub fn try_split(
+        shared: [usize; N],
+        protected: [usize; N],
+        lane_count: usize,
+    ) -> Result<Self, collections::AllocationError> {
+        Self::try_with_reserve(shared, lane_count, |lane| {
+            array::from_fn(|dimension| {
+                protected[dimension] / lane_count
+                    + usize::from(lane < protected[dimension] % lane_count)
+            })
+        })
+    }
+
+    fn try_uniform(
+        shared: [usize; N],
+        lane_count: usize,
+        reserve: [usize; N],
+    ) -> Result<Self, collections::AllocationError> {
+        Self::try_with_reserve(shared, lane_count, |_| reserve)
+    }
+
+    fn try_with_reserve(
+        shared: [usize; N],
+        lane_count: usize,
+        mut reserve: impl FnMut(usize) -> [usize; N],
+    ) -> Result<Self, collections::AllocationError> {
+        use crate::ThreadBound;
+        assert!(N > 0, "credit dimension count must be positive");
+        Ok(Self {
+            shared: cell::Cell::new(shared),
+            states: collections::BoxSliceExt::try_box_with(lane_count, |lane| State {
+                reserve: reserve(lane),
+                held: cell::Cell::new([0; N]),
+            })?,
+            _thread: ThreadBound::NEW,
+        })
+    }
+
+    /// Borrows one lane from this pool's accounting domain.
+    pub fn lane(&self, lane: usize) -> Option<Lane<'_, N>> {
+        Some(Lane {
             shared: &self.shared,
-            held: &state.held,
-            reserve: state.reserve,
-        }
+            state: self.states.get(lane)?,
+        })
     }
 
     fn shared(&self) -> [usize; N] {
@@ -51,32 +89,15 @@ impl<const N: usize> Pool<N> {
     }
 }
 
-impl<const N: usize> State<N> {
-    pub fn new(reserve: [usize; N]) -> Self {
-        Self {
-            reserve,
-            held: cell::Cell::new([0; N]),
-        }
-    }
-
-    pub fn split_at(total: [usize; N], lane_count: usize, lane: usize) -> Self {
-        assert!(lane_count > 0, "credit lane count must be positive");
-        assert!(lane < lane_count, "credit lane out of bounds");
-        Self::new(array::from_fn(|dimension| {
-            total[dimension] / lane_count + usize::from(lane < total[dimension] % lane_count)
-        }))
-    }
-}
-
 impl<const N: usize> Lane<'_, N> {
     fn can_acquire_all(self, amount: [usize; N]) -> bool {
-        let held = self.held.get();
+        let held = self.state.held.get();
         let shared = self.shared.get();
         for dimension in 0..N {
             if held[dimension].checked_add(amount[dimension]).is_none() {
                 return false;
             }
-            let own = self.reserve[dimension].saturating_sub(held[dimension]);
+            let own = self.state.reserve[dimension].saturating_sub(held[dimension]);
             if amount[dimension].saturating_sub(own) > shared[dimension] {
                 return false;
             }
@@ -85,7 +106,7 @@ impl<const N: usize> Lane<'_, N> {
     }
 
     pub fn try_acquire_all(self, amount: [usize; N]) -> bool {
-        let held = self.held.get();
+        let held = self.state.held.get();
         let shared = self.shared.get();
         let mut next = [0; N];
         let mut borrowed = [0; N];
@@ -94,13 +115,13 @@ impl<const N: usize> Lane<'_, N> {
                 return false;
             };
             next[dimension] = next_held;
-            let own = self.reserve[dimension].saturating_sub(held[dimension]);
+            let own = self.state.reserve[dimension].saturating_sub(held[dimension]);
             borrowed[dimension] = amount[dimension].saturating_sub(own);
             if borrowed[dimension] > shared[dimension] {
                 return false;
             }
         }
-        self.held.set(next);
+        self.state.held.set(next);
         self.shared.set(array::from_fn(|dimension| {
             shared[dimension] - borrowed[dimension]
         }));
@@ -108,7 +129,7 @@ impl<const N: usize> Lane<'_, N> {
     }
 
     pub fn release_all(self, amount: [usize; N]) {
-        let held = self.held.get();
+        let held = self.state.held.get();
         for dimension in 0..N {
             assert!(
                 held[dimension] >= amount[dimension],
@@ -116,9 +137,9 @@ impl<const N: usize> Lane<'_, N> {
             );
         }
         let returned: [usize; N] = array::from_fn(|dimension| {
-            amount[dimension].min(held[dimension].saturating_sub(self.reserve[dimension]))
+            amount[dimension].min(held[dimension].saturating_sub(self.state.reserve[dimension]))
         });
-        self.held.set(array::from_fn(|dimension| {
+        self.state.held.set(array::from_fn(|dimension| {
             held[dimension] - amount[dimension]
         }));
         let shared = self.shared.get();
@@ -140,7 +161,7 @@ impl<const N: usize> Credits<N> {
     pub fn try_from_capacities(
         capacity: [usize; N],
         lane_count: usize,
-    ) -> Result<Self, crate::collections::AllocationError> {
+    ) -> Result<Self, collections::AllocationError> {
         assert!(N > 0, "credit dimension count must be positive");
         assert!(lane_count > 0, "credit lane count must be positive");
         let reserve = capacity.map(|amount| {
@@ -153,18 +174,11 @@ impl<const N: usize> Credits<N> {
         Self::try_with_reserve_per_lane(capacity, lane_count, reserve)
     }
 
-    fn with_reserve_per_lane(capacity: [usize; N], lane_count: usize, reserve: [usize; N]) -> Self {
-        match Self::try_with_reserve_per_lane(capacity, lane_count, reserve) {
-            Ok(credits) => credits,
-            Err(error) => error.abort(),
-        }
-    }
-
     fn try_with_reserve_per_lane(
         capacity: [usize; N],
         lane_count: usize,
         reserve: [usize; N],
-    ) -> Result<Self, crate::collections::AllocationError> {
+    ) -> Result<Self, collections::AllocationError> {
         assert!(N > 0, "credit dimension count must be positive");
         assert!(lane_count > 0, "credit lane count must be positive");
         let reserved: [usize; N] = array::from_fn(|dimension| {
@@ -176,20 +190,16 @@ impl<const N: usize> Credits<N> {
         });
         Ok(Self {
             used: cell::Cell::new([0; N]),
-            pool: Pool::new(array::from_fn(|dimension| {
-                capacity[dimension] - reserved[dimension]
-            })),
-            held: crate::collections::try_box_with(lane_count, |_| cell::Cell::new([0; N]))?,
-            reserve,
+            pool: Pool::try_uniform(
+                array::from_fn(|dimension| capacity[dimension] - reserved[dimension]),
+                lane_count,
+                reserve,
+            )?,
         })
     }
 
     fn credit(&self, lane: usize) -> Option<Lane<'_, N>> {
-        Some(Lane {
-            shared: &self.pool.shared,
-            held: self.held.get(lane)?,
-            reserve: self.reserve,
-        })
+        self.pool.lane(lane)
     }
 
     fn can_acquire_all(&self, lane: usize, amount: [usize; N]) -> bool {
@@ -214,37 +224,28 @@ impl<const N: usize> Credits<N> {
 
     /// Releases every resource dimension as one state transition.
     pub fn release_all(&self, lane: usize, amount: [usize; N]) {
-        let credit = Lane {
-            shared: &self.pool.shared,
-            held: &self.held[lane],
-            reserve: self.reserve,
-        };
+        let credit = self.pool.lane(lane).expect("credit lane out of bounds");
         credit.release_all(amount);
         let used = self.used.get();
         self.used.set(array::from_fn(|dimension| {
             used[dimension] - amount[dimension]
         }));
     }
-
-    fn held_all_by(&self, lane: usize) -> Option<[usize; N]> {
-        self.held.get(lane).map(cell::Cell::get)
-    }
-
-    fn reserved_all_for(&self, lane: usize) -> Option<[usize; N]> {
-        self.held.get(lane).map(|_| self.reserve)
-    }
 }
 
 impl Credits {
     pub fn with_reserve(capacity: usize, lane_count: usize, reserve_per_lane: usize) -> Self {
-        Self::with_reserve_per_lane([capacity], lane_count, [reserve_per_lane])
+        match Self::try_with_reserve(capacity, lane_count, reserve_per_lane) {
+            Ok(credits) => credits,
+            Err(error) => error.abort(),
+        }
     }
 
     pub fn try_with_reserve(
         capacity: usize,
         lane_count: usize,
         reserve_per_lane: usize,
-    ) -> Result<Self, crate::collections::AllocationError> {
+    ) -> Result<Self, collections::AllocationError> {
         Self::try_with_reserve_per_lane([capacity], lane_count, [reserve_per_lane])
     }
 
@@ -253,11 +254,11 @@ impl Credits {
     }
 
     pub fn held_by(&self, lane: usize) -> Option<usize> {
-        self.held_all_by(lane).map(|held| held[0])
+        self.pool.states.get(lane).map(|state| state.held.get()[0])
     }
 
     pub fn reserved_for(&self, lane: usize) -> Option<usize> {
-        self.reserved_all_for(lane).map(|reserved| reserved[0])
+        self.pool.states.get(lane).map(|state| state.reserve[0])
     }
 
     pub fn shared_available(&self) -> usize {

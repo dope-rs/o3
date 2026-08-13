@@ -61,6 +61,15 @@ fn cancelled_reservation_preserves_the_seed() {
 }
 
 #[test]
+fn reserved_seed_can_be_prepared_before_infallible_insertion() {
+    let pool = recycle::Pool::<Value>::with_capacity(Capacity::new(1), Vec::new);
+    let mut vacant = pool.vacant_entry().expect("reservation");
+    vacant.seed_mut().extend_from_slice(b"prepared");
+    let lease = vacant.insert_with(|bytes| Value { bytes, uses: 1 });
+    assert_eq!(lease.bytes, b"prepared");
+}
+
+#[test]
 fn rejected_build_restores_the_returned_seed() {
     let pool = recycle::Pool::<Value>::with_capacity(Capacity::new(1), || Vec::with_capacity(32));
     let allocation = match pool
