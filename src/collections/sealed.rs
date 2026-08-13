@@ -26,13 +26,20 @@ pub struct AllocationError {
 }
 
 impl AllocationError {
-    fn overflow() -> Self {
+    pub(crate) fn overflow() -> Self {
         Self { layout: None }
     }
 
-    fn exhausted(layout: alloc::Layout) -> Self {
+    pub(crate) fn exhausted(layout: alloc::Layout) -> Self {
         Self {
             layout: Some(layout),
+        }
+    }
+
+    pub(crate) fn for_array<T>(len: usize) -> Self {
+        match alloc::Layout::array::<T>(len) {
+            Ok(layout) => Self::exhausted(layout),
+            Err(_) => Self::overflow(),
         }
     }
 
