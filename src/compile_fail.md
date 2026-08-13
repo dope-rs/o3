@@ -147,7 +147,7 @@ A borrowed pinned recycling lease cannot escape its pool:
 
 ```compile_fail,E0515
 use std::pin::Pin;
-use o3::collections::{pinned::recycle, slab::Capacity};
+use o3::collections::{fixed::pinned::recycle, slab::Capacity};
 
 struct Value;
 
@@ -165,7 +165,7 @@ An owner-backed pinned recycling lease retains its exact owner domain:
 
 ```compile_fail
 use std::pin::Pin;
-use o3::collections::pinned::recycle;
+use o3::collections::fixed::pinned::recycle;
 
 struct Value;
 
@@ -184,7 +184,7 @@ Pinned recycling leases cannot cross their owning thread:
 
 ```compile_fail,E0277
 use std::pin::Pin;
-use o3::collections::pinned::recycle;
+use o3::collections::fixed::pinned::recycle;
 
 struct Value;
 

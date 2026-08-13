@@ -15,7 +15,7 @@ fn detached_indices_reuse_in_constant_time() {
     assert!(pool.is_exhausted());
     assert_eq!(pool.take(), None);
 
-    unsafe { pool.release(second) };
+    assert!(pool.release(second));
     assert_eq!(pool.available(), 1);
     assert_eq!(pool.take(), Some(second));
 }

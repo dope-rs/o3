@@ -227,9 +227,13 @@ impl<T: AsRef<[u8]>> Segments<T> {
     }
 }
 
-impl<T: AsRef<[u8]> + buffer::PrefixConsumer> Segments<T> {
+pub trait ConsumePrefix {
+    fn try_consume_front(&mut self, amount: usize) -> bool;
+}
+
+impl<T: AsRef<[u8]> + buffer::PrefixConsumer> ConsumePrefix for Segments<T> {
     /// Consumes a prefix by advancing a partial front segment in place.
-    pub fn try_consume_front(&mut self, mut amount: usize) -> bool {
+    fn try_consume_front(&mut self, mut amount: usize) -> bool {
         if amount > self.len {
             return false;
         }

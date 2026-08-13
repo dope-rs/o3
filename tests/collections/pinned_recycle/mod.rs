@@ -1,14 +1,13 @@
 use std::{cell::Cell, marker, mem, pin, ptr};
 
-use o3::collections::{
-    pinned::recycle::{self, PoolOwner},
-    slab::Capacity,
-};
+use o3::collections::{fixed::pinned::recycle, slab::Capacity};
+
+mod sealed;
 
 struct Value<'a> {
     address: Cell<*const Self>,
     resets: &'a Cell<usize>,
-    value: usize,
+    value: Cell<usize>,
     _pin: marker::PhantomPinned,
 }
 
@@ -17,7 +16,7 @@ impl Value<'_> {
         Value {
             address: Cell::new(ptr::null()),
             resets,
-            value: 0,
+            value: Cell::new(0),
             _pin: marker::PhantomPinned,
         }
     }
@@ -31,40 +30,16 @@ impl Value<'_> {
     }
 
     fn set(self: pin::Pin<&mut Self>, value: usize) {
-        // SAFETY: assigning this unpinned field does not move the value.
-        unsafe { self.get_unchecked_mut() }.value = value;
+        self.as_ref().get_ref().value.set(value);
     }
 }
 
 impl recycle::Recycle for Value<'_> {
     fn recycle(self: pin::Pin<&mut Self>) {
         self.as_ref().bind();
-        let this = unsafe { self.get_unchecked_mut() };
+        let this = self.as_ref().get_ref();
         this.resets.set(this.resets.get() + 1);
-        this.value = 0;
-    }
-}
-
-struct Owner<'owner, 'value> {
-    pool: ptr::NonNull<recycle::Pool<Value<'value>>>,
-    scope: marker::PhantomData<&'owner ()>,
-}
-
-// SAFETY: the tests drop every issued handle before the pool and access it
-// from one thread only.
-unsafe impl<'owner, 'value> PoolOwner<'owner, Value<'value>> for Owner<'owner, 'value> {
-    fn pool(self) -> ptr::NonNull<recycle::Pool<Value<'value>>> {
-        self.pool
-    }
-}
-
-fn owner<'owner, 'value>(
-    pool: &recycle::Pool<Value<'value>>,
-    _scope: &'owner (),
-) -> Owner<'owner, 'value> {
-    Owner {
-        pool: ptr::NonNull::from(pool),
-        scope: marker::PhantomData,
+        this.value.set(0);
     }
 }
 
@@ -82,7 +57,7 @@ fn values_remain_pinned_and_recycle_in_place() {
     let second = pool.reserve().expect("recycled slot");
     second.get().bind();
     assert_eq!(ptr::from_ref(second.get().get_ref()), address);
-    assert_eq!(second.get().value, 0);
+    assert_eq!(second.get().value.get(), 0);
     drop(second);
     assert_eq!(resets.get(), 2);
 }
@@ -96,11 +71,11 @@ fn reservation_rollback_and_detached_commit_return_the_slot() {
 
     let scope = ();
     let reservation =
-        recycle::Pool::reserve_owned(owner(&pool, &scope)).expect("owned reservation");
+        recycle::Pool::reserve_owned(sealed::owner(&pool, &scope)).expect("owned reservation");
     let mut lease = reservation.commit();
     lease.get_mut().set(11);
     let moved = pool;
-    assert_eq!(lease.get().value, 11);
+    assert_eq!(lease.get().value.get(), 11);
     drop(lease);
     assert_eq!(resets.get(), 2);
     assert!(moved.reserve().is_some());

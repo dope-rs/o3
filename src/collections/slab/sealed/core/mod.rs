@@ -1,4 +1,4 @@
-use std::{cell, marker, mem};
+use std::{array, cell, marker, mem};
 
 use crate::collections::{
     self,
@@ -171,7 +171,7 @@ impl<T, G: sealed::GenerationState, M: Mode, const PARTITIONS: usize> Core<T, G,
         Ok(Self {
             slots,
             occupied,
-            free: std::array::from_fn(|partition| {
+            free: array::from_fn(|partition| {
                 let index = if partition == 0 { 0 } else { boundary };
                 cell::Cell::new(if index < raw_capacity {
                     index as u32
@@ -203,10 +203,6 @@ impl<T, G: sealed::GenerationState, M: Mode, const PARTITIONS: usize> Core<T, G,
 
     pub(super) fn len(&self) -> usize {
         self.len.get() as usize
-    }
-
-    pub(super) fn is_full(&self) -> bool {
-        self.free[0].get() == NONE && (PARTITIONS == 1 || self.free[1].get() == NONE)
     }
 
     pub(super) fn available(&self) -> usize {

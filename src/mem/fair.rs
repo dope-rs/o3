@@ -223,13 +223,16 @@ impl<const N: usize> Credits<N> {
     }
 
     /// Releases every resource dimension as one state transition.
-    pub fn release_all(&self, lane: usize, amount: [usize; N]) {
-        let credit = self.pool.lane(lane).expect("credit lane out of bounds");
+    pub fn release_all(&self, lane: usize, amount: [usize; N]) -> bool {
+        let Some(credit) = self.pool.lane(lane) else {
+            return false;
+        };
         credit.release_all(amount);
         let used = self.used.get();
         self.used.set(array::from_fn(|dimension| {
             used[dimension] - amount[dimension]
         }));
+        true
     }
 }
 

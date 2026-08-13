@@ -45,18 +45,15 @@ impl<Tag> Ledger<Tag> {
         }
     }
 
-    #[inline]
     pub fn remaining(&self) -> usize {
         self.remaining.get()
     }
 
     /// Replaces the available quota after every reservation has ended.
-    #[inline]
     pub fn reset(&mut self, remaining: usize) {
         self.remaining.set(remaining);
     }
 
-    #[inline]
     pub fn take(&self) -> bool {
         let Some(remaining) = self.remaining.get().checked_sub(1) else {
             return false;
@@ -84,7 +81,6 @@ impl<Tag> Ledger<Tag> {
 }
 
 impl<'source, Tag> Shared<'source, Tag> {
-    #[inline]
     pub fn reserve_exact<SourceTag>(
         source: &'source Ledger<SourceTag>,
         count: usize,
@@ -95,7 +91,6 @@ impl<'source, Tag> Shared<'source, Tag> {
         })
     }
 
-    #[inline]
     pub fn reserve_up_to<SourceTag>(source: &'source Ledger<SourceTag>, limit: usize) -> Self {
         Self {
             source: source.counter(),
@@ -103,32 +98,41 @@ impl<'source, Tag> Shared<'source, Tag> {
         }
     }
 
-    #[inline]
     pub fn reserve_all<SourceTag>(source: &'source Ledger<SourceTag>) -> Self {
         Self::reserve_up_to(source, usize::MAX)
     }
 
-    #[inline]
     pub fn lease_exact<ChildTag>(&self, count: usize) -> Option<Lease<'_, ChildTag>> {
-        Lease::reserve_exact(&self.remaining, count)
+        let source = self.remaining.counter();
+        Some(Lease {
+            source,
+            remaining: reserve_exact(source, count)?,
+            tag: marker::PhantomData,
+        })
     }
 
-    #[inline]
     pub fn lease_up_to<ChildTag>(&self, limit: usize) -> Lease<'_, ChildTag> {
-        Lease::reserve_up_to(&self.remaining, limit)
+        let source = self.remaining.counter();
+        Lease {
+            source,
+            remaining: reserve_up_to(source, limit),
+            tag: marker::PhantomData,
+        }
     }
 
-    #[inline]
     pub fn lease_all<ChildTag>(&self) -> Lease<'_, ChildTag> {
-        Lease::reserve_all(&self.remaining)
+        let source = self.remaining.counter();
+        Lease {
+            source,
+            remaining: reserve_up_to(source, usize::MAX),
+            tag: marker::PhantomData,
+        }
     }
 
-    #[inline]
     pub fn remaining(&self) -> usize {
         self.remaining.remaining()
     }
 
-    #[inline]
     pub fn spend(&mut self, count: usize) {
         let remaining = self.remaining.remaining();
         assert!(count <= remaining, "quota consumption exceeds reservation");
@@ -148,7 +152,6 @@ impl<'source, Tag> Lease<'source, Tag> {
     ///     parent.lease_all()
     /// }
     /// ```
-    #[inline]
     pub fn reserve_exact<SourceTag>(
         source: &'source Ledger<SourceTag>,
         count: usize,
@@ -160,7 +163,6 @@ impl<'source, Tag> Lease<'source, Tag> {
         })
     }
 
-    #[inline]
     pub fn reserve_up_to<SourceTag>(source: &'source Ledger<SourceTag>, limit: usize) -> Self {
         Self {
             source: source.counter(),
@@ -169,17 +171,14 @@ impl<'source, Tag> Lease<'source, Tag> {
         }
     }
 
-    #[inline]
     pub fn reserve_all<SourceTag>(source: &'source Ledger<SourceTag>) -> Self {
         Self::reserve_up_to(source, usize::MAX)
     }
 
-    #[inline]
     pub const fn remaining(&self) -> usize {
         self.remaining
     }
 
-    #[inline]
     pub fn spend(&mut self, count: usize) {
         assert!(
             count <= self.remaining,
@@ -188,7 +187,6 @@ impl<'source, Tag> Lease<'source, Tag> {
         self.remaining -= count;
     }
 
-    #[inline]
     pub fn take(&mut self) -> bool {
         if self.remaining == 0 {
             return false;
@@ -209,12 +207,10 @@ impl<'source, Tag> Lease<'source, Tag> {
     /// let _ = lease.take();
     /// drop(permit);
     /// ```
-    #[inline]
     pub fn take_permit(&mut self) -> Option<Permit<'_>> {
         self.take().then_some(Permit(marker::PhantomData))
     }
 
-    #[inline]
     pub fn admit_with<T>(&mut self, acquire: impl FnOnce() -> Option<T>) -> Admission<T> {
         if self.remaining == 0 {
             return Admission::Exhausted;

@@ -1,11 +1,12 @@
-use std::{cell as std_cell, fmt, hash, marker, ops};
+use std::{cell, fmt, hash, marker, ops};
 
 use crate::collections::{self, slab};
 
-/// A monotonically advancing logical generation that never wraps.
-///
-/// Returning `None` permanently exhausts identity allocation. Values returned
-/// before exhaustion must not repeat if stale keys are to remain rejected.
+mod sealed;
+
+pub(crate) use sealed::Backing;
+
+/// A non-wrapping logical generation; `None` permanently exhausts identity.
 pub trait Generation: Copy + Eq {
     const INITIAL: Self;
 
@@ -37,14 +38,14 @@ pub struct Exclusive<
     const PHYSICAL_MAX: u32 = { u32::MAX },
     const PARTITIONS: usize = 1,
 > {
-    inner: super::Exclusive<Stamped<T, G>, Tag, PHYSICAL_MAX, true, PARTITIONS>,
+    inner: slab::Exclusive<Stamped<T, G>, Tag, PHYSICAL_MAX, true, PARTITIONS>,
     next: Option<G>,
 }
 
 /// Interior-mutable storage with independent non-wrapping logical identities.
 pub struct Cell<T, G: Generation, Tag = (), const PHYSICAL_MAX: u32 = { u32::MAX }> {
-    inner: super::Cell<Stamped<T, G>, Tag, PHYSICAL_MAX, true>,
-    next: std_cell::Cell<Option<G>>,
+    inner: slab::Cell<Stamped<T, G>, Tag, PHYSICAL_MAX, true>,
+    next: cell::Cell<Option<G>>,
 }
 
 pub struct Entries<
@@ -77,7 +78,7 @@ pub struct OccupiedEntry<
     const PHYSICAL_MAX: u32 = { u32::MAX },
     const PARTITIONS: usize = 1,
 > {
-    inner: super::OccupiedEntry<'a, Stamped<T, G>, Tag, PHYSICAL_MAX, true, PARTITIONS>,
+    inner: slab::OccupiedEntry<'a, Stamped<T, G>, Tag, PHYSICAL_MAX, true, PARTITIONS>,
     generation: marker::PhantomData<G>,
 }
 
@@ -89,7 +90,7 @@ pub struct VacantEntry<
     const PHYSICAL_MAX: u32 = { u32::MAX },
     const PARTITIONS: usize = 1,
 > {
-    inner: super::VacantEntry<'a, Stamped<T, G>, Tag, PHYSICAL_MAX, true, PARTITIONS>,
+    inner: slab::VacantEntry<'a, Stamped<T, G>, Tag, PHYSICAL_MAX, true, PARTITIONS>,
     generation: G,
 }
 
@@ -171,11 +172,7 @@ impl<T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
     pub fn try_with_capacity(
         capacity: slab::Capacity,
     ) -> Result<Self, collections::AllocationError> {
-        use slab::raw::Recycling as _;
-
-        // SAFETY: physical handles never leave this adapter. Every public keyed
-        // operation validates the independent logical generation in Stamped.
-        let inner = unsafe { super::Exclusive::try_with_capacity_recycling(capacity)? };
+        let inner = Backing::external(capacity)?;
         Ok(Self {
             inner,
             next: Some(G::INITIAL),
@@ -192,10 +189,6 @@ impl<T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
 
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
-    }
-
-    pub fn is_full(&self) -> bool {
-        self.inner.is_full()
     }
 
     pub fn available(&self) -> usize {
@@ -269,12 +262,12 @@ impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize
     Entries<'a, T, G, Tag, PHYSICAL_MAX, PARTITIONS>
 {
     pub fn get(self, key: Key<G, Tag>) -> Option<&'a T> {
-        let (stamped, _) = self.slab.inner.core.entries().index(key.index())?;
+        let (stamped, _) = slab::raw::ExternalAccess::entry_at(&self.slab.inner, key.index())?;
         (stamped.generation == key.generation()).then_some(&stamped.value)
     }
 
     pub fn current(self, index: u32) -> Option<(&'a T, Key<G, Tag>)> {
-        let (stamped, _) = self.slab.inner.core.entries().index(index)?;
+        let (stamped, _) = slab::raw::ExternalAccess::entry_at(&self.slab.inner, index)?;
         Some((&stamped.value, Key::new(index, stamped.generation)))
     }
 
@@ -283,12 +276,10 @@ impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize
         T: 'a,
         G: 'a,
     {
-        self.slab
-            .inner
-            .core
-            .entries()
-            .values()
-            .map(|stamped| &stamped.value)
+        (0..self.slab.inner.capacity() as u32).filter_map(|index| {
+            slab::raw::ExternalAccess::entry_at(&self.slab.inner, index)
+                .map(|(stamped, _)| &stamped.value)
+        })
     }
 }
 
@@ -296,7 +287,8 @@ impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize
     EntriesMut<'a, T, G, Tag, PHYSICAL_MAX, PARTITIONS>
 {
     pub fn get(self, key: Key<G, Tag>) -> Option<&'a mut T> {
-        let (stamped, _) = self.slab.inner.core.index_mut(key.index())?;
+        let (stamped, _) =
+            slab::raw::ExternalAccess::entry_at_mut(&mut self.slab.inner, key.index())?;
         (stamped.generation == key.generation()).then_some(&mut stamped.value)
     }
 
@@ -307,7 +299,7 @@ impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize
     {
         self.slab
             .inner
-            .core
+            .slots()
             .values_mut()
             .map(|stamped| &mut stamped.value)
     }
@@ -374,21 +366,15 @@ impl<T, G: Generation, Tag, const PHYSICAL_MAX: u32> Cell<T, G, Tag, PHYSICAL_MA
     pub fn try_with_capacity(
         capacity: slab::Capacity,
     ) -> Result<Self, collections::AllocationError> {
-        use slab::raw::Recycling as _;
-
-        // SAFETY: physical handles remain private and every access validates
-        // the independent logical generation stored with the value.
-        let inner = unsafe { super::Cell::try_with_capacity_recycling(capacity)? };
+        let inner = Backing::external(capacity)?;
         Ok(Self {
             inner,
-            next: std_cell::Cell::new(Some(G::INITIAL)),
+            next: cell::Cell::new(Some(G::INITIAL)),
         })
     }
 
     fn take_generation(&self) -> Option<G> {
         let generation = self.next.take()?;
-        // Store exhaustion before returning the identity. If a custom
-        // generation panics while advancing, unwinding cannot reissue it.
         self.next.set(generation.next());
         Some(generation)
     }
@@ -407,10 +393,6 @@ impl<T, G: Generation, Tag, const PHYSICAL_MAX: u32> Cell<T, G, Tag, PHYSICAL_MA
 
     pub fn available(&self) -> usize {
         self.inner.available()
-    }
-
-    pub fn grow_to(&mut self, capacity: slab::Capacity) {
-        self.inner.grow_to(capacity);
     }
 
     pub fn key_at(&self, position: usize) -> Option<Key<G, Tag>> {

@@ -163,13 +163,6 @@ impl<T> Fifo<T> {
         })
     }
 
-    pub fn contains(&self, value: &T) -> bool
-    where
-        T: PartialEq,
-    {
-        self.iter().any(|entry| entry == value)
-    }
-
     pub fn retain(&mut self, mut keep: impl FnMut(&T) -> bool) {
         let len = self.ring.len;
         for _ in 0..len {

@@ -54,10 +54,6 @@ impl<T, Tag, const MAX: u32> Pool<T, Tag, MAX> {
         })
     }
 
-    pub fn contains_parts(&self, parts: key::Parts<MAX>) -> bool {
-        self.core.contains_parts(parts)
-    }
-
     pub fn capacity(&self) -> usize {
         self.core.capacity()
     }
@@ -80,10 +76,6 @@ impl<T, Tag, const MAX: u32> Pool<T, Tag, MAX> {
 
     pub fn parts(&self, parts: key::Parts<MAX>) -> Option<pin::Pin<&T>> {
         self.core.parts(parts)
-    }
-
-    pub fn get_mut(&mut self, key: key::Handle<Tag, MAX>) -> Option<pin::Pin<&mut T>> {
-        self.parts_mut(key.parts())
     }
 
     pub fn parts_mut(&mut self, parts: key::Parts<MAX>) -> Option<pin::Pin<&mut T>> {

@@ -98,7 +98,7 @@ impl Tree {
         true
     }
 
-    pub(in crate::collections::batch) unsafe fn insert_unchecked(&self, index: usize) {
+    pub(in crate::collections::batch) fn insert_absent(&self, index: usize) {
         debug_assert!(index < self.capacity.get());
         let word_index = index / WORD_BITS;
         let mask = 1usize << (index % WORD_BITS);
@@ -109,7 +109,7 @@ impl Tree {
         if current == 0
             && let Some(summary) = self.summary()
         {
-            unsafe { summary.insert_unchecked(word_index) };
+            summary.insert_absent(word_index);
         }
         self.len.set(self.len.get() + 1);
     }

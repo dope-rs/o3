@@ -2,10 +2,11 @@ use std::{error, fmt, marker, num, ops};
 
 mod cell;
 mod core;
-pub mod external;
 mod pending;
+mod vacant;
 
 pub use cell::{Cell, CellSlots};
+pub use vacant::VacantEntry;
 
 use crate::collections::{
     self,
@@ -207,6 +208,23 @@ impl<T, Tag, const MAX: u32, const PARTITIONS: usize> slab::raw::Recycling<T, Ta
     }
 }
 
+impl<T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize>
+    slab::raw::ExternalAccess<T, Tag, MAX> for Exclusive<T, Tag, MAX, RECYCLE, PARTITIONS>
+{
+    fn entry_at(&self, index: u32) -> Option<(&T, key::Handle<Tag, MAX>)> {
+        self.core
+            .entries()
+            .index(index)
+            .map(|(value, generation)| (value, key::Handle::new(index, generation)))
+    }
+
+    fn entry_at_mut(&mut self, index: u32) -> Option<(&mut T, key::Handle<Tag, MAX>)> {
+        self.core
+            .index_mut(index)
+            .map(|(value, generation)| (value, key::Handle::new(index, generation)))
+    }
+}
+
 impl<const MAX: u32> GenerationState for key::Generation<MAX> {
     const MIN: Self = Self::MIN;
     const VALID: () = assert!(MAX != 0, "generation limit must be nonzero");
@@ -232,7 +250,7 @@ impl<T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize>
     }
 
     pub fn is_full(&self) -> bool {
-        self.core.is_full()
+        self.core.available() == 0
     }
 
     /// Counts free, reusable slots without growing.
@@ -279,13 +297,6 @@ impl<T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize>
 {
     pub fn get(&self, key: key::Handle<Tag, MAX>) -> Option<&T> {
         self.core.entries().get(key.index(), key.generation())
-    }
-
-    pub fn get_index(&self, index: u32) -> Option<(&T, key::Handle<Tag, MAX>)> {
-        self.core
-            .entries()
-            .index(index)
-            .map(|(value, generation)| (value, key::Handle::new(index, generation)))
     }
 
     pub fn get_mut(&mut self, key: key::Handle<Tag, MAX>) -> Option<&mut T> {
@@ -447,57 +458,5 @@ impl<T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize>
 
     pub fn remove(self) -> T {
         self.busy.commit_removal().0
-    }
-}
-
-pub struct VacantEntry<
-    'a,
-    T,
-    Tag = (),
-    const MAX: u32 = { u32::MAX },
-    const RECYCLE: bool = false,
-    const PARTITIONS: usize = 1,
-> {
-    slab: &'a Exclusive<T, Tag, MAX, RECYCLE, PARTITIONS>,
-    ticket: Option<core::Ticket<key::Generation<MAX>>>,
-}
-
-impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize>
-    VacantEntry<'a, T, Tag, MAX, RECYCLE, PARTITIONS>
-{
-    pub fn key(&self) -> key::Handle<Tag, MAX> {
-        let ticket = unsafe { self.ticket.unwrap_unchecked() };
-        key::Handle::new(ticket.index.get(), ticket.generation)
-    }
-
-    pub fn insert(mut self, value: T) -> key::Handle<Tag, MAX> {
-        let ticket = unsafe { self.ticket.unwrap_unchecked() };
-        let key = key::Handle::new(ticket.index.get(), ticket.generation);
-        let ticket = unsafe { self.ticket.take().unwrap_unchecked() };
-        self.slab.core.reservations().commit(ticket, value);
-        key
-    }
-
-    pub fn insert_occupied(
-        mut self,
-        value: T,
-    ) -> OccupiedEntry<'a, T, Tag, MAX, RECYCLE, PARTITIONS> {
-        let ticket = unsafe { self.ticket.take().unwrap_unchecked() };
-        let slab = self.slab;
-        slab.core.reservations().commit(ticket, value);
-        OccupiedEntry {
-            busy: core::Busy::take_committed(&slab.core, ticket),
-            tag: marker::PhantomData,
-        }
-    }
-}
-
-impl<T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize> Drop
-    for VacantEntry<'_, T, Tag, MAX, RECYCLE, PARTITIONS>
-{
-    fn drop(&mut self) {
-        if let Some(ticket) = self.ticket.take() {
-            self.slab.core.reservations().rollback(ticket);
-        }
     }
 }

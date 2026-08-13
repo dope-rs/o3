@@ -22,21 +22,7 @@ impl<const MIN: u32, const MAX: u32> U32<MIN, MAX> {
         }
     }
 
-    /// Creates a value without checking the declared bounds.
-    ///
-    /// # Safety
-    ///
-    /// `MIN..=MAX` must be nonempty and contain `value`.
-    pub const unsafe fn new_unchecked(value: u32) -> Self {
-        debug_assert!(MIN <= MAX && value >= MIN && value <= MAX);
-        Self(value)
-    }
-
-    /// Clamps `value` to this type's inclusive bounds.
-    ///
-    /// # Panics
-    ///
-    /// Panics when `MIN > MAX` and the type therefore has no valid value.
+    /// Clamps to the bounds, panicking if `MIN > MAX`.
     pub const fn clamp_from_usize(value: usize) -> Self {
         assert!(MIN <= MAX, "cannot clamp into an empty bounded range");
         if value < MIN as usize {
@@ -56,11 +42,9 @@ impl<const MIN: u32, const MAX: u32> U32<MIN, MAX> {
     }
 
     pub const fn checked_sub(self, value: u32) -> Option<Self> {
-        // Subtraction cannot raise a valid value above MAX, so only integer
-        // underflow and the lower bound need checking.
         match self.0.checked_sub(value) {
-            Some(value) if value >= MIN => Some(Self(value)),
-            Some(_) | None => None,
+            Some(value) => Self::new(value),
+            None => None,
         }
     }
 
@@ -108,21 +92,7 @@ impl<const MIN: u64, const MAX: u64> U64<MIN, MAX> {
         }
     }
 
-    /// Creates a value without checking the declared bounds.
-    ///
-    /// # Safety
-    ///
-    /// `MIN..=MAX` must be nonempty and contain `value`.
-    pub const unsafe fn new_unchecked(value: u64) -> Self {
-        debug_assert!(MIN <= MAX && value >= MIN && value <= MAX);
-        Self(value)
-    }
-
-    /// Clamps `value` to this type's inclusive bounds.
-    ///
-    /// # Panics
-    ///
-    /// Panics when `MIN > MAX` and the type therefore has no valid value.
+    /// Clamps to the bounds, panicking if `MIN > MAX`.
     pub const fn clamp_from_usize(value: usize) -> Self {
         assert!(MIN <= MAX, "cannot clamp into an empty bounded range");
         if value < MIN as usize {
@@ -142,11 +112,9 @@ impl<const MIN: u64, const MAX: u64> U64<MIN, MAX> {
     }
 
     pub const fn checked_sub(self, value: u64) -> Option<Self> {
-        // Subtraction cannot raise a valid value above MAX, so only integer
-        // underflow and the lower bound need checking.
         match self.0.checked_sub(value) {
-            Some(value) if value >= MIN => Some(Self(value)),
-            Some(_) | None => None,
+            Some(value) => Self::new(value),
+            None => None,
         }
     }
 
@@ -195,18 +163,6 @@ impl<const MIN: u64, const MAX: u64> NonZeroU64<MIN, MAX> {
         } else {
             None
         }
-    }
-
-    /// Creates a value without checking that it is nonzero and in bounds.
-    ///
-    /// # Safety
-    ///
-    /// `MIN..=MAX` must be nonempty, and `value` must be nonzero and contained
-    /// in those bounds.
-    pub const unsafe fn new_unchecked(value: u64) -> Self {
-        debug_assert!(MIN <= MAX && value != 0 && value >= MIN && value <= MAX);
-        // SAFETY: required by this function's contract.
-        Self(unsafe { num::NonZeroU64::new_unchecked(value) })
     }
 
     pub const fn checked_add(self, value: u64) -> Option<Self> {
