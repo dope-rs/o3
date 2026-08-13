@@ -1,6 +1,6 @@
 use std::mem::size_of;
 
-use o3::buffer::storage::inline::{Bytes, CAPACITY, Str};
+use o3::buffer::storage::inline::{Bytes, CAPACITY, Str, WideBytes};
 
 #[test]
 fn inline_bytes_fill_without_growing_the_owner() {
@@ -44,6 +44,19 @@ fn inline_bytes_capacity_is_selected_by_the_type() {
         error.to_string(),
         "capacity exceeded: attempted 5, capacity 4"
     );
+}
+
+#[test]
+fn wide_inline_bytes_preserve_u16_layout_and_bounds() {
+    let mut inline = WideBytes::<514>::new();
+    inline.try_extend(&[b'x'; 513]).unwrap();
+    inline.try_push(b'y').unwrap();
+
+    assert_eq!(inline.len(), 514);
+    assert!(!inline.is_empty());
+    assert_eq!(inline.as_slice()[513], b'y');
+    assert_eq!(size_of::<WideBytes<514>>(), 516);
+    assert!(inline.try_push(0).is_err());
 }
 
 #[test]

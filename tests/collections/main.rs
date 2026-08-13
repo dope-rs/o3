@@ -2,6 +2,7 @@ mod cellslab_reentrancy;
 mod collections;
 mod pin_slab;
 mod pinned;
+mod pinned_recycle;
 mod recycle_slab;
 mod retire;
 mod slab;

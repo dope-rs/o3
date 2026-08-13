@@ -3,8 +3,8 @@
 use o3::{
     cell::region,
     collections::{
-        arena::Linked,
-        slab::{Capacity, Slab, key::Key},
+        fixed::arena::Linked,
+        slab::{Capacity, Exclusive, key::Handle},
     },
     mem::fair::Credits,
 };
@@ -68,15 +68,15 @@ struct ReplyEntry {
 }
 
 struct ReplyStore<T> {
-    entries: Slab<ReplyEntry, ReplyEntryTag>,
+    entries: Exclusive<ReplyEntry, ReplyEntryTag>,
     items: Linked<T>,
-    order: Linked<Key<ReplyEntryTag>>,
+    order: Linked<Handle<ReplyEntryTag>>,
 }
 
 impl<T> ReplyStore<T> {
     fn with_capacity(capacity: usize, lanes: usize) -> Self {
         Self {
-            entries: Slab::with_capacity(
+            entries: Exclusive::with_capacity(
                 Capacity::try_from(capacity).expect("test capacity fits slab indices"),
             ),
             items: Linked::with_capacity(capacity, capacity),
@@ -84,7 +84,7 @@ impl<T> ReplyStore<T> {
         }
     }
 
-    fn register(&mut self, lane: usize) -> Option<Key<ReplyEntryTag>> {
+    fn register(&mut self, lane: usize) -> Option<Handle<ReplyEntryTag>> {
         let key = self
             .entries
             .insert(ReplyEntry {
@@ -96,14 +96,14 @@ impl<T> ReplyStore<T> {
         Some(key)
     }
 
-    fn try_push(&mut self, key: Key<ReplyEntryTag>, item: T) -> Result<(), T> {
+    fn try_push(&mut self, key: Handle<ReplyEntryTag>, item: T) -> Result<(), T> {
         if self.entries.get(key).is_none() {
             return Err(item);
         }
         self.items.push_back(key.index() as usize, item)
     }
 
-    fn retire(&mut self, key: Key<ReplyEntryTag>) {
+    fn retire(&mut self, key: Handle<ReplyEntryTag>) {
         let Some(entry) = self.entries.get_mut(key) else {
             return;
         };

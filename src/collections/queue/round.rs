@@ -1,5 +1,7 @@
 const NONE: u32 = u32::MAX;
 
+use crate::collections;
+
 #[derive(Clone, Copy)]
 struct Links {
     next: u32,
@@ -26,14 +28,14 @@ impl Robin {
         }
     }
 
-    pub fn try_with_capacity(capacity: usize) -> Result<Self, crate::collections::AllocationError> {
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, collections::AllocationError> {
         use crate::ThreadBound;
         assert!(
             u32::try_from(capacity).is_ok(),
             "round-robin set capacity overflow"
         );
         Ok(Self {
-            links: crate::collections::try_box_with(capacity, |_| VACANT)?,
+            links: collections::BoxSliceExt::try_box_with(capacity, |_| VACANT)?,
             head: NONE,
             len: 0,
             _thread: ThreadBound::NEW,
@@ -96,12 +98,12 @@ impl Robin {
         true
     }
 
-    pub fn next_index(&mut self) -> Option<usize> {
+    pub fn next_index(&mut self) -> Option<u32> {
         if self.head == NONE {
             return None;
         }
-        let index = self.head as usize;
-        self.head = self.links[index].next;
+        let index = self.head;
+        self.head = self.links[index as usize].next;
         Some(index)
     }
 }

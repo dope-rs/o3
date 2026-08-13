@@ -1,6 +1,6 @@
 use std::{collections, ops};
 
-use crate::buffer::{self, bytes};
+use crate::buffer;
 
 mod sealed;
 
@@ -181,6 +181,12 @@ impl<T: AsRef<[u8]>> Segments<T> {
         None
     }
 
+    fn front_segment(&self, front_offset: usize) -> Option<(&T, ops::Range<usize>)> {
+        let segment = self.segments.front()?;
+        let len = segment.as_ref().len();
+        (front_offset < len).then_some((segment, front_offset..len))
+    }
+
     fn consume_front_up_to(
         &mut self,
         front_offset: &mut usize,
@@ -221,7 +227,7 @@ impl<T: AsRef<[u8]>> Segments<T> {
     }
 }
 
-impl Segments<bytes::Bytes<bytes::Retained>> {
+impl<T: AsRef<[u8]> + buffer::PrefixConsumer> Segments<T> {
     /// Consumes a prefix by advancing a partial front segment in place.
     pub fn try_consume_front(&mut self, mut amount: usize) -> bool {
         if amount > self.len {
@@ -236,9 +242,10 @@ impl Segments<bytes::Bytes<bytes::Retained>> {
                 let Some(segment) = self.segments.front_mut() else {
                     return false;
                 };
-                if !segment.try_advance(amount) {
+                let Ok(prefix) = segment.try_consume_prefix(amount) else {
                     return false;
-                }
+                };
+                prefix.commit();
                 self.len -= amount;
                 return true;
             }
@@ -323,6 +330,11 @@ impl<T: AsRef<[u8]>> Cursor<T> {
     pub fn contiguous_segment(&self, offset: usize, len: usize) -> Option<(&T, ops::Range<usize>)> {
         self.queue
             .contiguous_segment(self.front_offset, offset, len)
+    }
+
+    /// Returns the first logical segment and its unread physical range.
+    pub fn front_segment(&self) -> Option<(&T, ops::Range<usize>)> {
+        self.queue.front_segment(self.front_offset)
     }
 
     pub fn extend_range(&self, offset: usize, len: usize, output: &mut Vec<u8>) -> bool {

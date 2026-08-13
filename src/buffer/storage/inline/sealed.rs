@@ -88,6 +88,132 @@ pub struct Bytes<const CAP: usize = { super::CAPACITY }> {
     len: u8,
 }
 
+/// Fixed-capacity owned bytes with a length capable of addressing a `u16`
+/// sized allocation.
+#[derive(Clone, PartialEq, Eq)]
+pub struct WideBytes<const CAP: usize> {
+    bytes: [u8; CAP],
+    len: u16,
+}
+
+impl<const CAP: usize> WideBytes<CAP> {
+    const VALID: () = assert!(
+        CAP <= u16::MAX as usize,
+        "buffer::storage::inline::WideBytes CAP must fit u16"
+    );
+
+    #[must_use]
+    pub const fn new() -> Self {
+        let () = Self::VALID;
+        Self {
+            bytes: [0; CAP],
+            len: 0,
+        }
+    }
+
+    #[inline]
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, buffer::CapacityError> {
+        let mut inline = Self::new();
+        inline.try_extend(bytes)?;
+        Ok(inline)
+    }
+
+    #[inline]
+    pub fn try_extend(&mut self, bytes: &[u8]) -> Result<(), buffer::CapacityError> {
+        let start = usize::from(self.len);
+        let Some(end) = start.checked_add(bytes.len()) else {
+            return Err(buffer::CapacityError::new(usize::MAX, CAP));
+        };
+        if end > CAP {
+            return Err(buffer::CapacityError::new(end, CAP));
+        }
+        self.bytes[start..end].copy_from_slice(bytes);
+        self.len = end as u16;
+        Ok(())
+    }
+
+    #[inline]
+    pub fn try_extend_from_slices<const N: usize>(
+        &mut self,
+        slices: [&[u8]; N],
+    ) -> Result<(), buffer::CapacityError> {
+        let end = buffer::checked_append_len(usize::from(self.len), CAP, &slices)?;
+        let mut offset = usize::from(self.len);
+        for slice in slices {
+            let next = offset + slice.len();
+            self.bytes[offset..next].copy_from_slice(slice);
+            offset = next;
+        }
+        self.len = end as u16;
+        Ok(())
+    }
+
+    #[inline]
+    pub fn try_push(&mut self, byte: u8) -> Result<(), buffer::CapacityError> {
+        let len = usize::from(self.len);
+        if len == CAP {
+            return Err(buffer::CapacityError::new(len + 1, CAP));
+        }
+        self.bytes[len] = byte;
+        self.len += 1;
+        Ok(())
+    }
+
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.bytes[..usize::from(self.len)]
+    }
+
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl<const CAP: usize> Default for WideBytes<CAP> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const CAP: usize> AsRef<[u8]> for WideBytes<CAP> {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl<const CAP: usize> buffer::PrefixLength for WideBytes<CAP> {
+    #[inline]
+    fn prefix_len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<const CAP: usize> ops::Deref for WideBytes<CAP> {
+    type Target = [u8];
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl<const CAP: usize> fmt::Debug for WideBytes<CAP> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WideBytes")
+            .field("bytes", &self.bytes)
+            .field("len", &self.len)
+            .finish()
+    }
+}
+
 impl<const CAP: usize> Bytes<CAP> {
     const VALID: () = assert!(
         CAP <= u8::MAX as usize,
@@ -116,6 +242,22 @@ impl<const CAP: usize> Bytes<CAP> {
             return Err(buffer::CapacityError::new(end, CAP));
         }
         self.bytes[start..end].copy_from_slice(bytes);
+        self.len = end as u8;
+        Ok(())
+    }
+
+    #[inline]
+    pub fn try_extend_from_slices<const N: usize>(
+        &mut self,
+        slices: [&[u8]; N],
+    ) -> Result<(), buffer::CapacityError> {
+        let end = buffer::checked_append_len(usize::from(self.len), CAP, &slices)?;
+        let mut offset = usize::from(self.len);
+        for slice in slices {
+            let next = offset + slice.len();
+            self.bytes[offset..next].copy_from_slice(slice);
+            offset = next;
+        }
         self.len = end as u8;
         Ok(())
     }

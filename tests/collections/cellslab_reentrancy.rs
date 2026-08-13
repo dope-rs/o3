@@ -28,10 +28,12 @@ fn conditional_remove_visits_the_slot_once() {
     let slab: Cell<u32> = Cell::with_capacity(Capacity::new(1));
     let key = slab.insert(7).unwrap();
     assert!(
-        slab.remove_parts_with(key.parts(), |_| None::<()>)
+        slab.slots()
+            .remove_parts_with(key.parts(), |_| None::<()>)
             .is_none()
     );
     let (value, output) = slab
+        .slots()
         .remove_parts_with(key.parts(), |value| Some(*value + 1))
         .unwrap();
     assert_eq!((value, output), (7, 8));
@@ -79,7 +81,8 @@ fn panicking_callbacks_restore_the_slot() {
 
     let key = slab.insert(7).unwrap();
     let caught = catch_unwind(AssertUnwindSafe(|| {
-        slab.remove_parts_with(key.parts(), |_| -> Option<()> { panic!("remove") });
+        slab.slots()
+            .remove_parts_with(key.parts(), |_| -> Option<()> { panic!("remove") });
     }));
     assert!(caught.is_err());
     assert!(slab.keys().any(|current| current == key));

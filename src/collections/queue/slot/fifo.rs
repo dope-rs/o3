@@ -12,7 +12,7 @@ impl<T> Fifo<T> {
         }
     }
 
-    pub fn try_with_capacity(capacity: usize) -> Result<Self, crate::collections::AllocationError> {
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, collections::AllocationError> {
         Ok(Self {
             core: slot::Core::try_with_capacity(capacity)?,
         })
@@ -41,10 +41,6 @@ impl<T> Fifo<T> {
     pub fn pop_front(&mut self) -> Option<T> {
         let queue: slot::Write<'_, T> = self.core.write();
         queue.pop_front()
-    }
-
-    pub fn front(&self) -> Option<&T> {
-        self.core.front()
     }
 
     pub fn front_key_value(&self) -> Option<(usize, &T)> {

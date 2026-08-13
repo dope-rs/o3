@@ -1,6 +1,7 @@
 pub mod bytes;
 pub mod pool;
 pub mod queue;
+pub mod resident;
 mod sealed;
 pub mod storage;
 pub mod view;

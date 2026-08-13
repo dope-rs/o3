@@ -7,7 +7,7 @@ use crate::support::PinnedItem;
 #[test]
 fn dense_entries_stay_pinned_when_the_owner_moves() {
     let drops = Cell::new(0);
-    let entries: Slice<_> = [PinnedItem::new(1, &drops), PinnedItem::new(2, &drops)]
+    let mut entries: Slice<_> = [PinnedItem::new(1, &drops), PinnedItem::new(2, &drops)]
         .into_iter()
         .collect();
     assert_eq!(entries.len(), 2);
@@ -16,12 +16,15 @@ fn dense_entries_stay_pinned_when_the_owner_moves() {
     for entry in entries.iter() {
         entry.bind();
     }
+    entries.get_mut(0).unwrap().set(3);
+    assert_eq!(entries.get(0).unwrap().value(), 3);
+    assert!(entries.get_mut(2).is_none());
     assert!(entries.get(2).is_none());
 
     let moved = entries;
     assert_eq!(
         moved.iter().map(PinnedItem::value).collect::<Vec<_>>(),
-        [1, 2],
+        [3, 2],
     );
     drop(moved);
     assert_eq!(drops.get(), 2);

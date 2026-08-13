@@ -1,4 +1,4 @@
-use crate::collections::queue::slot;
+use crate::collections::{self, queue::slot};
 
 /// A fixed-capacity indexed queue with shared mutation and no borrowed values.
 pub struct Cell<T: Copy = ()> {
@@ -13,7 +13,7 @@ impl<T: Copy> Cell<T> {
         }
     }
 
-    pub fn try_with_capacity(capacity: usize) -> Result<Self, crate::collections::AllocationError> {
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, collections::AllocationError> {
         Ok(Self {
             core: slot::Core::try_with_capacity(capacity)?,
         })

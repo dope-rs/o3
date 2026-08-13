@@ -1,9 +1,9 @@
 use std::num::NonZeroUsize;
 
 use o3::buffer::{
-    PrefixConsumer,
+    self, PrefixConsumer,
     queue::Ring,
-    storage::Owned,
+    storage::{Owned, inline},
     write::{ByteSink, SliceWriter},
 };
 
@@ -33,6 +33,19 @@ fn one_generic_sink_covers_growing_exact_and_slice_outputs() {
     write_pair(&mut writer, b"one", b"two").unwrap();
     assert_eq!(writer.finish(), 6);
     assert_eq!(&bytes, b"onetwo");
+
+    let mut compact = inline::Bytes::<6>::new();
+    write_pair(&mut compact, b"one", b"two").unwrap();
+    assert_eq!(compact.as_slice(), b"onetwo");
+
+    let mut wide = inline::WideBytes::<6>::new();
+    write_pair(&mut wide, b"one", b"two").unwrap();
+    assert_eq!(wide.as_slice(), b"onetwo");
+
+    let pool = buffer::Pool::try_new(1, 6).unwrap();
+    let mut pooled = pool.try_acquire_buffer().unwrap();
+    write_pair(&mut pooled, b"one", b"two").unwrap();
+    assert_eq!(pooled.as_slice(), b"onetwo");
 }
 
 #[test]
@@ -83,6 +96,19 @@ fn aggregate_slice_failure_does_not_commit_a_prefix() {
     assert!(write_pair(&mut writer, b"abc", b"def").is_err());
     assert_eq!(writer.finish(), 0);
     assert_eq!(bytes, [0; 5]);
+
+    let mut compact = inline::Bytes::<5>::new();
+    assert!(write_pair(&mut compact, b"abc", b"def").is_err());
+    assert!(compact.as_slice().is_empty());
+
+    let mut wide = inline::WideBytes::<5>::new();
+    assert!(write_pair(&mut wide, b"abc", b"def").is_err());
+    assert!(wide.as_slice().is_empty());
+
+    let pool = buffer::Pool::try_new(1, 5).unwrap();
+    let mut pooled = pool.try_acquire_buffer().unwrap();
+    assert!(write_pair(&mut pooled, b"abc", b"def").is_err());
+    assert!(pooled.as_slice().is_empty());
 }
 
 #[test]

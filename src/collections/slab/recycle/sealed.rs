@@ -86,8 +86,8 @@ impl<T: recycle::Recycle> Pool<T> {
         use crate::collections::slab::Capacity;
 
         let capacity = capacity.raw();
-        let slots = Capacity::new(capacity)
-            .collect_box((0..capacity).map(|index| Slot::new(index, capacity, seed())));
+        let slots =
+            Capacity::new(capacity).box_with(|index| Slot::new(index as u32, capacity, seed()));
         Self {
             group: Group {
                 slots,
@@ -114,6 +114,21 @@ pub struct VacantEntry<'pool, T: recycle::Recycle> {
 }
 
 impl<'pool, T: recycle::Recycle> VacantEntry<'pool, T> {
+    /// Borrows the retained seed while this reservation exclusively owns it.
+    pub fn seed_mut(&mut self) -> &mut T::Seed {
+        let slot = self.pool.group.slot(self.index);
+        debug_assert!(slot.state.get() == State::Reserved);
+        // SAFETY: an armed reservation is the sole accessor to this seed until
+        // it is inserted or released.
+        match unsafe { &mut *slot.value.get() } {
+            Value::Seed(seed) => seed,
+            Value::Item(_) | Value::Transition => {
+                // SAFETY: reserved slots always contain their retained seed.
+                unsafe { hint::unreachable_unchecked() }
+            }
+        }
+    }
+
     pub fn insert_with(mut self, build: impl FnOnce(T::Seed) -> T) -> Lease<'pool, T> {
         let slot = self.pool.group.slot(self.index);
         debug_assert!(slot.state.get() == State::Reserved);

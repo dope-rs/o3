@@ -1,4 +1,4 @@
-use std::{error, fmt};
+use std::{error, fmt, io};
 
 use crate::buffer;
 
@@ -35,13 +35,11 @@ impl fmt::Display for CreateError {
 
 impl error::Error for CreateError {}
 
-impl From<CreateError> for std::io::Error {
+impl From<CreateError> for io::Error {
     fn from(error: CreateError) -> Self {
         match error {
-            CreateError::Layout(error) => {
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, error)
-            }
-            CreateError::Allocation(_) => std::io::ErrorKind::OutOfMemory.into(),
+            CreateError::Layout(error) => io::Error::new(io::ErrorKind::InvalidInput, error),
+            CreateError::Allocation(_) => io::ErrorKind::OutOfMemory.into(),
         }
     }
 }

@@ -1,6 +1,6 @@
 use std::{fmt, hash, ops};
 
-use crate::buffer::{self, RangeExt as _, storage, write};
+use crate::buffer::{self, RangeExt as _, resident, storage, write};
 
 /// A uniquely owned, non-growing byte allocation. `CAP == 0` selects an exact
 /// runtime capacity; a nonzero `CAP` fixes it in the type without added storage.
@@ -36,7 +36,7 @@ impl Owned {
 
     pub fn try_filled(len: usize, byte: u8) -> Result<Self, buffer::CapacityError> {
         let mut value = Self::try_with_capacity(len)?;
-        value.storage.fill(byte);
+        value.storage.bytes_mut().fill(byte);
         value.len = len as u32;
         Ok(value)
     }
@@ -77,7 +77,7 @@ impl<const CAP: u32> Owned<CAP> {
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        self.storage.initialized_mut(self.len as usize)
+        self.storage.bytes_mut().initialized(self.len as usize)
     }
 
     pub fn try_extend(&mut self, src: &[u8]) -> Result<(), buffer::CapacityError> {
@@ -89,7 +89,7 @@ impl<const CAP: u32> Owned<CAP> {
         if end > capacity {
             return Err(buffer::CapacityError::new(end, capacity));
         }
-        self.storage.copy_from_slice(start, src);
+        self.storage.bytes_mut().copy_from_slice(start, src);
         self.len = end as u32;
         Ok(())
     }
@@ -111,7 +111,7 @@ impl<const CAP: u32> Owned<CAP> {
         }
         let mut offset = start;
         for slice in slices {
-            self.storage.copy_from_slice(offset, slice);
+            self.storage.bytes_mut().copy_from_slice(offset, slice);
             offset += slice.len();
         }
         self.len = end as u32;
@@ -127,13 +127,13 @@ impl<const CAP: u32> Owned<CAP> {
                 capacity,
             ));
         }
-        self.storage.write_byte(offset, byte);
+        self.storage.bytes_mut().write_byte(offset, byte);
         self.len += 1;
         Ok(())
     }
 
     pub fn spare_writer(&mut self) -> write::SpareWriter<'_> {
-        self.storage.spare_writer(&mut self.len)
+        self.storage.bytes_mut().spare_writer(&mut self.len)
     }
 
     #[must_use]
@@ -163,6 +163,7 @@ impl<const CAP: u32> Clone for Owned<CAP> {
         if self.len != 0 {
             clone
                 .storage
+                .bytes_mut()
                 .copy_from_allocation(0, &self.storage, 0, self.len());
             clone.len = self.len;
         }
@@ -235,6 +236,8 @@ pub struct Shared {
     owner: storage::raw::Owner,
 }
 
+const _: () = assert!(size_of::<Shared>() == size_of::<usize>() * 3);
+
 impl Shared {
     #[must_use]
     pub const fn new() -> Self {
@@ -262,6 +265,15 @@ impl Shared {
             ptr,
             len,
             owner: storage::raw::Owner::from_allocation(allocation),
+        }
+    }
+
+    pub(in crate::buffer) fn from_resident_span(span: storage::raw::Span<resident::Lease>) -> Self {
+        let (allocation, ptr, len) = span.into_parts();
+        Self {
+            ptr,
+            len,
+            owner: storage::raw::Owner::from_resident(allocation),
         }
     }
 
@@ -296,13 +308,8 @@ impl Shared {
         }
         match Span::copy_from_slice(s) {
             Some(span) => Self::from_span(span),
-            None => Self::copy_large(s),
+            None => Self::from_vec_owner(s.to_vec()),
         }
-    }
-
-    #[cold]
-    fn copy_large(s: &[u8]) -> Self {
-        Self::from_vec_owner(s.to_vec())
     }
 
     pub fn len(&self) -> usize {

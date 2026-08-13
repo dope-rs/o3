@@ -67,6 +67,13 @@ impl Bytes<Retained> {
         Self::from(storage::Shared::copy_from_slice(slice))
     }
 
+    pub fn resident_bytes(&self) -> usize {
+        match &self.storage.repr {
+            RetainedRepr::Frozen { frozen, .. } => frozen.capacity(),
+            RetainedRepr::Shared(shared) => shared.resident_bytes(),
+        }
+    }
+
     #[must_use]
     pub fn into_shared(self) -> storage::Shared {
         match self.storage.repr {

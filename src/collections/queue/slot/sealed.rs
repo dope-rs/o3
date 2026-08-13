@@ -1,5 +1,7 @@
 use std::{cell, marker, mem, ops};
 
+use crate::collections;
+
 const NONE: u32 = u32::MAX;
 
 pub struct ExclusiveMode;
@@ -14,14 +16,15 @@ struct Node<T> {
 struct Nodes<T>(Box<[Node<T>]>);
 
 impl<T> Nodes<T> {
-    fn try_with_capacity(capacity: usize) -> Result<Self, crate::collections::AllocationError> {
+    fn try_with_capacity(capacity: usize) -> Result<Self, collections::AllocationError> {
         assert!(
             u32::try_from(capacity).is_ok(),
             "slot queue capacity overflow"
         );
-        Ok(Self(crate::collections::try_box_with(capacity, |index| {
-            Node::vacant(index as u32)
-        })?))
+        Ok(Self(collections::BoxSliceExt::try_box_with(
+            capacity,
+            |index| Node::vacant(index as u32),
+        )?))
     }
 
     fn is_vacant(&self, index: usize) -> bool {
@@ -150,9 +153,7 @@ pub struct Core<T, Mode> {
 }
 
 impl<T, Mode> Core<T, Mode> {
-    pub(super) fn try_with_capacity(
-        capacity: usize,
-    ) -> Result<Self, crate::collections::AllocationError> {
+    pub(super) fn try_with_capacity(capacity: usize) -> Result<Self, collections::AllocationError> {
         Ok(Self {
             entries: Nodes::try_with_capacity(capacity)?,
             links: Links::empty(),
@@ -207,11 +208,6 @@ impl<T, Mode> Core<T, Mode> {
 impl<T> Core<T, ExclusiveMode> {
     pub(super) fn write(&mut self) -> Write<'_, T> {
         Write { core: self }
-    }
-
-    pub(super) fn front(&self) -> Option<&T> {
-        let index = self.links.head()?;
-        Some(unsafe { (*self.entries.get_unchecked(index).value.get()).assume_init_ref() })
     }
 
     pub(super) fn front_key_value(&self) -> Option<(usize, &T)> {

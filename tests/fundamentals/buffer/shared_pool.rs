@@ -44,6 +44,17 @@ fn frozen_slot_outlives_the_pool_handle() {
 }
 
 #[test]
+fn initialized_lease_outlives_the_pool_handle() {
+    let mut lease = {
+        let pool = buffer::Pool::<pool::state::Initialized>::try_new(1, 8).unwrap();
+        pool.try_acquire().expect("initialized slot")
+    };
+    lease.spare_mut()[..4].copy_from_slice(b"body");
+    lease.try_advance(4).expect("slot capacity");
+    assert_eq!(lease.as_slice(), b"body");
+}
+
+#[test]
 fn invalid_layout_is_reported_before_allocation() {
     assert!(matches!(
         buffer::Pool::<pool::state::Uninitialized>::try_new(1, 0),
@@ -110,4 +121,12 @@ fn initialized_slots_expose_spare_capacity_without_clearing_on_reuse() {
     reused.spare_mut()[..3].copy_from_slice(b"new");
     reused.try_advance(3).expect("slot capacity");
     assert_eq!(reused.freeze().as_ref(), b"new");
+}
+
+#[test]
+fn pooled_handles_keep_their_compact_layouts() {
+    use std::mem::size_of;
+
+    assert_eq!(size_of::<buffer::Pool>(), size_of::<usize>());
+    assert_eq!(size_of::<buffer::Lease>(), 2 * size_of::<usize>());
 }
