@@ -1,6 +1,6 @@
 use std::{fmt, hash, ops};
 
-use crate::buffer::{self, RangeExt as _, storage};
+use crate::buffer::{self, RangeExt as _, pool, storage};
 
 #[doc(hidden)]
 pub trait Storage: buffer::Seal {
@@ -34,6 +34,14 @@ enum RetainedRepr {
 #[derive(Clone)]
 pub struct Retained {
     repr: RetainedRepr,
+}
+
+/// Pool-backed bytes whose allocation lifetime remains tied to the pool.
+#[derive(Clone)]
+pub struct Pooled<'pool> {
+    frozen: buffer::Frozen<pool::Borrowed<'pool>>,
+    start: u32,
+    len: u32,
 }
 
 /// Read-only bytes that can be retained beyond their current callback.
@@ -110,6 +118,37 @@ impl Bytes<Retained> {
     }
 }
 
+impl Bytes<Pooled<'_>> {
+    pub fn resident_bytes(&self) -> usize {
+        self.storage.frozen.capacity()
+    }
+
+    #[must_use]
+    pub fn get(mut self, range: ops::Range<usize>) -> Option<Self> {
+        self.storage.try_slice_in_place(range).then_some(self)
+    }
+
+    pub fn try_advance(&mut self, n: usize) -> bool {
+        let len = self.storage.len();
+        self.storage.try_slice_in_place(n..len)
+    }
+
+    #[must_use]
+    pub fn into_shared(self) -> storage::Shared {
+        if self.storage.len == 0 {
+            return storage::Shared::new();
+        }
+        let span = storage::raw::Span::copy_from_bounded_slice(self.as_slice(), self.storage.len);
+        storage::Shared::from_span(span)
+    }
+
+    fn consume_valid(&mut self, amount: usize) {
+        debug_assert!(amount <= self.len());
+        self.storage.start += amount as u32;
+        self.storage.len -= amount as u32;
+    }
+}
+
 impl buffer::PrefixConsumer for Bytes<Retained> {
     fn consume_validated_prefix(&mut self, proof: buffer::PrefixProof) {
         self.consume_valid(proof.amount());
@@ -140,6 +179,21 @@ impl Retained {
             }
             RetainedRepr::Shared(shared) => shared.try_slice_in_place(range),
         }
+    }
+}
+
+impl Pooled<'_> {
+    fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    fn try_slice_in_place(&mut self, range: ops::Range<usize>) -> bool {
+        if !range.is_within(self.len()) {
+            return false;
+        }
+        self.start += range.start as u32;
+        self.len = range.len() as u32;
+        true
     }
 }
 
@@ -188,6 +242,14 @@ impl Storage for Retained {
     }
 }
 
+impl buffer::Seal for Pooled<'_> {}
+
+impl Storage for Pooled<'_> {
+    fn as_slice(&self) -> &[u8] {
+        &self.frozen.as_slice()[self.start as usize..(self.start + self.len) as usize]
+    }
+}
+
 impl buffer::Seal for Bytes<Borrowed<'_>> {}
 
 impl Retainable for Bytes<Borrowed<'_>> {
@@ -212,6 +274,32 @@ impl Retainable for Bytes<Retained> {
 
     fn into_retained(self) -> Bytes<Retained> {
         self
+    }
+}
+
+impl buffer::Seal for Bytes<Pooled<'_>> {}
+
+impl Retainable for Bytes<Pooled<'_>> {
+    fn is_empty(&self) -> bool {
+        self.storage.frozen.is_empty() || self.storage.len == 0
+    }
+
+    fn into_retained(self) -> Bytes<Retained> {
+        Bytes {
+            storage: Retained {
+                repr: RetainedRepr::Frozen {
+                    frozen: self.storage.frozen.into_owned(),
+                    start: self.storage.start,
+                    len: self.storage.len,
+                },
+            },
+        }
+    }
+}
+
+impl buffer::PrefixConsumer for Bytes<Pooled<'_>> {
+    fn consume_validated_prefix(&mut self, proof: buffer::PrefixProof) {
+        self.consume_valid(proof.amount());
     }
 }
 
@@ -301,6 +389,19 @@ impl From<buffer::Frozen> for Bytes<Retained> {
                     start: 0,
                     len,
                 },
+            },
+        }
+    }
+}
+
+impl<'pool> From<buffer::Frozen<pool::Borrowed<'pool>>> for Bytes<Pooled<'pool>> {
+    fn from(value: buffer::Frozen<pool::Borrowed<'pool>>) -> Self {
+        let len = value.len() as u32;
+        Self {
+            storage: Pooled {
+                frozen: value,
+                start: 0,
+                len,
             },
         }
     }

@@ -383,10 +383,15 @@ impl Span<()> {
         let Ok(len) = u32::try_from(slice.len()) else {
             return None;
         };
+        Some(Self::copy_from_bounded_slice(slice, len))
+    }
+
+    pub(in crate::buffer) fn copy_from_bounded_slice(slice: &[u8], len: u32) -> Self {
+        debug_assert_eq!(slice.len(), len as usize);
         let mut allocation = AllocationMut::with_capacity_u32(len);
         allocation.bytes_mut().copy_from_slice(0, slice);
         // SAFETY: the allocation capacity is exactly `len`.
-        Some(unsafe { Self::new_unchecked(allocation.freeze(), 0, len) })
+        unsafe { Self::new_unchecked(allocation.freeze(), 0, len) }
     }
 }
 

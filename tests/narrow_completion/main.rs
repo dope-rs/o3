@@ -3,7 +3,6 @@ mod sealed;
 use std::mem;
 
 use o3::collections::completion::narrow::{self, Arena, Echo};
-
 pub use sealed::{Owner, allocation_count};
 
 #[test]

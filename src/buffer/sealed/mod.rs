@@ -41,7 +41,15 @@ impl<S: state::State> Pool<S, pool::RuntimeCapacity> {
 
 impl<S: state::State, C: pool::Capacity> Pool<S, C> {
     pub fn try_acquire(&self) -> Option<Lease<S, C>> {
-        let index = core::Core::acquire(self.core)?;
+        let index = core::Core::acquire_owned(self.core)?;
+        Some(Lease::new(self.core, index))
+    }
+
+    /// Acquires a slot whose allocation lifetime is proven by this pool borrow.
+    /// Unlike [`try_acquire`](Self::try_acquire), this does not retain the pool
+    /// allocation.
+    pub fn try_acquire_borrowed(&self) -> Option<Lease<S, C, pool::Borrowed<'_>>> {
+        let index = core::Core::acquire_borrowed(self.core)?;
         Some(Lease::new(self.core, index))
     }
 
@@ -92,6 +100,11 @@ impl<C: pool::Capacity> Pool<state::Uninitialized, C> {
     #[must_use]
     pub fn try_acquire_buffer(&self) -> Option<pool::Cursor<C>> {
         self.try_acquire().map(pool::Cursor::new)
+    }
+
+    #[must_use]
+    pub fn try_acquire_borrowed_buffer(&self) -> Option<pool::BorrowedCursor<'_, C>> {
+        self.try_acquire_borrowed().map(pool::BorrowedCursor::new)
     }
 }
 

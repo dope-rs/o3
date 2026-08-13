@@ -7,15 +7,18 @@ use crate::buffer::{
     write,
 };
 
-pub struct Lease<S: state::State = state::Uninitialized, C: pool::Capacity = pool::RuntimeCapacity>
-{
+pub struct Lease<
+    S: state::State = state::Uninitialized,
+    C: pool::Capacity = pool::RuntimeCapacity,
+    O: pool::Ownership = pool::Owned,
+> {
     core: ptr::NonNull<core::Core>,
     index: u32,
     len: u32,
-    marker: marker::PhantomData<(S, C, *mut ())>,
+    marker: marker::PhantomData<(S, C, O, *mut ())>,
 }
 
-impl<S: state::State, C: pool::Capacity> Lease<S, C> {
+impl<S: state::State, C: pool::Capacity, O: pool::Ownership> Lease<S, C, O> {
     pub(super) fn new(core: ptr::NonNull<core::Core>, index: u32) -> Self {
         Self {
             core,
@@ -53,14 +56,23 @@ impl<S: state::State, C: pool::Capacity> Lease<S, C> {
         // SAFETY: `&mut self` uniquely borrows the lease slot and initialized prefix.
         unsafe { slice::from_raw_parts_mut(core::Core::data(self.core, self.index), self.len()) }
     }
+}
 
+impl<S: state::State, C: pool::Capacity> Lease<S, C, pool::Owned> {
     pub fn freeze(self) -> sealed::Frozen {
         let this = mem::ManuallyDrop::new(self);
         sealed::Frozen::new(this.core, this.index, this.len)
     }
 }
 
-impl<C: pool::Capacity> Lease<state::Uninitialized, C> {
+impl<'pool, S: state::State, C: pool::Capacity> Lease<S, C, pool::Borrowed<'pool>> {
+    pub fn freeze(self) -> sealed::Frozen<pool::Borrowed<'pool>> {
+        let this = mem::ManuallyDrop::new(self);
+        sealed::Frozen::new(this.core, this.index, this.len)
+    }
+}
+
+impl<C: pool::Capacity, O: pool::Ownership> Lease<state::Uninitialized, C, O> {
     pub fn try_push(&mut self, byte: u8) -> Result<(), buffer::CapacityError> {
         let written = self.len();
         let capacity = self.capacity();
@@ -139,7 +151,7 @@ impl<C: pool::Capacity> Lease<state::Uninitialized, C> {
     }
 }
 
-impl<C: pool::Capacity> Lease<state::Initialized, C> {
+impl<C: pool::Capacity, O: pool::Ownership> Lease<state::Initialized, C, O> {
     /// Returns initialized capacity after the logical end.
     ///
     /// Reacquired slots retain values written by their previous lease.
@@ -168,7 +180,7 @@ impl<C: pool::Capacity> Lease<state::Initialized, C> {
     }
 }
 
-impl<S: state::State, C: pool::Capacity> Drop for Lease<S, C> {
+impl<S: state::State, C: pool::Capacity, O: pool::Ownership> Drop for Lease<S, C, O> {
     fn drop(&mut self) {
         // SAFETY: this lease owns one live reference to its exact slot.
         let core = unsafe { self.core.as_ref() };
@@ -180,18 +192,22 @@ impl<S: state::State, C: pool::Capacity> Drop for Lease<S, C> {
         slot.next.set(core.free.get());
         core.free.set(self.index);
         core.free_len.set(core.free_len.get() + 1);
-        if !core.refs.release() {
-            return;
+        if O::RETAINS_CORE && core.refs.release() {
+            // SAFETY: the released slot also held the final core reference.
+            let layout = unsafe {
+                alloc::Layout::from_size_align_unchecked(
+                    core.allocation_size,
+                    align_of::<core::Core>(),
+                )
+            };
+            unsafe { alloc::dealloc(self.core.as_ptr().cast(), layout) };
         }
-        // SAFETY: the released slot also held the final core reference.
-        let layout = unsafe {
-            alloc::Layout::from_size_align_unchecked(core.allocation_size, align_of::<core::Core>())
-        };
-        unsafe { alloc::dealloc(self.core.as_ptr().cast(), layout) };
     }
 }
 
-impl<S: state::State, C: pool::Capacity> buffer::PrefixLength for Lease<S, C> {
+impl<S: state::State, C: pool::Capacity, O: pool::Ownership> buffer::PrefixLength
+    for Lease<S, C, O>
+{
     fn prefix_len(&self) -> usize {
         self.len as usize
     }

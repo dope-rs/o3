@@ -290,7 +290,23 @@ impl ByteSink for queue::Ring {
     }
 }
 
-impl<C: pool::Capacity> ByteSink for pool::Cursor<C> {
+impl<C: pool::Capacity, O: pool::Ownership> ByteSink for pool::Cursor<C, O> {
+    type Error = buffer::CapacityError;
+
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+        self.try_push(byte)
+    }
+
+    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.try_extend(bytes)
+    }
+
+    fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
+        self.try_extend_from_slices(slices)
+    }
+}
+
+impl<C: pool::Capacity> ByteSink for pool::BorrowedCursor<'_, C> {
     type Error = buffer::CapacityError;
 
     fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
