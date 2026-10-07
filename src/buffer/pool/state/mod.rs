@@ -1,12 +1,11 @@
 mod seal;
-
-pub(crate) use seal::Seal;
+pub(in crate::buffer::pool::state) use seal::Seal;
 
 #[doc(hidden)]
 pub struct Initialized;
 
 #[doc(hidden)]
-pub struct Uninitialized;
+pub struct Uninit;
 
 #[doc(hidden)]
 pub trait State: Seal {
@@ -19,8 +18,8 @@ impl State for Initialized {
     const ZEROED: bool = true;
 }
 
-impl Seal for Uninitialized {}
+impl Seal for Uninit {}
 
-impl State for Uninitialized {
+impl State for Uninit {
     const ZEROED: bool = false;
 }

@@ -1,12 +1,15 @@
 [package]
 name = "o3"
-version = "0.16.3"
+version = "0.20.0"
 edition = "2024"
+rust-version = "1.98"
+resolver = "3"
 license = "MIT"
-description = "shared-nothing primitives"
-readme = "README.md"
 repository = "https://github.com/dope-rs/o3"
+description = "shared-nothing primitives"
 documentation = "https://docs.rs/o3"
 keywords = ["bytes", "buffer", "single-threaded", "no-share", "zero-copy"]
 categories = ["data-structures", "memory-management"]
-rust-version = "1.95"
+
+[profile.release]
+panic = "abort"

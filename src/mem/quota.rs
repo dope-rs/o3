@@ -1,32 +1,38 @@
-use std::{cell, marker};
+use std::marker;
+
+use crate::{base::cell::region, mem::lease};
 
 /// A single-threaded counter from which refundable reservations are drawn.
 #[repr(transparent)]
 pub struct Ledger<Tag = ()> {
-    remaining: cell::Cell<usize>,
+    remaining: crate::mem::raw::Account,
     tag: marker::PhantomData<fn(Tag) -> Tag>,
-    thread: crate::ThreadBound,
+}
+
+/// Returns one unit to the exact ledger which created its lease.
+#[repr(transparent)]
+pub struct Return<'source, Tag = ()> {
+    source: &'source crate::mem::raw::Account,
+    tag: marker::PhantomData<fn(Tag) -> Tag>,
 }
 
 /// A reservation which can split exclusive child leases through shared access.
 #[must_use = "unused quota is returned when the shared reservation is dropped"]
 #[repr(C)]
-pub struct Shared<'source, Tag = ()> {
-    source: &'source cell::Cell<usize>,
+pub struct Shared<'source, Tag = (), M = lease::Sealed> {
+    source: &'source crate::mem::raw::Account,
     remaining: Ledger<Tag>,
+    mode: marker::PhantomData<M>,
 }
 
 /// An exclusive consumable reservation.
 #[must_use = "unused quota is returned when the lease is dropped"]
 #[repr(C)]
 pub struct Lease<'source, Tag = ()> {
-    source: &'source cell::Cell<usize>,
+    source: &'source crate::mem::raw::Account,
     remaining: usize,
     tag: marker::PhantomData<fn(Tag) -> Tag>,
 }
-
-/// Linear proof that one unit was consumed from an exclusively borrowed lease.
-pub struct Permit<'lease>(marker::PhantomData<&'lease mut ()>);
 
 /// The result of conditionally admitting one item under quota.
 #[must_use = "admission reports whether work was acquired or quota was exhausted"]
@@ -36,12 +42,24 @@ pub enum Admission<T> {
     Exhausted,
 }
 
+/// Whether an attempted quota acquisition produced one item.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Acquire {
+    Item,
+    Empty,
+}
+
+#[must_use = "take reports whether the requested quota was consumed"]
+pub enum Take {
+    Taken,
+    Exhausted,
+}
+
 impl<Tag> Ledger<Tag> {
-    pub const fn new(remaining: usize) -> Self {
+    pub const fn new(left: usize) -> Self {
         Self {
-            remaining: cell::Cell::new(remaining),
+            remaining: crate::mem::raw::Account::new(left),
             tag: marker::PhantomData,
-            thread: crate::ThreadBound::NEW,
         }
     }
 
@@ -50,165 +68,123 @@ impl<Tag> Ledger<Tag> {
     }
 
     /// Replaces the available quota after every reservation has ended.
-    pub fn reset(&mut self, remaining: usize) {
-        self.remaining.set(remaining);
+    pub fn reset(&mut self, left: usize) {
+        self.remaining = crate::mem::raw::Account::new(left);
     }
 
-    pub fn take(&self) -> bool {
-        let Some(remaining) = self.remaining.get().checked_sub(1) else {
-            return false;
-        };
-        self.remaining.set(remaining);
-        true
+    pub fn take(&self) -> Take {
+        self.remaining.reserve(1)
+    }
+
+    /// Reserves one refundable unit whose owner may consume its parts.
+    pub fn open(&self) -> Option<crate::mem::Lease<Return<'_, Tag>, lease::Open>> {
+        Some(crate::mem::Lease::open(self.reserve()?, ()))
+    }
+
+    fn reserve(&self) -> Option<Return<'_, Tag>> {
+        if let Take::Exhausted = self.take() {
+            return None;
+        }
+        Some(Return {
+            source: &self.remaining,
+            tag: marker::PhantomData,
+        })
     }
 
     pub fn admit_with<T>(&self, acquire: impl FnOnce() -> Option<T>) -> Admission<T> {
-        let remaining = self.remaining.get();
-        if remaining == 0 {
+        let Some(reserved) = self.reserve() else {
             return Admission::Exhausted;
-        }
-        self.remaining.set(remaining - 1);
+        };
         let Some(value) = acquire() else {
-            self.remaining.set(self.remaining.get() + 1);
+            crate::mem::Return::return_item(reserved, ());
             return Admission::Empty;
         };
         Admission::Item(value)
     }
 
-    fn counter(&self) -> &cell::Cell<usize> {
-        &self.remaining
+    pub fn apply(&self, run: impl FnOnce() -> Acquire) {
+        let _ = self.admit_with(|| (run() == Acquire::Item).then_some(()));
     }
 }
 
-impl<'source, Tag> Shared<'source, Tag> {
-    pub fn reserve_exact<SourceTag>(
-        source: &'source Ledger<SourceTag>,
-        count: usize,
-    ) -> Option<Self> {
+impl<'source, Tag, M> Shared<'source, Tag, M> {
+    pub fn reserve<SourceTag>(source: &'source Ledger<SourceTag>, count: usize) -> Option<Self> {
+        let source = &source.remaining;
+        if let Take::Exhausted = source.reserve(count) {
+            return None;
+        }
         Some(Self {
-            source: source.counter(),
-            remaining: Ledger::new(reserve_exact(source.counter(), count)?),
+            source,
+            remaining: Ledger::new(count),
+            mode: marker::PhantomData,
         })
     }
 
-    pub fn reserve_up_to<SourceTag>(source: &'source Ledger<SourceTag>, limit: usize) -> Self {
+    pub fn reserve_up<SourceTag>(source: &'source Ledger<SourceTag>, limit: usize) -> Self {
         Self {
-            source: source.counter(),
-            remaining: Ledger::new(reserve_up_to(source.counter(), limit)),
+            source: &source.remaining,
+            remaining: Ledger::new(source.remaining.reserve_up(limit)),
+            mode: marker::PhantomData,
         }
     }
 
     pub fn reserve_all<SourceTag>(source: &'source Ledger<SourceTag>) -> Self {
-        Self::reserve_up_to(source, usize::MAX)
-    }
-
-    pub fn lease_exact<ChildTag>(&self, count: usize) -> Option<Lease<'_, ChildTag>> {
-        let source = self.remaining.counter();
-        Some(Lease {
-            source,
-            remaining: reserve_exact(source, count)?,
-            tag: marker::PhantomData,
-        })
+        Self::reserve_up(source, usize::MAX)
     }
 
     pub fn lease_up_to<ChildTag>(&self, limit: usize) -> Lease<'_, ChildTag> {
-        let source = self.remaining.counter();
-        Lease {
-            source,
-            remaining: reserve_up_to(source, limit),
-            tag: marker::PhantomData,
-        }
-    }
-
-    pub fn lease_all<ChildTag>(&self) -> Lease<'_, ChildTag> {
-        let source = self.remaining.counter();
-        Lease {
-            source,
-            remaining: reserve_up_to(source, usize::MAX),
-            tag: marker::PhantomData,
-        }
+        Lease::reserve_up(&self.remaining, limit)
     }
 
     pub fn remaining(&self) -> usize {
         self.remaining.remaining()
     }
 
-    pub fn spend(&mut self, count: usize) {
-        let remaining = self.remaining.remaining();
-        assert!(count <= remaining, "quota consumption exceeds reservation");
-        self.remaining.reset(remaining - count);
+    /// Returns this reservation's unused quota after every child lease has ended.
+    pub fn refund(self) {
+        drop(self);
+    }
+}
+
+impl<Tag> Shared<'_, Tag, lease::Open> {
+    /// Settles only the unused proof issued inside this reservation's scope.
+    pub fn with<C, R>(
+        self,
+        context: C,
+        run: impl for<'id> FnOnce(
+            C,
+            region::Token<region::Identity<'id>>,
+        ) -> (R, crate::mem::raw::Unused<'id>),
+    ) -> R {
+        region::Token::scope(|token| {
+            let reserved = token.bind(self);
+            let (output, unused) = run(context, token);
+            let (amount, mut token) = unused.into_inner();
+            let reserved = token.borrow_mut(&reserved);
+            reserved.remaining.reset(amount);
+            output
+        })
     }
 }
 
 impl<'source, Tag> Lease<'source, Tag> {
     /// Reserves an exclusive lease tied to `source`.
     ///
-    /// A child lease is similarly tied to the borrow of its shared parent:
-    ///
-    /// ```compile_fail
-    /// use o3::mem::quota::{Lease, Shared};
-    ///
-    /// fn widen<'parent, 'child>(parent: &'child Shared<'parent>) -> Lease<'parent> {
-    ///     parent.lease_all()
-    /// }
-    /// ```
-    pub fn reserve_exact<SourceTag>(
-        source: &'source Ledger<SourceTag>,
-        count: usize,
-    ) -> Option<Self> {
-        Some(Self {
-            source: source.counter(),
-            remaining: reserve_exact(source.counter(), count)?,
-            tag: marker::PhantomData,
-        })
-    }
-
-    pub fn reserve_up_to<SourceTag>(source: &'source Ledger<SourceTag>, limit: usize) -> Self {
+    /// A child lease is similarly tied to the borrow of its shared parent.
+    pub fn reserve_up<SourceTag>(source: &'source Ledger<SourceTag>, limit: usize) -> Self {
         Self {
-            source: source.counter(),
-            remaining: reserve_up_to(source.counter(), limit),
+            source: &source.remaining,
+            remaining: source.remaining.reserve_up(limit),
             tag: marker::PhantomData,
         }
     }
 
     pub fn reserve_all<SourceTag>(source: &'source Ledger<SourceTag>) -> Self {
-        Self::reserve_up_to(source, usize::MAX)
+        Self::reserve_up(source, usize::MAX)
     }
 
     pub const fn remaining(&self) -> usize {
         self.remaining
-    }
-
-    pub fn spend(&mut self, count: usize) {
-        assert!(
-            count <= self.remaining,
-            "quota consumption exceeds reservation"
-        );
-        self.remaining -= count;
-    }
-
-    pub fn take(&mut self) -> bool {
-        if self.remaining == 0 {
-            return false;
-        }
-        self.remaining -= 1;
-        true
-    }
-
-    /// Consumes one unit and keeps the lease mutably borrowed while the returned
-    /// proof is live.
-    ///
-    /// ```compile_fail
-    /// use o3::mem::quota::{Lease, Ledger};
-    ///
-    /// let ledger = Ledger::new(2);
-    /// let mut lease = Lease::reserve_all(&ledger);
-    /// let permit = lease.take_permit().unwrap();
-    /// let _ = lease.take();
-    /// drop(permit);
-    /// ```
-    pub fn take_permit(&mut self) -> Option<Permit<'_>> {
-        self.take().then_some(Permit(marker::PhantomData))
     }
 
     pub fn admit_with<T>(&mut self, acquire: impl FnOnce() -> Option<T>) -> Admission<T> {
@@ -223,39 +199,23 @@ impl<'source, Tag> Lease<'source, Tag> {
     }
 }
 
-impl<Tag> Drop for Shared<'_, Tag> {
-    fn drop(&mut self) {
-        refund(self.source, self.remaining.remaining());
-    }
-}
-
 impl<Tag> Drop for Lease<'_, Tag> {
     fn drop(&mut self) {
-        refund(self.source, self.remaining);
+        self.source.refund_spare(self.remaining);
     }
 }
 
-fn reserve_exact(source: &cell::Cell<usize>, count: usize) -> Option<usize> {
-    let available = source.get();
-    let remaining = available.checked_sub(count)?;
-    if count != 0 {
-        source.set(remaining);
+impl<Tag, M> Drop for Shared<'_, Tag, M> {
+    fn drop(&mut self) {
+        self.source.refund_spare(self.remaining.remaining());
     }
-    Some(count)
 }
 
-fn reserve_up_to(source: &cell::Cell<usize>, limit: usize) -> usize {
-    let available = source.get();
-    let reserved = available.min(limit);
-    if reserved != 0 {
-        source.set(available - reserved);
-    }
-    reserved
-}
+impl<Tag> crate::mem::Return for Return<'_, Tag> {
+    type Item = ();
 
-fn refund(source: &cell::Cell<usize>, unused: usize) {
-    if unused != 0 {
-        source.set(source.get() + unused);
+    fn return_item(self, (): Self::Item) {
+        self.source.refund(1);
     }
 }
 
@@ -264,7 +224,13 @@ const _: () = {
 
     assert!(mem::size_of::<Ledger>() == mem::size_of::<usize>());
     assert!(mem::align_of::<Ledger>() == mem::align_of::<usize>());
+    assert!(mem::size_of::<Return<'static>>() == mem::size_of::<usize>());
+    assert!(mem::size_of::<crate::mem::Lease<Return<'static>>>() == mem::size_of::<usize>());
+    assert!(
+        mem::size_of::<Option<crate::mem::Lease<Return<'static>>>>() == mem::size_of::<usize>()
+    );
     assert!(mem::size_of::<Shared<'static>>() == 2 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Shared<'static, (), lease::Open>>() == 2 * mem::size_of::<usize>());
     assert!(mem::size_of::<Lease<'static>>() == 2 * mem::size_of::<usize>());
     assert!(mem::size_of::<Admission<usize>>() == 2 * mem::size_of::<usize>());
 };

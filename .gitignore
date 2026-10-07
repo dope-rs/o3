@@ -1,7 +1,7 @@
 # Rust build artifacts
 /target/
 
-# Cargo.lock: this crate is a library, so ignore it.
+# Cargo.lock: this workspace contains libraries only, so ignore it.
 # (Remove this line if you add a binary that needs reproducible builds.)
 Cargo.lock
 

@@ -1,49 +1,50 @@
-use std::{error, fmt};
+pub use owned::{
+    Owned,
+    bytes::Bytes,
+    exact::Exact,
+    nonempty::{NonEmpty, Zero},
+};
+pub use shared::{Shared, str::Str};
 
-use crate::buffer;
+use crate::buffer::write::consume;
 
+pub(in crate::buffer) mod alloc;
+pub mod backing;
 pub mod inline;
-pub(in crate::buffer) mod raw;
-mod sealed;
-pub mod strings;
+mod owned;
+pub mod provided;
+pub mod range;
+pub mod regions;
 
-pub use sealed::{Owned, Shared};
+/// Failure to represent or allocate one storage owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AllocError {
+    Capacity(consume::Error),
+    Exhausted(crate::alloc::Exhausted),
+}
 
-/// Failure to construct an exact-length [`Owned`] buffer.
+/// Failure to construct an [`Owned`] buffer within a caller-supplied capacity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildError<E> {
     /// The requested length exceeds the buffer representation.
-    Capacity(buffer::CapacityError),
+    Capacity(consume::Error),
+    /// The allocator could not materialize the validated capacity.
+    Exhausted(crate::alloc::Exhausted),
     /// The encoder returned an error.
     Build(E),
-    /// The encoder completed without initializing the requested number of bytes.
-    LengthMismatch { expected: usize, actual: usize },
+    /// The encoder completed without initializing the exact span.
+    Length(consume::Error),
 }
 
-impl<E: fmt::Display> fmt::Display for BuildError<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Capacity(error) => error.fmt(f),
-            Self::Build(error) => error.fmt(f),
-            Self::LengthMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "exact buffer length mismatch: expected {expected}, wrote {actual}"
-                )
-            }
+const _: () = assert!(size_of::<BuildError<consume::Error>>() == 3 * size_of::<usize>());
+
+impl<E> From<AllocError> for BuildError<E> {
+    fn from(error: AllocError) -> Self {
+        match error {
+            AllocError::Capacity(error) => Self::Capacity(error),
+            AllocError::Exhausted(error) => Self::Exhausted(error),
         }
     }
 }
 
-impl<E> error::Error for BuildError<E>
-where
-    E: error::Error + 'static,
-{
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match self {
-            Self::Capacity(error) => Some(error),
-            Self::Build(error) => Some(error),
-            Self::LengthMismatch { .. } => None,
-        }
-    }
-}
+mod shared;
