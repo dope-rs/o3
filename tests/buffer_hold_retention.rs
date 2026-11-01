@@ -40,8 +40,7 @@ fn materializes_policy_choices() {
             let sample = Tracker::begin();
             let input = scope::Input::new(&snap, budget);
             let result = input.try_plan(7..9);
-            assert!(result.is_err(), "range exceeds source");
-            let Err(error) = result else { return };
+            let error = result.err().expect("range exceeds source");
             assert_eq!((error.start(), error.end(), error.len()), (7, 9, 7));
             let plan = (input.try_plan(1..6)).expect("the snapshot range must be in bounds");
             let bound = plan.bind(hold::Policy::new(1, 2));
@@ -251,8 +250,9 @@ fn returns_inputs() {
 
             let retained = input.bind(hold::Policy::compact()).try_retain();
             let result = retained;
-            assert!(result.is_err(), "zero budget must reject materialization");
-            let Err((bound, error)) = result else { return };
+            let (bound, error) = result
+                .err()
+                .expect("zero budget must reject materialization");
             let error = match error {
                 hold::Error::Resident(resident::AllocError::Budget(error)) => Some(error),
                 _ => None,
@@ -299,11 +299,9 @@ fn retries_staging() {
                     denied
                 };
                 let result = denied;
-                assert!(
-                    result.is_err(),
-                    "retention must fail while the budget is occupied"
-                );
-                let Err((bound, error)) = result else { return };
+                let (bound, error) = result
+                    .err()
+                    .expect("retention must fail while the budget is occupied");
                 let error = match error {
                     hold::Error::Resident(resident::AllocError::Budget(error)) => Some(error),
                     _ => None,

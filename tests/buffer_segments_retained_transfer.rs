@@ -160,8 +160,7 @@ fn insertion_returns_item() {
     let (result, activity) = Tracker::measure(|| chain.try_insert(second));
     assert_eq!(activity, [0; 4]);
 
-    assert!(result.is_err(), "descriptor rejection");
-    let Err(error) = result else { return };
+    let error = result.err().expect("descriptor rejection");
     let (second, error) = error.into_parts();
     assert!(
         error
@@ -200,8 +199,7 @@ fn extension_returns_many() {
         let (result, activity) = Tracker::measure(|| target.try_extend(source));
         assert_eq!(activity, [0; 4]);
 
-        assert!(result.is_err(), "target capacity rejection");
-        let Err(error) = result else { return };
+        let error = result.err().expect("target capacity rejection");
         let (source, error) = error.into_parts();
         match plan.segments {
             1 => assert!(
@@ -315,8 +313,7 @@ fn join_returns_owners() {
         Tracker::measure(|| Tracker::fail_after(0, || segments::Many::try_from((left, right))));
     assert_eq!(activity, [0; 4]);
 
-    assert!(result.is_err(), "exact metadata rejection");
-    let Err(error) = result else { return };
+    let error = result.err().expect("exact metadata rejection");
     let ((left, right), error) = error.into_parts();
     assert!(
         matches!(error, segments::assembly::Error::Nodes { shortage, .. }

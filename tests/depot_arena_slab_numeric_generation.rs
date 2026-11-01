@@ -68,3 +68,60 @@ fn exhausts_numeric_keys() {
         Err(o3::depot::arena::slab::Vacancy::IdentityExhausted)
     ));
 }
+
+#[test]
+fn retains_epoch_floor() {
+    let (aborted, floor) = {
+        let mut slab =
+            Exclusive::<u32, num::Epoch, (), 1>::try_new(Count::new(1)).expect("one physical slot");
+        let aborted = {
+            let vacant = slab.try_grant().expect("initial grant").reserve();
+            vacant.key()
+        };
+        (aborted, slab.next_generation())
+    };
+    assert_eq!(floor, aborted.generation().checked_add(1));
+
+    let mut slab = Exclusive::<u32, num::Epoch, (), 1>::try_new(Count::new(1))
+        .expect("replacement physical slot");
+    slab.advance_to(floor);
+    slab.advance_to(Some(num::Epoch::INITIAL));
+    assert_eq!(slab.next_generation(), floor);
+    let current = {
+        let vacant = slab.try_grant().expect("continued grant").reserve();
+        let key = vacant.key();
+        vacant.commit(7);
+        key
+    };
+    assert_eq!(Some(current.generation()), floor);
+    assert_eq!(slab.get(aborted), None);
+
+    let last = num::Epoch::INITIAL
+        .checked_add(u64::MAX - 1)
+        .expect("maximum epoch");
+    slab.advance_to(Some(last));
+    assert_eq!(slab.get(current), Some(&7));
+    assert_eq!(slab.occupied(current).map(|entry| entry.remove()), Some(7));
+    assert_eq!(
+        slab.try_grant()
+            .expect("last grant")
+            .reserve()
+            .key()
+            .generation(),
+        last
+    );
+    slab.advance_to(Some(num::Epoch::INITIAL));
+    assert_eq!(slab.next_generation(), None);
+    assert!(matches!(
+        slab.try_grant(),
+        Err(o3::depot::arena::slab::Vacancy::IdentityExhausted)
+    ));
+
+    let mut replacement = Exclusive::<u32, num::Epoch, (), 1>::try_new(Count::new(1))
+        .expect("exhausted replacement slot");
+    replacement.advance_to(slab.next_generation());
+    assert!(matches!(
+        replacement.try_grant(),
+        Err(o3::depot::arena::slab::Vacancy::IdentityExhausted)
+    ));
+}

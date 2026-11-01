@@ -23,8 +23,9 @@ fn admission_is_atomic() {
     assert_eq!(lease.as_slice(), source);
     let address = lease.as_slice().as_ptr();
     let result = lease.try_append(b"123456");
-    assert!(result.is_err(), "reject six bytes with only five remaining");
-    let Err(error) = result else { return };
+    let error = result
+        .err()
+        .expect("reject six bytes with only five remaining");
     assert_eq!(
         error.into_parts(),
         (NonZero::<usize>::MIN.saturating_add(5), 5)
@@ -66,8 +67,9 @@ fn retains_prefix_sources() {
         Tracker::activity(|| pool::Append::try_prefixed(&mut lease, *b"<>!", [first, second]));
     assert!(activity == Activity::default());
     let result = admitted;
-    assert!(result.is_err(), "reject the complete nine-byte operation");
-    let Err(error) = result else { return };
+    let error = result
+        .err()
+        .expect("reject the complete nine-byte operation");
     assert_eq!(
         error.into_parts(),
         (NonZero::<usize>::MIN.saturating_add(8), 8)

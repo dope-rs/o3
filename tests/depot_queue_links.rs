@@ -39,18 +39,41 @@ fn ring_singleton_endpoints() {
 
 #[test]
 fn retains_nonempty_head() {
-    let index = links::Index::try_new(0).expect("only index");
-    let mut hooks = RingHooks([links::Hook::new(index)]);
+    let keys = [0, 1, 2].map(|index| links::Index::try_new(index).expect("list index"));
+    let mut hooks = RingHooks(keys.map(links::Hook::new));
     let list = links::List::new();
-    // SAFETY: the detached hook and empty list belong to this exact one-slot plane.
-    unsafe { hooks.link_raw(&list, index) };
-    assert_eq!(list.front(), Some(index.get()));
+    for index in keys {
+        // SAFETY: each detached hook belongs to this exact reciprocal list plane.
+        unsafe { hooks.link_raw(&list, index) };
+    }
+    assert_eq!(list.front(), Some(keys[2].get()));
     // SAFETY: this original list still owns its initialized head without intervening mutation.
     let head = links::List::front_from(unsafe { Proof::new(&list) });
-    assert_eq!(head, index);
-    // SAFETY: the retained head identifies the sole member in the same plane.
+    assert_eq!(head, keys[2]);
+    // SAFETY: keys[1] is the middle member of this exact reciprocal list.
+    unsafe { hooks.unlink_raw(&list, keys[1]) };
+    assert_eq!(hooks.0[2].next_index(), Some(keys[0]));
+    assert_eq!(hooks.0[0].prev_index(), Some(head));
+    // SAFETY: removing the middle preserved this original head's membership.
     unsafe { hooks.unlink_raw(&list, head) };
+    assert_eq!(list.front(), Some(keys[0].get()));
+    // SAFETY: keys[1] is detached; keys[0] is the resulting reciprocal tail.
+    unsafe {
+        hooks.link_raw(&list, keys[1]);
+        hooks.unlink_raw(&list, keys[0]);
+    }
+    assert_eq!(list.front(), Some(keys[1].get()));
+    assert_eq!(hooks.0[1].next_index(), None);
+    // SAFETY: keys[1] is now this list's sole live member.
+    unsafe { hooks.unlink_raw(&list, keys[1]) };
     assert!(list.is_empty());
+    assert!(
+        hooks
+            .0
+            .iter()
+            .enumerate()
+            .all(|(index, hook)| hook.is_vacant(index))
+    );
 }
 
 #[test]

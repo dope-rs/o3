@@ -337,8 +337,7 @@ fn rejects_without_refund() {
             (held, pointer)
         };
         let result = held.project(7..8);
-        assert!(result.is_err(), "range exceeds registration");
-        let Err(rejected) = result else { return };
+        let rejected = result.err().expect("range exceeds registration");
         let (held, error) = rejected.into_parts();
         assert_eq!((error.start(), error.end(), error.len()), (7, 8, 7));
         assert_eq!(held.as_slice(), b"exactly");
@@ -372,8 +371,7 @@ fn bounds_nested_prefix() {
                 .expect("three-byte nested prefix");
             let two = NonZero::<usize>::MIN.saturating_add(1);
             let result = prefix.try_take(two);
-            assert!(result.is_err(), "one byte remains");
-            let Err(error) = result else { return };
+            let error = result.err().expect("one byte remains");
             assert_eq!(error.into_parts(), (two, 1));
             assert_eq!(prefix.as_ref(), b"c");
             let head = head.freeze();

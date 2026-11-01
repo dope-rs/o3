@@ -337,8 +337,7 @@ fn advances_cursor() {
 
     assert_eq!(cursor.contiguous(3..3), Some(b"".as_slice()));
     let rejected = queue::Array::<_, 1>::try_new(&cursor, 2);
-    assert!(rejected.is_err());
-    let Err(bounds) = rejected else { return };
+    let bounds = rejected.err().expect("assertion failed: rejected.is_err()");
     assert_eq!(bounds.offset, 2);
     assert_eq!(bounds.amount, 1);
     assert_eq!(bounds.floor, 3);

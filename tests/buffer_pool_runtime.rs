@@ -41,15 +41,12 @@ fn prefix_keeps_spare() {
         let pointer = lease.as_slice().as_ptr();
 
         let result = lease.try_prefix::<2>(5);
-        assert!(result.is_err(), "prefix crosses the initialized end");
-        let Err(error) = result else { return };
+        let error = result.err().expect("prefix crosses the initialized end");
         assert_eq!((error.offset, error.width, error.len), (5, 2, 6));
         let result = lease.try_prefix::<0>(7);
-        assert!(
-            result.is_err(),
-            "empty prefix still requires a valid offset"
-        );
-        let Err(error) = result else { return };
+        let error = result
+            .err()
+            .expect("empty prefix still requires a valid offset");
         assert_eq!((error.offset, error.width, error.len), (7, 0, 6));
         assert_eq!(lease.as_slice(), b"abcdef");
 
@@ -58,11 +55,9 @@ fn prefix_keeps_spare() {
             edit.prefix().copy_from_slice(b"XY");
             edit.write_slice(b"gh").expect("staged bytes fit");
             let result = edit.write_slice(b"too-long");
-            assert!(
-                result.is_err(),
-                "staged suffix exceeds the remaining spare capacity"
-            );
-            let Err(error) = result else { return };
+            let error = result
+                .err()
+                .expect("staged suffix exceeds the remaining spare capacity");
             let (required, spare) = error.into_parts();
             assert_eq!((required.get(), spare), (8, 4));
             assert_eq!(edit.len(), 2);
@@ -96,11 +91,9 @@ fn prefix_keeps_spare() {
 fn copies_with_ownership() {
     let pool = (pool::Pool::try_new(1, 4)).expect("the single-slot copy pool must allocate");
     let result = pool.try_copy(b"large");
-    assert!(
-        result.is_err(),
-        "a five-byte source must not fit the four-byte slot"
-    );
-    let Err(error) = result else { return };
+    let error = result
+        .err()
+        .expect("a five-byte source must not fit the four-byte slot");
     assert_eq!(
         {
             let (required, spare) = error.into_parts();
@@ -269,8 +262,7 @@ fn reject_keeps_payload() {
     let base = slot.as_slice().as_ptr();
     let ((), counts) = Tracker::usage(|| {
         let rejected = slot.try_frame(&[0x41; 9], 8);
-        assert!(rejected.is_err());
-        let Err((slot, error)) = rejected else { return };
+        let (slot, error) = rejected.err().expect("assertion failed: rejected.is_err()");
         assert_eq!(
             error,
             borrowed::Error::Prefix {
@@ -279,8 +271,7 @@ fn reject_keeps_payload() {
             }
         );
         let rejected = slot.try_frame(&[0x41; 8], 9);
-        assert!(rejected.is_err());
-        let Err((slot, error)) = rejected else { return };
+        let (slot, error) = rejected.err().expect("assertion failed: rejected.is_err()");
         assert_eq!(
             error,
             borrowed::Error::Suffix {

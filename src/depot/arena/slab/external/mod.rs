@@ -125,6 +125,22 @@ impl<T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
     }
 }
 
+impl<T, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
+    Exclusive<T, num::Epoch, Tag, PHYSICAL_MAX, PARTITIONS>
+{
+    pub const fn next_generation(&self) -> Option<num::Epoch> {
+        self.next
+    }
+
+    /// Raises the issuance floor; either exhausted domain remains exhausted.
+    pub fn advance_to(&mut self, floor: Option<num::Epoch>) {
+        self.next = self
+            .next
+            .zip(floor)
+            .map(|(current, floor)| current.max(floor));
+    }
+}
+
 impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
     Exclusive<T, G, Tag, PHYSICAL_MAX, PARTITIONS>
 {

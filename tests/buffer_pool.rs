@@ -218,8 +218,7 @@ fn rejects_short_tail() {
         .expect("nonempty copy source");
     let (admitted, activity) = Tracker::usage(|| pool::Copy::try_new(source, target));
     let result = admitted;
-    assert!(result.is_err(), "copy exceeds remaining capacity");
-    let Err(error) = result else { return };
+    let error = result.err().expect("copy exceeds remaining capacity");
     let (required, room) = error.into_parts();
     assert_eq!((required.get(), room), (7, 6));
     assert_eq!(activity, (0, 0));
@@ -249,8 +248,7 @@ fn bounds_sources_once() {
     let chunk = vec![0; 1 << 20];
     let source = buffer::raw::Slices::try_new([chunk.as_slice(); 4096]);
     let result = source;
-    assert!(result.is_err(), "source exceeds representable capacity");
-    let Err(error) = result else { return };
+    let error = result.err().expect("source exceeds representable capacity");
     let (required, room) = error.into_parts();
     assert_eq!((required.get(), room), (1 << 20, (1 << 20) - 1));
 }

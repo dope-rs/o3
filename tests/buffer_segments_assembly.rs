@@ -317,8 +317,7 @@ fn returns_rejected_owner() {
     let owner = storage::Shared::try_copy(b"abc").expect("rejected owner");
     let address = owner.as_slice().as_ptr();
     let result = source.try_push(owner);
-    assert!(result.is_err(), "zero segment capacity");
-    let Err(rejected) = result else { return };
+    let rejected = result.err().expect("zero segment capacity");
     let (owner, error) = rejected.into_parts();
     assert_eq!(error, queue::Error::Segments { capacity: 0 });
     assert_eq!(owner.as_slice(), b"abc");
@@ -345,8 +344,7 @@ fn consumes_admitted_prefix() {
             .as_ref()
             .expect("required fixture outcome");
         let result = Drain::try_new(&mut source, 11);
-        assert!(result.is_err(), "oversized prefix");
-        let Err(rejected) = result else { return };
+        let rejected = result.err().expect("oversized prefix");
         let (required, room) = rejected.into_parts();
         assert_eq!((required.get(), room), (11, 10));
         {

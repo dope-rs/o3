@@ -1,12 +1,12 @@
 use std::{
     env,
-    io::Write,
+    io::{self, Write as _},
     process::{Command, Stdio},
 };
 
 #[test]
-fn brands_and_indices() {
-    let exe = env::current_exe().expect("test executable");
+fn brands_and_indices() -> io::Result<()> {
+    let exe = env::current_exe()?;
     let profile = exe.parent().expect("deps").parent().expect("profile");
     let name = profile
         .file_name()
@@ -15,13 +15,34 @@ fn brands_and_indices() {
         .expect("profile UTF-8");
     let status = Command::new(env!("CARGO"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .env("RUSTC_BOOTSTRAP", "1")
         .args(["build", "--offline", "--locked", "--lib", "--profile"])
         .arg(if name == "debug" { "dev" } else { name })
         .arg("--target-dir")
         .arg(profile.parent().expect("target directory"))
-        .status()
-        .expect("build original library");
+        .status()?;
     assert!(status.success());
+
+    let mut compiler = Command::new(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
+    compiler
+        .current_dir(profile)
+        .env("RUSTC_BOOTSTRAP", "1")
+        .args([
+            "-Znext-solver=globally",
+            "--edition=2024",
+            "--crate-name=o3_compile_contract",
+            "--crate-type=bin",
+            "-Cpanic=abort",
+            "-Copt-level=3",
+            "--emit=llvm-ir=-",
+            "--color=never",
+            "--extern",
+        ])
+        .arg(format!("o3={}", profile.join("libo3.rlib").display()))
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
 
     for (source, expected) in [
         (include_str!("common/compile_contracts.rs"), ""),
@@ -215,33 +236,14 @@ fn brands_and_indices() {
             "error[E0080]: evaluation panicked: layout",
         ),
     ] {
-        let mut compiler = Command::new(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
-            .current_dir(profile)
-            .args([
-                "-Znext-solver=globally",
-                "--edition=2024",
-                "--crate-name=o3_compile_contract",
-                "--crate-type=bin",
-                "-Cpanic=abort",
-                "-Copt-level=3",
-                "--emit=llvm-ir=-",
-                "--color=never",
-                "--extern",
-            ])
-            .arg(format!("o3={}", profile.join("libo3.rlib").display()))
-            .arg("-")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("compiler");
-        compiler
+        let mut child = compiler.spawn()?;
+        let input = child
             .stdin
             .take()
             .expect("compiler stdin")
-            .write_all(source.as_bytes())
-            .expect("fixture input");
-        let output = compiler.wait_with_output().expect("compiler output");
+            .write_all(source.as_bytes());
+        let output = child.wait_with_output()?;
+        input?;
         let diag = String::from_utf8(output.stderr).expect("diagnostic UTF-8");
         assert!(
             output.status.success() == expected.is_empty()
@@ -254,4 +256,5 @@ fn brands_and_indices() {
             "{source}\n{diag}"
         );
     }
+    Ok(())
 }

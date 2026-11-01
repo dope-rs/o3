@@ -5,7 +5,7 @@ use crate::base::marker::ThreadBound;
 pub mod bounded;
 
 /// A non-wrapping nonzero identity confined to its constructing thread.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Epoch(NonZero<u64>, ThreadBound);
 

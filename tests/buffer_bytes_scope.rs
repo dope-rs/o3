@@ -118,8 +118,7 @@ fn returns_rejected_owners() {
         let (result, activity) = Tracker::measure(|| shared.project(bounds.clone()));
         assert_eq!(activity, [0; 4]);
 
-        assert!(result.is_err(), "invalid bounds");
-        let Err(error) = result else { return };
+        let error = result.err().expect("invalid bounds");
         let (shared, error) = error.into_parts();
         assert_eq!(
             (error.start(), error.end(), error.len()),
@@ -131,8 +130,7 @@ fn returns_rejected_owners() {
         let (result, activity) = Tracker::measure(|| shared.project(bounds.clone()));
         assert_eq!(activity, [0; 4]);
 
-        assert!(result.is_err(), "invalid resident bounds");
-        let Err(error) = result else { return };
+        let error = result.err().expect("invalid resident bounds");
         let (shared, error) = error.into_parts();
         assert_eq!(
             (error.start(), error.end(), error.len()),
@@ -153,11 +151,9 @@ fn honors_policy_capacity() {
         .as_ref()
         .expect("required fixture outcome");
     let result = Append::try_new(&mut ring, [&b"cde"[..]], 4);
-    assert!(
-        result.is_err(),
-        "the policy must bound admission to four bytes"
-    );
-    let Err(error) = result else { return };
+    let error = result
+        .err()
+        .expect("the policy must bound admission to four bytes");
     assert_eq!(
         error.into_parts(),
         (NonZero::<usize>::MIN.saturating_add(2), 2)
@@ -172,11 +168,9 @@ fn honors_policy_capacity() {
         .expect("required fixture outcome");
     assert_eq!(ring.as_slices(), (&b"abcdefgh"[..], &[][..]));
     let result = Append::try_new(&mut ring, [&b"i"[..]], usize::MAX);
-    assert!(
-        result.is_err(),
-        "policy capacity cannot exceed physical capacity"
-    );
-    let Err(error) = result else { return };
+    let error = result
+        .err()
+        .expect("policy capacity cannot exceed physical capacity");
     assert_eq!(error.into_parts(), (NonZero::<usize>::MIN, 0));
     assert_eq!(ring.as_slices(), (&b"abcdefgh"[..], &[][..]));
 }
@@ -200,11 +194,9 @@ fn retains_wrapped_sources() {
     assert_eq!(ring.as_slices(), (&b"f"[..], &[][..]));
 
     let result = Append::try_new(&mut ring, [&b"gh"[..], &b"ijklm"[..]], 8);
-    assert!(
-        result.is_err(),
-        "all sources must fit before anything is written"
-    );
-    let Err(error) = result else { return };
+    let error = result
+        .err()
+        .expect("all sources must fit before anything is written");
     assert_eq!(
         error.into_parts(),
         (NonZero::<usize>::MIN.saturating_add(4), 4)

@@ -305,11 +305,9 @@ fn growth_preserves_failure() {
                             Tracker::fail_after(0, || buf.write_slice(b"efgh"))
                         });
 
-                        assert!(
-                            result.is_err(),
-                            "failed local growth must preserve its resident cause"
-                        );
-                        let Err(error) = result else { return };
+                        let error = result
+                            .err()
+                            .expect("failed local growth must preserve its resident cause");
                         let (error,) = match error {
                             reserve::Error::Resident(error) => Some((error,)),
                             _ => None,

@@ -228,16 +228,14 @@ fn empty<'d>(source: &mut staging::Buf<'d>, budget: &resident::Budget<'d>) {
             usize::MAX..usize::MAX,
         ] {
             let result = source.try_get(range.clone());
-            assert!(result.is_err(), "reject range outside empty source");
-            let Err(error) = result else { return };
+            let error = result.err().expect("reject range outside empty source");
             assert_eq!(
                 (error.start(), error.end(), error.len()),
                 (range.start, range.end, 0)
             );
         }
         let result = source.view().try_split::<1>();
-        assert!(result.is_err(), "empty source cannot provide one byte");
-        let Err(error) = result else { return };
+        let error = result.err().expect("empty source cannot provide one byte");
         let (required, capacity) = error.into_parts();
         assert_eq!((required.get(), capacity), (1, 0));
         assert!(

@@ -82,8 +82,9 @@ fn preserves_rejected_tail() {
     let position = cursor.as_ref().as_ptr();
     {
         let result = cursor.try_append(b"1234567");
-        assert!(result.is_err(), "the retained suffix leaves only six bytes");
-        let Err(error) = result else { return };
+        let error = result
+            .err()
+            .expect("the retained suffix leaves only six bytes");
         let (required, room) = error.into_parts();
         assert_eq!((required.get(), room), (7, 6));
     }
@@ -182,11 +183,9 @@ fn bounds_admitted_writes() {
         .as_ref()
         .expect("required fixture outcome");
     let result = limit.try_extend(b"jkl");
-    assert!(
-        result.is_err(),
-        "physical capacity does not authorize a larger quota"
-    );
-    let Err(error) = result else { return };
+    let error = result
+        .err()
+        .expect("physical capacity does not authorize a larger quota");
     let (required, room) = error.into_parts();
     assert_eq!((required.get(), room), (3, 2));
     assert_eq!(limit.remaining(), 2);
@@ -211,11 +210,9 @@ fn admits_before_acquiring() {
         let held = (pool.cursor()).expect("the fixture owns a free slot");
         assert!(held.is_empty());
         let result = Limit::try_borrow(&pool, 9, identity);
-        assert!(
-            result.is_err(),
-            "capacity rejection must precede slot exhaustion"
-        );
-        let Err(error) = result else { return };
+        let error = result
+            .err()
+            .expect("capacity rejection must precede slot exhaustion");
         let (identity, error) = match error {
             (identity, Error::Capacity(error)) => Some((identity, error)),
             _ => None,
@@ -224,8 +221,7 @@ fn admits_before_acquiring() {
         let (required, room) = error.into_parts();
         assert_eq!((required.get(), room), (9, 8));
         let result = Limit::try_borrow(&pool, 8, identity);
-        assert!(result.is_err(), "the sole slot is still held");
-        let Err(error) = result else { return };
+        let error = result.err().expect("the sole slot is still held");
         let (identity,) = match error {
             (identity, Error::Empty) => Some((identity,)),
             _ => None,
@@ -284,11 +280,9 @@ fn appends_in_place() {
         .try_consume(8)
         .expect("the initialized head and body must fit");
     let result = cursor.try_consume(usize::MAX);
-    assert!(
-        result.is_err(),
-        "an oversized consume must preserve the initialized suffix"
-    );
-    let Err(error) = result else { return };
+    let error = result
+        .err()
+        .expect("an oversized consume must preserve the initialized suffix");
     let (required, room) = error.into_parts();
     assert_eq!((required.get(), room), (usize::MAX, 4));
     assert_eq!(cursor.as_ref(), b"tail");

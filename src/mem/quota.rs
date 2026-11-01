@@ -157,10 +157,9 @@ impl<Tag> Shared<'_, Tag, lease::Open> {
         ) -> (R, crate::mem::raw::Unused<'id>),
     ) -> R {
         region::Token::scope(|token| {
-            let reserved = token.bind(self);
+            let mut reserved = self;
             let (output, unused) = run(context, token);
-            let (amount, mut token) = unused.into_inner();
-            let reserved = token.borrow_mut(&reserved);
+            let (amount, _) = unused.into_inner();
             reserved.remaining.reset(amount);
             output
         })

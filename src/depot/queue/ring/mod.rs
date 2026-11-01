@@ -168,7 +168,8 @@ impl<'a, S: crate::depot::raw::RingEdit + ?Sized> Front<'a, S> {
     }
 
     pub fn remove(self) -> S::Item {
-        self.detach(|entry| unsafe { entry.read() })
+        // SAFETY: detach retains this sole initialized value in its original backing.
+        unsafe { self.detach().assume_init_read() }
     }
 
     pub fn take(self) -> (S::Item, ring::Vacant<'a, S>) {
@@ -180,16 +181,15 @@ impl<'a, S: crate::depot::raw::RingEdit + ?Sized> Front<'a, S> {
     /// Removes and destroys this initialized front in place.
     pub fn discard(self) {
         // SAFETY: detach publishes removal before running the resident destructor.
-        unsafe { self.detach(|entry| entry).drop_in_place() };
+        unsafe { self.detach().assume_init_drop() };
     }
 
-    fn detach<R>(self, read: impl FnOnce(*mut S::Item) -> R) -> R {
+    fn detach(self) -> &'a mut mem::MaybeUninit<S::Item> {
         // SAFETY: Front carries nonempty admission under the exclusive owner.
         unsafe {
             let (state, entries) = self.source.parts_mut();
-            let value = read(entries.as_mut_ptr().add(state.head()).cast::<S::Item>());
-            state.pop_front(entries.len());
-            value
+            let index = state.pop_front(entries.len());
+            entries.get_unchecked_mut(index)
         }
     }
 }

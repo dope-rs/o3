@@ -27,8 +27,7 @@ fn validates_at_source() {
         .try_scope(|budget| {
             let input = Input::new(&source, &budget);
             let result = input.try_plan(0..4);
-            assert!(result.is_err(), "the observed range exceeds the source");
-            let Err(error) = result else { return };
+            let error = result.err().expect("the observed range exceeds the source");
             assert_eq!((error.start(), error.end(), error.len()), (0, 4, 3));
             assert_eq!(source.reads.get(), Some(1));
             let plan = (input.try_plan(0..3)).expect("the complete source must be admitted");
@@ -43,11 +42,9 @@ fn validates_at_source() {
             assert_eq!(head.as_ptr(), source.bytes.as_ptr());
             assert_eq!(tail.as_slice(), b"c");
             let result = tail.try_split::<2>();
-            assert!(
-                result.is_err(),
-                "the one-byte remainder cannot contain two bytes"
-            );
-            let Err(cause) = result else { return };
+            let cause = result
+                .err()
+                .expect("the one-byte remainder cannot contain two bytes");
             assert_eq!(
                 cause.into_parts(),
                 (NonZero::<usize>::MIN.saturating_add(1), 1)
@@ -173,11 +170,9 @@ fn consume_keeps_source() {
         view.try_consume(1)
             .expect("one byte fits the selected view");
         let result = view.try_consume(usize::MAX);
-        assert!(
-            result.is_err(),
-            "an oversized consume preserves the selected suffix"
-        );
-        let Err(error) = result else { return };
+        let error = result
+            .err()
+            .expect("an oversized consume preserves the selected suffix");
         let (required, left) = error.into_parts();
         assert_eq!((required.get(), left), (usize::MAX, 3));
         assert_eq!(view.as_slice(), b"cde");

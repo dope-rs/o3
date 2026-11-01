@@ -85,54 +85,38 @@ pub unsafe trait Hooks {
     /// `list` and its reciprocal hooks belong to this exact plane; `index` stays exclusively vacant.
     unsafe fn link_raw(&mut self, list: &links::List, index: links::Index) {
         let domain = &*self;
-        // SAFETY: the contract identifies index as this list's vacant live hook.
+        // SAFETY: the contract retains this vacant hook and its exact reciprocal list.
         let hook = unsafe { domain.hook_raw(index) };
-        let next = links::Index::encode(list.first());
-        let after = if next == links::Index::END {
-            None
-        } else {
-            // SAFETY: the list head is a live hook in the same domain by the
-            // caller's reciprocal-topology invariant.
-            Some(unsafe { domain.hook_raw(links::Index::new_raw(next)) })
+        let adjacent = list.first().map(|next| {
+            // SAFETY: this observed head belongs to the same retained hook plane.
+            (next, unsafe { domain.hook_raw(next) }.into())
+        });
+        // SAFETY: all original hooks are resolved before publishing this vacant node.
+        unsafe {
+            EndpointHook::from(hook).push::<true, _>(list, index, links::Index::END, adjacent)
         };
-        hook.previous.set(links::Index::END);
-        hook.next.set(next);
-        list.set(Some(index));
-        if let Some(after) = after {
-            after.previous.set(index.raw());
-        }
     }
 
     /// # Safety
     /// `index` stays exclusively linked in this exact list and reciprocal hook plane.
     unsafe fn unlink_raw(&mut self, list: &links::List, index: links::Index) {
         let domain = &*self;
-        // SAFETY: the contract identifies index as this list's linked live hook.
+        // SAFETY: the contract retains this linked hook and its exact reciprocal list.
         let hook = unsafe { domain.hook_raw(index) };
         let prev = hook.previous.get();
         let next = hook.next.get();
-        let prior = if prev == links::Index::END {
-            None
-        } else {
-            // SAFETY: a non-END previous edge is live and reciprocal by contract.
-            Some(unsafe { domain.hook_raw(links::Index::new_raw(prev)) })
+        let prior = match links::Index::decode(prev) {
+            // SAFETY: this original previous edge is live in the retained plane.
+            Some(key) => Neighbor::node(prev, unsafe { domain.hook_raw(key) }.into()),
+            None => Neighbor::head(prev, list),
         };
-        let after = if next == links::Index::END {
-            None
-        } else {
-            // SAFETY: a non-END next edge is live and reciprocal by contract.
-            Some(unsafe { domain.hook_raw(links::Index::new_raw(next)) })
+        let after = match links::Index::decode(next) {
+            // SAFETY: this original next edge is live in the retained plane.
+            Some(key) => Neighbor::node(next, unsafe { domain.hook_raw(key) }.into()),
+            None => Neighbor::head(next, list),
         };
-        hook.previous.set(index.raw());
-        hook.next.set(links::Index::END);
-        if let Some(prior) = prior {
-            prior.next.set(next);
-        } else {
-            list.set(links::Index::decode(next));
-        }
-        if let Some(after) = after {
-            after.previous.set(prev);
-        }
+        // SAFETY: the original neighbors retain this exact member until this commit.
+        unsafe { EndpointHook::from(hook).detach(index, prior, after) };
     }
 }
 

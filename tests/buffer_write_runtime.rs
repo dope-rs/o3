@@ -29,8 +29,6 @@ fn admits_before_ready() {
     assert!(result.is_err());
     assert_eq!(calls, 1);
     assert_eq!(spare.len(), 0);
-    drop(spare);
-    drop(stage);
     // SAFETY: clear preserved three initialized bytes in this allocation,
     // and the staged writer neither reallocates nor deinitializes them.
     assert_eq!(unsafe { slice::from_raw_parts(bytes.as_ptr(), 3) }, b"xxx");

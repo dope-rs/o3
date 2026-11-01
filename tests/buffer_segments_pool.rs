@@ -283,8 +283,9 @@ fn rejects_with_owner() {
         .expect("metadata admits the owner");
 
     let result = chain.try_push(second);
-    assert!(result.is_err(), "the full chain must reject another owner");
-    let Err(err) = result else { return };
+    let err = result
+        .err()
+        .expect("the full chain must reject another owner");
     let (owner, cause) = err.into_parts();
     assert!(
         cause

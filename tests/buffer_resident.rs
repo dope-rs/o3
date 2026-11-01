@@ -217,11 +217,9 @@ fn rejects_reuse() {
         region::Token::scope_pinned(Pin::new(&mut domain), |token, domain| {
             let domain = domain.get_mut();
             let result = domain.try_budget(capacity, token.proof());
-            assert!(
-                result.is_err(),
-                "a forgotten charge must prevent domain reuse"
-            );
-            let Err(cause) = result else { return };
+            let cause = result
+                .err()
+                .expect("a forgotten charge must prevent domain reuse");
             assert_eq!(
                 cause,
                 resident::Reuse {
@@ -247,11 +245,9 @@ fn rejects_growth() {
                 let second = (budget.try_charge(3)).expect("the remaining three bytes must fit");
                 assert_eq!(second.capacity(), 3);
                 let result = first.try_resize(8);
-                assert!(
-                    result.is_err(),
-                    "an additional byte must exceed the full budget"
-                );
-                let Err(error) = result else { return };
+                let error = result
+                    .err()
+                    .expect("an additional byte must exceed the full budget");
                 assert_eq!(error.into_parts(), (num::NonZero::<usize>::MIN, 0));
                 assert_eq!((first.capacity(), budget.resident()), (7, 10));
             }
@@ -284,11 +280,9 @@ fn admits_full_width() {
             let empty = (budget.try_charge(0)).expect("a zero charge must require no capacity");
             assert_eq!(empty.capacity(), 0);
             let result = budget.try_charge(1);
-            assert!(
-                result.is_err(),
-                "a full budget must reject an additional byte"
-            );
-            let Err(error) = result else { return };
+            let error = result
+                .err()
+                .expect("a full budget must reject an additional byte");
             assert_eq!(error.into_parts(), (num::NonZero::<usize>::MIN, 0));
             assert_eq!(charge.try_resize(1), Ok(()));
             assert_eq!(budget.available(), usize::MAX - 1);

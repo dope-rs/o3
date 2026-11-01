@@ -226,7 +226,6 @@ fn split_keeps_owned_tail() {
     assert!(tail.is_empty());
     assert!(tail.backing().is_none());
     let result = tail.try_split::<1>();
-    assert!(result.is_err(), "the exhausted owner has no prefix");
-    let Err(cause) = result else { return };
+    let cause = result.err().expect("the exhausted owner has no prefix");
     assert_eq!(cause.into_parts(), (NonZero::<usize>::MIN, 0));
 }
