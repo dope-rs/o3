@@ -30,6 +30,10 @@ impl<K> Header<K> {
             shape,
         }
     }
+
+    pub(super) fn is_detached(&self) -> bool {
+        matches!(self.state.get(), State::Detached)
+    }
 }
 
 impl<K: crate::buffer::raw::Backing> Header<K> {

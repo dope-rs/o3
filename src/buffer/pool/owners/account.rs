@@ -7,7 +7,7 @@ use crate::{
     buffer::{
         pool,
         pool::owners::{Free, Key},
-        resident,
+        resident::{self, staging},
         storage::{backing, regions},
     },
     mem::rc,
@@ -52,7 +52,7 @@ impl Prefix {
 }
 
 #[repr(C, align(8))]
-pub(super) struct Accounts<'d> {
+pub(in crate::buffer) struct Accounts<'d> {
     root: mem::ManuallyDrop<resident::Charge<'d>>,
     free: Free<true>,
 }
@@ -162,6 +162,62 @@ impl<'d> Retired<'d> {
 }
 
 impl<'d> Accounts<'d> {
+    pub(in crate::buffer) fn try_grow<I: buffer::raw::SliceExt>(
+        reserve: staging::Reserve<staging::Slot<'_, 'd>, &super::Measured<I>>,
+    ) -> Result<bool, resident::AllocError> {
+        let (slot, capacity, input) = reserve.into_parts();
+        let (span, head) = slot.into_parts();
+        let entry = span.entry();
+        let core = entry.core();
+        let header = core.header();
+        let previous = header.capacity();
+        if capacity <= previous
+            || header.slots() != 1
+            || !header.is_detached()
+            || !entry.is_unique()
+        {
+            return Ok(false);
+        }
+        let shape = super::Shape::<super::Accounted>::try_new(pool::NonEmpty::new(capacity).into())
+            .map_err(resident::AllocError::Layout)?;
+        // SAFETY: the detached one-slot block has one live edge and no
+        // active account. Its root charge is exclusively owned here.
+        let accounts = unsafe { Self::ptr(core).as_mut() };
+        accounts
+            .root
+            .try_resize(capacity.get() as usize)
+            .map_err(resident::AllocError::Budget)?;
+        let block = match super::Block::<super::Accounted, state::Uninit>::allocate(shape) {
+            Ok(block) => block,
+            Err(error) => {
+                accounts.root.truncate(previous.get() as usize);
+                return Err(resident::AllocError::Exhausted(error));
+            }
+        };
+        // SAFETY: transfer the sole root after all fallible work. The old block
+        // will be deallocated without dropping this charge again.
+        let root = unsafe { mem::ManuallyDrop::take(&mut accounts.root) };
+        // SAFETY: the one-slot shape reserves one account and root covers its capacity.
+        let next = unsafe { block.account(root, 1) };
+        // SAFETY: the new block has a nonempty slot list with no published owner.
+        let seed = unsafe { super::Seed::from_ptr(next) };
+        // SAFETY: Slot retains this span's initialized suffix and admitted target.
+        let bytes = unsafe { span.as_slice().get_unchecked(*head as usize..) };
+        let next = buffer::raw::Copy::copy(pool::CopyIn {
+            span: pool::Span::from_seed(seed),
+            sources: (bytes, input.input()),
+            len: bytes.len() + input.len(),
+        });
+        // SAFETY: the copy ended every payload borrow. The sole old edge and
+        // its transferred root must not run Drop after deallocation.
+        unsafe {
+            core.deallocate();
+            ptr::write(span, next);
+        }
+        *head = 0;
+        Ok(true)
+    }
+
     pub(super) unsafe fn initialize(
         base: super::Base<super::Accounted>,
         slots: u32,

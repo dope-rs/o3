@@ -68,7 +68,8 @@ impl<'d> Base<super::Resident<'d>> {
 }
 
 impl<K, S: state::State> Block<K, S> {
-    fn allocate(shape: super::Shape<K>) -> Result<Self, alloc::Exhausted> {
+    #[inline(always)]
+    pub(super) fn allocate(shape: super::Shape<K>) -> Result<Self, alloc::Exhausted> {
         let layout = shape.allocation();
         // SAFETY: Shape proves a valid nonzero allocation including its Header.
         let block = unsafe { alloc::raw::try_new(layout, S::ZEROED) }?;
@@ -136,12 +137,24 @@ impl<S: state::State> Block<Accounted, S> {
             .try_charge(layout.bytes())
             .map_err(resident::AllocError::Budget)?;
         let block = Self::allocate(shape).map_err(resident::AllocError::Exhausted)?;
-        let slots = block.shape.slots();
-        block.initialize();
-        // SAFETY: the same shape reserves exactly the admitted tally's account extent.
-        let base = unsafe { super::Accounts::initialize(block.base, slots, charge, limit) };
+        // SAFETY: shape and charge retain this tally's account count and payload capacity.
+        Ok(unsafe { block.account(charge, limit) })
+    }
+
+    /// # Safety
+    /// `limit` is this shape's account count; `charge` covers its payload capacity.
+    #[inline]
+    pub(super) unsafe fn account<'d>(
+        self,
+        charge: resident::Charge<'d>,
+        limit: u32,
+    ) -> Ptr<super::Resident<'d>, S> {
+        let slots = self.shape.slots();
+        self.initialize();
+        // SAFETY: the caller retains the shape's account count and complete charge.
+        let base = unsafe { super::Accounts::initialize(self.base, slots, charge, limit) };
         // SAFETY: all cells are initialized and the transferred charge binds the published domain.
-        Ok(unsafe { base.publish() })
+        unsafe { base.publish() }
     }
 }
 

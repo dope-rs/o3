@@ -15,15 +15,20 @@ impl<P: crate::buffer::raw::Policy> Heap<P> {
         seed: P::Seed,
         capacity: num::NonZero<u32>,
     ) -> Result<Self, alloc::Error<P::Failure>> {
-        use crate::buffer::raw::Token as _;
-
         let debit = P::try_acquire(crate::buffer::raw::Debit::new(seed, capacity))
             .map_err(alloc::Error::Policy)?;
+        Self::try_charged(debit).map_err(alloc::Error::Allocation)
+    }
+
+    pub(in crate::buffer) fn try_charged(
+        debit: P::Charge,
+    ) -> Result<Self, crate::alloc::Exhausted> {
+        use crate::buffer::raw::Token as _;
+
         let capacity = debit.debit().amount();
         let layout = crate::buffer::raw::Header::<P>::layout(capacity);
         // SAFETY: this admitted header includes a nonzero byte capacity.
-        let pointer = unsafe { crate::alloc::raw::try_new(layout, false) }
-            .map_err(alloc::Error::Allocation)?;
+        let pointer = unsafe { crate::alloc::raw::try_new(layout, false)? };
         let (policy, capacity) = debit.commit();
         // SAFETY: the fresh region fits this header and the exact committed
         // capacity; initialization is infallible and precedes owner publication.

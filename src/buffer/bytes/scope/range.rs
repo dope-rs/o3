@@ -3,6 +3,7 @@ use std::{marker, ops};
 use crate::buffer::{self, bytes::scope};
 
 /// Bounds selected from the immutable owner with this invariant identity.
+#[derive(Debug)]
 pub struct Range<'id> {
     pub(in crate::buffer::bytes::scope) bounds: ops::Range<usize>,
     pub(in crate::buffer::bytes::scope) brand: marker::PhantomData<*mut &'id ()>,

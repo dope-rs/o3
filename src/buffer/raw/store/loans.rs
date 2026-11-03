@@ -88,6 +88,20 @@ unsafe impl buffer::raw::Store for Unique<'_> {
         <&mut [u8] as buffer::raw::Store>::project(slice);
     }
 }
+
+// SAFETY: the prefix retains its original provided owner while its exact
+// exclusive byte borrow is restricted, including for an empty selection.
+unsafe impl buffer::raw::Store for provided::Prefix<'_, '_> {
+    fn empty() -> Option<Self> {
+        None
+    }
+
+    fn restrict(slice: buffer::raw::Slice<'_, '_, Self>) {
+        // SAFETY: bytes is the prefix's unchanged extent; its owner borrow stays intact.
+        let slice = unsafe { slice.map(|source| &mut source.bytes) };
+        <&mut [u8] as buffer::raw::Store>::project(slice);
+    }
+}
 // SAFETY: the concrete edge retains its original allocation, ownership, and lifetime.
 unsafe impl<'d> buffer::raw::Retain for Account<'d> {
     fn try_retain(&self) -> Result<Self, rc::Error> {

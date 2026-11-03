@@ -30,6 +30,22 @@ impl<'a, 'id> View<'a, 'id> {
         Ok(scope::Range::new(self, bounds))
     }
 
+    /// Borrows an exact prefix and binds its remaining range to this same owner.
+    pub fn try_split_at(
+        self,
+        count: num::NonZero<usize>,
+    ) -> Result<(&'a [u8], &'a [u8], scope::Range<'id>), consume::Error> {
+        let (prefix, remaining) = self
+            .bytes
+            .split_at_checked(count.get())
+            .ok_or_else(|| consume::Error::new(count, self.bytes.len()))?;
+        Ok((
+            prefix,
+            remaining,
+            scope::Range::new(self, count.get()..self.bytes.len()),
+        ))
+    }
+
     pub fn try_rsplit<const N: usize>(
         self,
     ) -> Result<(&'a [u8; N], scope::Range<'id>), consume::Error> {

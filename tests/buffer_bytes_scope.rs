@@ -210,6 +210,35 @@ fn retains_wrapped_sources() {
 }
 
 #[test]
+fn prefix_keeps_mutable_owner() {
+    let mut bytes = *b"abcdef";
+    let pointer = bytes.as_ptr();
+    let two = NonZero::<usize>::MIN.saturating_add(1);
+    let suffix = scope::Owner::with(bytes.as_mut_slice(), |owner| {
+        let (prefix, suffix, range) = owner.view().try_split_at(two).expect("prefix fits");
+        assert_eq!(prefix, b"ab");
+        assert_eq!(prefix.as_ptr(), pointer);
+        assert_eq!(suffix.as_ptr(), pointer.wrapping_add(2));
+        owner.project(range)
+    });
+    assert_eq!(suffix, b"cdef");
+    assert_eq!(suffix.as_ptr(), pointer.wrapping_add(2));
+
+    let five = NonZero::<usize>::MIN.saturating_add(4);
+    let (error, suffix) = scope::Owner::with(suffix, |owner| {
+        let error = owner
+            .view()
+            .try_split_at(five)
+            .err()
+            .expect("prefix exceeds suffix");
+        (error, owner.into_inner())
+    });
+    assert_eq!(error.into_parts(), (five, 4));
+    assert_eq!(suffix, b"cdef");
+    assert_eq!(suffix.as_ptr(), pointer.wrapping_add(2));
+}
+
+#[test]
 fn trailer_keeps_borrow() {
     let source = [1, 2, 3, 4, 5, 6];
     let owner = resident::Shared::from(source.as_slice());

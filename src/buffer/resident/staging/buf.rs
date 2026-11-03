@@ -78,12 +78,7 @@ impl<'d> Buf<'d> {
         consume::Error::check(target, self.plan().ceiling().get() as usize)
             .map_err(reserve::Error::Capacity)?;
         let target = num::NonZero::<u32>::MIN.saturating_add(target as u32 - 1);
-        Reserve {
-            buf: self,
-            target,
-            source: owners::Measured::slice(&[][..]),
-        }
-        .try_commit::<false>()
+        self.try_stage(target)
     }
 
     pub fn try_grow(&mut self) -> Result<(), reserve::Error> {
@@ -97,12 +92,25 @@ impl<'d> Buf<'d> {
             num::NonZero::<u32>::MIN.saturating_add(len as u32),
             len as u32,
         );
-        Reserve {
-            buf: self,
+        self.try_stage(target)
+    }
+
+    fn try_stage(&mut self, target: num::NonZero<u32>) -> Result<(), reserve::Error> {
+        let result = Reserve {
+            buf: &mut *self,
             target,
             source: owners::Measured::slice(&[][..]),
         }
-        .try_commit::<false>()
+        .try_commit::<false>();
+        if matches!(
+            result,
+            Err(reserve::Error::Resident(resident::AllocError::Budget(_)))
+        ) && self.is_empty()
+        {
+            // Release the empty edge so retained owners can reclaim its backing on drop.
+            self.clear();
+        }
+        result
     }
 
     fn growth(&self, target: num::NonZero<u32>, current: u32) -> num::NonZero<u32> {
@@ -151,15 +159,29 @@ impl<I: buffer::raw::SliceExt> Reserve<&mut Buf<'_>, owners::Measured<I>> {
                 } else {
                     None
                 };
+                let failure = |error| match source {
+                    Some(source) => reserve::Error::Spill { source, error },
+                    None => reserve::Error::Resident(error),
+                };
+                if !warm
+                    && owners::Accounts::try_grow(Reserve {
+                        buf: Slot {
+                            cursor: &mut *cursor,
+                            head: &mut buf.head,
+                        },
+                        target,
+                        source: &src,
+                    })
+                    .map_err(failure)?
+                {
+                    return Ok(());
+                }
                 let next = Backing::try_fresh(Reserve {
                     buf: &buf.pool,
                     target,
                     source: (buf.as_slice(), src),
                 })
-                .map_err(|error| match source {
-                    Some(source) => reserve::Error::Spill { source, error },
-                    None => reserve::Error::Resident(error),
-                })?;
+                .map_err(failure)?;
                 buf.backing = State::Live(next);
                 buf.head = 0;
                 Ok(())

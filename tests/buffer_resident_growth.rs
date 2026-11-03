@@ -77,3 +77,69 @@ fn retains_growth_domain() {
         assert_eq!(seed.resident(), 0);
     });
 }
+
+#[test]
+fn splits_and_transfers_admitted_capacity() {
+    Capacity(8)
+        .try_scope(|budget| {
+            let mut charge = budget.try_charge(8).expect("peak admission");
+            let input = charge.try_split(3).expect("input debit");
+            let error = charge.try_split(6).err().expect("exceeds remaining debit");
+            let (required, available) = error.into_parts();
+            assert_eq!((required.get(), available), (6, 5));
+            assert_eq!((charge.capacity(), budget.resident()), (5, 8));
+
+            let empty = charge.try_split(0).expect("empty debit");
+            let (empty, allocations) =
+                Tracker::count(|| storage::Owned::try_from_charge(empty).expect("empty storage"));
+            assert_eq!((empty.capacity(), allocations), (0, 0));
+            drop(empty);
+
+            let output = charge.try_split(5).expect("entire remaining debit");
+            assert_eq!((charge.capacity(), budget.available()), (0, 0));
+            let mut owner = storage::Owned::try_from_charge(output).expect("admitted storage");
+            owner.try_extend(b"hello").expect("initialized output");
+            let frozen = owner.freeze();
+            let retained = frozen.try_clone().expect("retain resident storage");
+            drop((charge, input, frozen));
+            assert_eq!((retained.as_slice(), budget.resident()), (&b"hello"[..], 5));
+            drop(retained);
+            assert_eq!(budget.resident(), 0);
+        })
+        .expect("resident domain");
+}
+
+#[test]
+fn refunds_failed_charge_transfer() {
+    Capacity(8)
+        .try_scope(|budget| {
+            let mut charge = budget.try_charge(8).expect("peak admission");
+            let output = charge.try_split(4).expect("output debit");
+            let error = Tracker::fail_after(0, || storage::Owned::try_from_charge(output))
+                .expect_err("allocation failure");
+            assert_eq!(error, storage::AllocError::Exhausted(alloc::Exhausted));
+            assert_eq!((charge.capacity(), budget.resident()), (4, 4));
+            let owner = storage::Owned::try_from_charge(charge).expect("remaining debit");
+            drop(owner);
+            assert_eq!(budget.resident(), 0);
+        })
+        .expect("resident domain");
+
+    let Some(capacity) = (u32::MAX as usize).checked_add(1) else {
+        return;
+    };
+    Capacity(capacity)
+        .try_scope(|budget| {
+            let charge = budget.try_charge(capacity).expect("wide debit");
+            let (error, allocations) = Tracker::count(|| {
+                storage::Owned::try_from_charge(charge).expect_err("capacity representation")
+            });
+            let storage::AllocError::Capacity(error) = error else {
+                panic!("capacity error");
+            };
+            let (required, available) = error.into_parts();
+            assert_eq!((required.get(), available), (capacity, u32::MAX as usize));
+            assert_eq!((allocations, budget.resident()), (0, 0));
+        })
+        .expect("resident domain");
+}

@@ -79,6 +79,9 @@ const _: fn() = || {
     confined::<Shared, _, _>();
     confined::<resident::Shared<'static>, _, _>();
     confined::<resident::Budget<'static>, _, _>();
+    confined::<resident::Charge<'static>, _, _>();
+    confined::<resident::Lease<'static>, _, _>();
+    confined::<Owned<resident::Lease<'static>>, _, _>();
     confined::<fixed::Loan<'static, ()>, _, _>();
     confined::<Str, _, _>();
     confined::<Snapshot<16_384>, _, _>();

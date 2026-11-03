@@ -75,6 +75,39 @@ fn prefixes_preserve_owner() {
 }
 
 #[test]
+fn projected_prefix_keeps_provided_owner() {
+    Item::try_scope(|mut unique, _, arena| {
+        let pointer = unique.as_slice().as_ptr();
+        let prefix = unique
+            .try_take(NonZero::<usize>::MIN.saturating_add(2))
+            .expect("three-byte prefix");
+        let prefix = buffer::bytes::scope::Owner::with(prefix, |owner| {
+            let (_, _, remaining) = owner
+                .view()
+                .try_split_at(NonZero::<usize>::MIN)
+                .expect("first prefix byte");
+            owner.project(remaining)
+        });
+        assert_eq!(prefix.as_ref(), b"xa");
+        assert_eq!(prefix.as_ref().as_ptr(), pointer.wrapping_add(1));
+        let empty = buffer::bytes::scope::Owner::with(prefix, |owner| {
+            let (_, _, remaining) = owner
+                .view()
+                .try_split_at(NonZero::<usize>::MIN.saturating_add(1))
+                .expect("complete prefix");
+            owner.project(remaining)
+        });
+        assert!(empty.as_ref().is_empty());
+        assert!(!arena.has_returned());
+        drop(empty);
+        assert_eq!(unique.as_slice(), b"ctly");
+        drop(unique);
+        assert!(arena.has_returned());
+    })
+    .expect("provided prefix projection");
+}
+
+#[test]
 fn chunks_preserve_owner() {
     use buffer::raw::Freeze as _;
 

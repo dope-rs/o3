@@ -1,7 +1,6 @@
 use std::{marker, num::NonZero, ptr::NonNull};
 
-use account::Accounts;
-pub(in crate::buffer) use account::{Account, Registered};
+pub(in crate::buffer) use account::{Account, Accounts, Registered};
 pub use edge::Edge;
 pub(in crate::buffer) use edge::{Input, Measured};
 use free::Free;

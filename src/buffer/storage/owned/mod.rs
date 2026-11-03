@@ -184,6 +184,18 @@ const _: () = {
 
 /// Unique bytes charged to one resident domain.
 impl<'d> storage::Owned<resident::Lease<'d>> {
+    /// Allocates against an existing debit without acquiring resident capacity again.
+    /// Failure releases the consumed charge; a zero charge needs no allocation.
+    pub fn try_from_charge(charge: resident::Charge<'d>) -> Result<Self, storage::AllocError> {
+        let storage = charge
+            .try_lease()
+            .map_err(storage::AllocError::Capacity)?
+            .map(crate::buffer::raw::Heap::try_charged)
+            .transpose()
+            .map_err(storage::AllocError::Exhausted)?;
+        Ok(Self::from_heap(storage))
+    }
+
     pub fn try_allocate(
         budget: &resident::Budget<'d>,
         capacity: usize,

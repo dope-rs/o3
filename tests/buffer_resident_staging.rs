@@ -1,11 +1,12 @@
 pub mod common;
 
-use std::num::NonZero;
+use std::{num::NonZero, pin::Pin};
 
 use common::{
     alloc::system::{Activity, Tracker},
     buffer::{Local, domain::Capacity},
 };
+use o3::base::cell::region;
 use o3::buffer::{
     Residency as _,
     hold::{
@@ -107,6 +108,186 @@ fn preserves_numeric_bounds() {
         assert!(
             matches!(rejected, Err(staging::Error::LimitTooLarge { limit }) if limit.get() == large)
         );
+    }
+}
+
+#[test]
+fn grows_accounted_staging_by_its_delta() {
+    let plan = staging::Plan::new(16_384, 131_072).expect("staging capacity");
+    let layout = staging::Layout::new(1, plan, 7, 131_050).expect("staging layout");
+    Capacity(layout.resident().get())
+        .try_scope(|budget| {
+            let pool = staging::Pool::try_account(&budget, layout).expect("staging pool");
+            let mut source = staging::Buf::try_from(&pool).expect("staging owner");
+            source
+                .try_reserve(131_058)
+                .expect("previous frame capacity");
+            source.write_slice(b"1234567").expect("next frame header");
+            assert_eq!(budget.available(), 131_064);
+            let pointer = source.as_slice().as_ptr();
+            let ((result, allocations), resizes) =
+                Tracker::resizes(|| Tracker::counts(|| source.try_reserve(131_072)));
+            result.expect("unique backing grows by its delta");
+            assert_eq!((allocations, resizes), ([1, 1], 0));
+            assert_ne!(source.as_slice().as_ptr(), pointer);
+            assert_eq!(source.as_slice(), b"1234567");
+            assert_eq!(source.resident(), 131_072);
+            assert_eq!(budget.resident(), 262_144);
+        })
+        .expect("resident domain");
+}
+
+#[test]
+fn preserves_accounted_growth_owners() {
+    let plan = staging::Plan::new(4, 16).expect("staging capacity");
+    let layout = staging::Layout::new(1, plan, 1, 0).expect("staging layout");
+    for append in [false, true] {
+        let mut domains = [resident::Domain::new(), resident::Domain::new()];
+        region::Token::scope_pinned(Pin::new(&mut domains), |token, domains| {
+            let [storage, retained] = domains.get_mut();
+            let budget = storage
+                .try_budget(layout.resident().get(), token.proof())
+                .expect("storage budget");
+            let retained = retained
+                .try_budget(16, token.proof())
+                .expect("retained budget");
+            let pool = staging::Pool::try_account(&budget, layout).expect("staging pool");
+            let mut source = staging::Buf::try_from(&pool).expect("staging owner");
+            source.try_reserve(12).expect("initial backing");
+            source.write_slice(b"abcdefg").expect("initialized prefix");
+            source.try_consume(2).expect("consumed prefix");
+            let pointer = source.as_slice().as_ptr();
+            let held = Input::new(&source, &retained)
+                .defer_all()
+                .bind(hold::Policy::share())
+                .try_into()
+                .expect("retained suffix");
+            let grow = |source: &mut staging::Buf<'_>| {
+                if append {
+                    source.write_slices([&b"ABCDE"[..], &[], &b"FGHIJK"[..]])
+                } else {
+                    source.try_reserve(16)
+                }
+            };
+            assert!(matches!(
+                grow(&mut source),
+                Err(reserve::Error::Resident(resident::AllocError::Budget(_)))
+                    | Err(reserve::Error::Spill {
+                        error: resident::AllocError::Budget(_),
+                        ..
+                    })
+            ));
+            assert_eq!(held.as_slice(), b"cdefg");
+            assert_eq!(retained.resident(), 12);
+            drop(held);
+            let failed = Tracker::fail_after(0, || grow(&mut source));
+            assert!(matches!(
+                failed,
+                Err(reserve::Error::Resident(resident::AllocError::Exhausted(_)))
+                    | Err(reserve::Error::Spill {
+                        error: resident::AllocError::Exhausted(_),
+                        ..
+                    })
+            ));
+            assert_eq!(source.as_slice(), b"cdefg");
+            assert_eq!(source.as_slice().as_ptr(), pointer);
+            assert_eq!(budget.resident(), 20);
+            grow(&mut source).expect("unique backing growth");
+            assert_ne!(source.as_slice().as_ptr(), pointer);
+            let expected: &[u8] = if append {
+                b"cdefgABCDEFGHIJK"
+            } else {
+                b"cdefg"
+            };
+            let held = Input::new(&source, &retained)
+                .defer_all()
+                .bind(hold::Policy::share())
+                .try_into()
+                .expect("relocated account");
+            drop(source);
+            drop(pool);
+            assert_eq!(held.as_slice(), expected);
+            assert_eq!(budget.resident(), 16);
+            assert_eq!(retained.resident(), 16);
+            drop(held);
+            assert_eq!(budget.resident(), 0);
+            assert_eq!(retained.resident(), 0);
+        });
+    }
+}
+
+#[test]
+fn releases_empty_staging_before_retained_budget_retry() {
+    let plan = staging::Plan::new(4, 16).expect("staging capacity");
+    let layout = staging::Layout::new(1, plan, 1, 0).expect("staging layout");
+    let mut domains = [resident::Domain::new(), resident::Domain::new()];
+    region::Token::scope_pinned(Pin::new(&mut domains), |token, domains| {
+        let [storage, retained] = domains.get_mut();
+        let budget = storage
+            .try_budget(layout.resident().get(), token.proof())
+            .expect("storage budget");
+        let retained = retained
+            .try_budget(16, token.proof())
+            .expect("retained budget");
+        let pool = staging::Pool::try_account(&budget, layout).expect("staging pool");
+        let mut source = staging::Buf::try_from(&pool).expect("staging owner");
+        source.try_reserve(12).expect("initial backing");
+        source.write_slice(b"abcd").expect("initialized prefix");
+        let held = Input::new(&source, &retained)
+            .defer_all()
+            .bind(hold::Policy::share())
+            .try_into()
+            .expect("retained input");
+        source.try_consume(4).expect("complete input");
+        assert!(matches!(
+            source.try_reserve(16),
+            Err(reserve::Error::Resident(resident::AllocError::Budget(_)))
+        ));
+        assert_eq!(source.resident(), 0);
+        assert_eq!(held.as_slice(), b"abcd");
+        assert_eq!(budget.resident(), 20);
+        drop(held);
+        assert_eq!(budget.resident(), 8);
+        assert_eq!(retained.resident(), 0);
+        source
+            .try_reserve(16)
+            .expect("released backing funds retry");
+    });
+}
+
+#[test]
+fn empty_growth_keeps_original_budget_error() {
+    let plan = staging::Plan::new(4, 16).expect("staging capacity");
+    let layout = staging::Layout::new(1, plan, 1, 0).expect("staging layout");
+    for accounted in [false, true] {
+        Capacity(layout.resident().get())
+            .try_scope(|budget| {
+                let pool = if accounted {
+                    staging::Pool::try_account(&budget, layout)
+                } else {
+                    staging::Pool::try_new(&budget, layout)
+                }
+                .expect("staging pool");
+                let mut source = staging::Buf::try_from(&pool).expect("staging owner");
+                source.try_reserve(12).expect("initial backing");
+                let blocker = budget
+                    .try_charge(budget.available())
+                    .expect("remaining credit");
+                let (result, allocations) = Tracker::count(|| source.try_reserve(16));
+                let Err(reserve::Error::Resident(resident::AllocError::Budget(error))) = result
+                else {
+                    panic!("budget error");
+                };
+                let (required, available) = error.into_parts();
+                assert_eq!((required.get(), available), (4, 0));
+                assert_eq!(
+                    (allocations, source.resident(), budget.resident()),
+                    (0, 0, 12)
+                );
+                drop(blocker);
+                source.try_reserve(16).expect("retry after credit returns");
+            })
+            .expect("resident domain");
     }
 }
 
