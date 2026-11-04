@@ -147,6 +147,88 @@ fn drains_and_reuses() {
 }
 
 #[test]
+fn cancellation_hands_off_only_taken_lane() {
+    let queue = fifo::Fifo::try_new(4, Fixed::<2>).expect("resident lanes");
+    let mut first = fifo::Registration::new();
+    let mut second = fifo::Registration::new();
+    let mut third = fifo::Registration::new();
+    let mut peer = fifo::Registration::new();
+    let ((), hot) = Tracker::measure(|| {
+        queue.lane::<1>().try_keep(&mut first, 10).expect("first");
+        queue.lane::<1>().try_keep(&mut second, 20).expect("second");
+        queue.lane::<1>().try_keep(&mut third, 30).expect("third");
+        queue.first().try_keep(&mut peer, 90).expect("peer");
+
+        assert_eq!(second.cancel(), None);
+        queue
+            .lane::<1>()
+            .try_keep(&mut second, 21)
+            .expect("reused slot");
+        assert_eq!(queue.take_next(), Some(10));
+        assert_eq!(first.cancel(), Some(30));
+        assert!(!first.is_active());
+        assert_eq!(first.cancel(), None);
+        assert_eq!(third.cancel(), Some(21));
+        assert_eq!(second.cancel(), None);
+        assert!(queue.first().take_one() == Take::Item(90));
+    });
+    assert_eq!(hot, [0; 4]);
+}
+
+#[test]
+fn cancellation_preserves_drain_and_rearm() {
+    fifo::Fifo::try_with(
+        3,
+        NonZero::<usize>::MIN.saturating_add(1),
+        (),
+        |_, queue| {
+            let lane = queue.try_index(1).expect("second lane");
+            let mut first = fifo::Registration::new();
+            let mut second = fifo::Registration::new();
+            let mut peer = fifo::Registration::new();
+            queue
+                .first()
+                .try_keep(&mut first, 10)
+                .expect("initial lane");
+            queue
+                .lane(lane)
+                .try_keep(&mut first, 11)
+                .expect("moved lane");
+            queue.lane(lane).try_keep(&mut second, 20).expect("second");
+            queue.first().try_keep(&mut peer, 90).expect("peer");
+            assert!(queue.lane(lane).take_one() == Take::Item(11));
+
+            queue.begin_drain();
+            assert_eq!(first.cancel(), None);
+            assert!(queue.drain_next() == Drain::Item(20));
+            assert_eq!(second.cancel(), None);
+            assert!(queue.drain_next() == Drain::Item(90));
+            assert!(queue.drain_next() == Drain::Done);
+            assert_eq!(peer.cancel(), None);
+
+            queue
+                .lane(lane)
+                .try_keep(&mut first, 30)
+                .expect("reuse first");
+            queue
+                .lane(lane)
+                .try_keep(&mut second, 40)
+                .expect("reuse second");
+            assert!(queue.lane(lane).take_one() == Take::Item(30));
+            queue
+                .lane(lane)
+                .try_keep(&mut first, 31)
+                .expect("rearmed first");
+            assert_eq!(first.cancel(), None);
+            assert!(queue.lane(lane).take_one() == Take::Item(40));
+            assert_eq!(second.cancel(), None);
+            assert!(!queue.has_waiters());
+        },
+    )
+    .expect("scoped owner");
+}
+
+#[test]
 fn storage_is_exact() {
     let word = mem::size_of::<usize>();
     assert_eq!(

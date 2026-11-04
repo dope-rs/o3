@@ -260,14 +260,29 @@ impl<W, L> Registration<'_, W, L> {
     pub fn is_active(&self) -> bool {
         self.lease.is_active()
     }
+
+    /// Retires this slot. If its value was taken, returns the next value in its lane.
+    /// During draining, retires without taking a successor.
+    pub fn cancel(&mut self) -> Option<W> {
+        let (fifo, key) = self.lease.active()?;
+        let key = *key;
+        self.lease.detach();
+        let lane = fifo.entries.remove(key)?;
+        if fifo.is_draining() {
+            return None;
+        }
+        match (Lane { fifo, lane }).take_one() {
+            resident::Take::Empty => None,
+            resident::Take::Item(value) => Some(value),
+        }
+    }
 }
 
 impl<W, L> resident::Target for Fifo<W, L> {
     type Key = resident::Key;
 
     fn retire(&self, key: Self::Key) {
-        // Only Copy values enter this FIFO; unlinking ends their ownership.
-        self.entries.remove(key);
+        let _ = self.entries.remove(key);
     }
 }
 

@@ -257,7 +257,7 @@ impl<T, L> Lanes<T, Parking, L> {
 }
 
 impl<T, L> Lanes<T, Plain, L> {
-    pub(super) fn remove(&self, key: Key) {
+    pub(super) fn remove(&self, key: Key) -> Option<Lane> {
         let entries = self.storage.as_ref();
         let view = Self::view(entries, key.index);
         if is_linked(view) {
@@ -266,6 +266,7 @@ impl<T, L> Lanes<T, Plain, L> {
                 depot::raw::Proof::new((self.join(key.lane, entries), key.index))
             });
             self.free.recycle(vacant);
+            None
         } else {
             // SAFETY: this key is not linked, so its hook is detached from every
             // list of this owner and returns to `self.free`, which owns this exact
@@ -277,6 +278,7 @@ impl<T, L> Lanes<T, Plain, L> {
                     *view.key(),
                 )
             };
+            Some(key.lane)
         }
     }
 }
