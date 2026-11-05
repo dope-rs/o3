@@ -8,7 +8,7 @@ use crate::base::cell::{
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct Value<B: Brand, T> {
-    pub(super) value: values::Value<B, T>,
+    pub(in crate::base::cell) value: values::Value<B, T>,
 }
 
 impl<B: Brand, T> Value<B, T> {
@@ -25,14 +25,6 @@ impl<B: Brand, T> Value<B, T> {
         T: Unpin,
     {
         f(access.region.borrow_mut(self))
-    }
-
-    pub fn get_mut(&mut self) -> &mut T {
-        self.value.get_mut()
-    }
-
-    pub fn into_inner(self) -> T {
-        self.value.into_inner()
     }
 }
 

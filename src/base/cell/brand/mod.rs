@@ -24,7 +24,7 @@ impl<'id> Brand for Identity<'id> {}
 /// Exclusive permission for one generative application domain.
 #[repr(transparent)]
 pub struct Token<B: Brand> {
-    token: values::Token<B>,
+    pub(in crate::base::cell) token: values::Token<B>,
 }
 
 impl<B: Brand> Token<B> {
@@ -32,17 +32,6 @@ impl<B: Brand> Token<B> {
         brand::Value {
             value: self.token.proof().bind(value),
         }
-    }
-
-    pub fn pin_mut<'a, T>(
-        &'a mut self,
-        value: pin::Pin<&'a brand::Value<B, T>>,
-    ) -> pin::Pin<&'a mut T> {
-        self.token.pin_mut(value)
-    }
-
-    pub fn borrow_pin<'a, T>(&'a self, value: pin::Pin<&'a brand::Value<B, T>>) -> pin::Pin<&'a T> {
-        self.token.borrow_pin(value)
     }
 }
 

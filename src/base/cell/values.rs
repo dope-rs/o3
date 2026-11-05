@@ -1,6 +1,6 @@
 use std::{cell, marker, pin};
 
-use crate::base::cell::{Sealed, brand};
+use crate::base::cell::{Sealed, brand, region};
 
 /// Exclusive access issued only by a generative scope.
 #[repr(transparent)]
@@ -52,8 +52,8 @@ impl<B: Sealed> Token<B> {
     }
 }
 
-impl<B: brand::Brand> Token<B> {
-    pub(in crate::base::cell) fn pin_mut<'a, T>(
+impl<B: brand::Brand> brand::Token<B> {
+    pub fn pin_mut<'a, T>(
         &'a mut self,
         value: pin::Pin<&'a brand::Value<B, T>>,
     ) -> pin::Pin<&'a mut T> {
@@ -62,13 +62,10 @@ impl<B: brand::Brand> Token<B> {
         unsafe { pin::Pin::new_unchecked(&mut *value.value.value.get()) }
     }
 
-    pub(in crate::base::cell) fn borrow_pin<'a, T>(
-        &'a self,
-        value: pin::Pin<&'a brand::Value<B, T>>,
-    ) -> pin::Pin<&'a T> {
+    pub fn borrow_pin<'a, T>(&'a self, value: pin::Pin<&'a brand::Value<B, T>>) -> pin::Pin<&'a T> {
         // SAFETY: both Value layers structurally pin T. Shared token access
         // excludes mutable access throughout the returned borrow.
-        unsafe { pin::Pin::new_unchecked(self.borrow(&value.get_ref().value)) }
+        unsafe { pin::Pin::new_unchecked(self.token.borrow(&value.get_ref().value)) }
     }
 }
 
@@ -81,12 +78,12 @@ impl<B: Sealed> Proof<B> {
     }
 }
 
-impl<B: Sealed, T> Value<B, T> {
-    pub(in crate::base::cell) fn get_mut(&mut self) -> &mut T {
-        self.value.get_mut()
+impl<B: region::Brand, T> region::Value<B, T> {
+    pub fn get_mut(&mut self) -> &mut T {
+        self.value.value.get_mut()
     }
 
-    pub(in crate::base::cell) fn into_inner(self) -> T {
-        self.value.into_inner()
+    pub fn into_inner(self) -> T {
+        self.value.value.into_inner()
     }
 }

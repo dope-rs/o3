@@ -110,18 +110,33 @@ fn shares_large_vec() {
 #[test]
 fn commits_spare() {
     let mut owned = (FixedOwned::try_new()).expect("the fixed test buffer must allocate");
-    let mut spare = owned.spare();
-    spare.write_slice(b"xyz").expect("required fixture outcome");
-    spare.commit();
+    owned.try_extend(b"xyz").expect("existing prefix");
+    let pointer = owned.as_ptr();
+    {
+        let mut spare = owned.spare();
+        spare.spare_capacity_mut()[0].write(b'!');
+        // SAFETY: the first staged byte is initialized and no external access remains.
+        unsafe { spare.set_len(1) };
+    }
     assert_eq!(owned.as_slice(), b"xyz");
 
     let mut writer = owned.spare();
-    writer
-        .write_slice(b"raw")
-        .expect("required fixture outcome");
-    assert_eq!(writer.len(), 3);
+    writer.write_slice(b"r").expect("staged prefix");
+    let output = writer.spare_capacity_mut();
+    assert_eq!(
+        (output.as_ptr().cast::<u8>(), output.len()),
+        (pointer.wrapping_add(4), FIXED_CAPACITY - 4)
+    );
+    output[0].write(b'a');
+    output[1].write(b'w');
+    // SAFETY: the first three staged bytes are initialized and external access has ended.
+    unsafe {
+        writer.set_len(3);
+        writer.set_len(2);
+    }
+    assert_eq!(writer.len(), 2);
     writer.commit();
-    assert_eq!(owned.as_slice(), b"xyzraw");
+    assert_eq!(owned.as_slice(), b"xyzra");
 }
 
 #[test]

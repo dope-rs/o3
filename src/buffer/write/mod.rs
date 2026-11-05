@@ -282,6 +282,18 @@ impl<'a> Spare<'a> {
         buffer::raw::Exclusive::as_mut_slice(self)
     }
 
+    #[inline]
+    pub fn spare_capacity_mut(&mut self) -> &mut [mem::MaybeUninit<u8>] {
+        buffer::raw::Exclusive::spare_parts(self).1
+    }
+
+    /// # Safety
+    /// The first `len` bytes of this staged region must be initialized, `len`
+    /// must not exceed its original capacity, and external access must have ended.
+    pub unsafe fn set_len(&mut self, len: usize) {
+        self.len = len as u32;
+    }
+
     pub fn fill(&mut self, byte: u8) {
         buffer::raw::Exclusive::fill(self, byte)
     }

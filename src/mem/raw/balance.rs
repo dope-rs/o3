@@ -21,9 +21,11 @@ impl<const N: usize, W: mem::raw::Word> Balance<N, W> {
     }
 
     /// Admits the exact amount without changing source accounts.
-    pub fn try_acquire(self, reserve: [W; N], amount: [W; N]) -> Result<Self, fair::Cause<W, N>> {
-        let mut shared = self.shared;
-        let mut next = self.held;
+    pub fn try_acquire(
+        mut self,
+        reserve: [W; N],
+        amount: [W; N],
+    ) -> Result<Self, fair::Cause<W, N>> {
         for index in 0..N {
             let current = self.held[index];
             let request = amount[index];
@@ -36,32 +38,30 @@ impl<const N: usize, W: mem::raw::Word> Balance<N, W> {
                 });
             };
             let required = Self::required(current, reserve[index], request);
-            if required > shared[index] {
+            if required > self.shared[index] {
                 return Err(fair::Cause::Exhausted {
                     axis: fair::Axis::<N>::ALL[index],
                     required,
-                    available: shared[index],
+                    available: self.shared[index],
                 });
             }
-            next[index] = total;
-            shared[index] = shared[index] - required;
+            self.held[index] = total;
+            self.shared[index] = self.shared[index] - required;
         }
-        Ok(Self::new(next, shared))
+        Ok(self)
     }
 
     /// # Safety
     /// Exact held-plus-amount sums fit `W`, and every shared demand is available.
     /// Sealed word operations cannot reenter between the admitted reads and commit.
-    pub unsafe fn acquire_raw(self, reserve: [W; N], amount: [W; N]) -> Self {
-        let mut next = self.held;
-        let mut shared = self.shared;
+    pub unsafe fn acquire_raw(mut self, reserve: [W; N], amount: [W; N]) -> Self {
         for axis in 0..N {
             let total = self.held[axis] + amount[axis];
             let required = Self::required(self.held[axis], reserve[axis], amount[axis]);
-            next[axis] = total;
-            shared[axis] = shared[axis] - required;
+            self.held[axis] = total;
+            self.shared[axis] = self.shared[axis] - required;
         }
-        Self::new(next, shared)
+        self
     }
 
     /// Computes incremental shared demand without requiring the requested sum to fit.
@@ -73,15 +73,13 @@ impl<const N: usize, W: mem::raw::Word> Balance<N, W> {
     /// # Safety
     /// This state holds the amount; returning its disjoint acquisition conserves
     /// the issuing shared capacity, so every refund fits `W` regardless of order.
-    pub unsafe fn release_raw(self, reserve: [W; N], amount: [W; N]) -> Self {
-        let mut next = self.held;
-        let mut shared = self.shared;
+    pub unsafe fn release_raw(mut self, reserve: [W; N], amount: [W; N]) -> Self {
         for axis in 0..N {
-            next[axis] = self.held[axis] - amount[axis];
             let returned = self.held[axis].sub_or_zero(reserve[axis]).min(amount[axis]);
-            shared[axis] = shared[axis] + returned;
+            self.held[axis] = self.held[axis] - amount[axis];
+            self.shared[axis] = self.shared[axis] + returned;
         }
-        Self::new(next, shared)
+        self
     }
 
     fn required(held: W, reserve: W, amount: W) -> W {

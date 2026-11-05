@@ -16,9 +16,9 @@ fn borrows_branded_regions() {
     brand::Token::scope_pinned(Pin::new(&mut ()), |mut token, (mut io, mut state), _| {
         let value = token.bind(1);
         *token.pin_mut(Pin::new(&value)).get_mut() = 2;
-        assert_eq!(*token.pin_mut(Pin::new(&value)).get_mut(), 2);
+        assert_eq!(*token.borrow_pin(Pin::new(&value)), 2);
         let buffer = io.bind(1_u64);
-        let counter = state.bind(2_u64);
+        let mut counter = state.bind(2_u64);
         let count = state.borrow_mut(&counter);
         let bytes = io.borrow_mut(&buffer);
         *bytes += *count;
@@ -29,7 +29,7 @@ fn borrows_branded_regions() {
         counter.write(access.reborrow(), |value| *value += 3);
         assert_eq!(counter.read(access.read(), |value| *value), 8);
         access.with_region(|token| *token.borrow_mut(&counter) += 1);
-        assert_eq!(*io.borrow(&buffer), 5);
-        assert_eq!(*state.borrow(&counter), 9);
+        assert_eq!(buffer.into_inner(), 5);
+        assert_eq!(*counter.get_mut(), 9);
     });
 }
