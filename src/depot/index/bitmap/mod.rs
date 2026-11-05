@@ -4,7 +4,6 @@ pub use error::Error;
 pub use fill::Fill;
 pub use shape::Shape;
 mod width;
-pub(in crate::depot::index::bitmap) use entry::Found;
 pub(in crate::depot::index::bitmap) use init::Init;
 pub(in crate::depot::index::bitmap) use level::Level;
 pub use width::Width;

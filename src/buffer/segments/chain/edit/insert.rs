@@ -146,7 +146,7 @@ impl<'a, T: buffer::raw::Segment, E: Edge> Insert<'a, T, E> {
                 let mut live = claim;
                 // SAFETY: `previous` is the sequence's live single node, `live` is
                 // its sole detached successor, and both belong to the same store.
-                unsafe { links.append_store(live.owner_mut(), previous) };
+                unsafe { links.append_end(live.owner_mut(), previous) };
                 // SAFETY: `links` now holds that live node set and `live` is the
                 // sole claim admitted from the same store.
                 unsafe { edge.insert(&mut links, live) };

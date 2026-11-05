@@ -74,6 +74,15 @@ pub(in crate::depot) unsafe trait Store: Sized {
         self.storage_mut().parts_mut()
     }
 
+    /// # Safety
+    /// The key and destination (or NONE) belong to this map's exact owner.
+    /// Complete that heap mutation before releasing its exclusive planes.
+    unsafe fn reindex(map: &mut [Self::Position], key: Self::Key, position: Self::Position) {
+        use crate::depot::raw::Address as _;
+
+        unsafe { *map.get_unchecked_mut(key.index()) = position };
+    }
+
     /// Runs required priority destruction before terminal deallocation.
     /// # Safety
     /// This terminal owner deallocates its backing without observing or destroying the entries again.
@@ -90,6 +99,8 @@ pub(in crate::depot) unsafe trait Store: Sized {
     }
 
     fn clear(&mut self) {
+        use crate::depot::raw::Link as _;
+
         let (len, entries, map) = unsafe { self.parts() };
         while *len != 0 {
             *len -= 1;
@@ -97,7 +108,7 @@ pub(in crate::depot) unsafe trait Store: Sized {
             // SAFETY: this exclusive owner retains the initialized entry and its
             // exact reverse map until retirement precedes native destruction.
             unsafe {
-                heap::raw::Reindex::<Self>::new(map).removed(entry);
+                Self::reindex(map, entry.identity, Self::Position::NONE);
                 ptr::drop_in_place(entry);
             }
         }

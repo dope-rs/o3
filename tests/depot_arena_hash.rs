@@ -57,6 +57,7 @@ fn reserve_stays_private() {
                 .try_reserve(9, &[3][..])
                 .map_err(|(_, key)| (key.index(), key.generation().get()))
                 .expect("unindexed resident must reserve the directory key");
+            assert_eq!(reserved.hash(), 9);
             assert_eq!(reserved.get(), &[1]);
         }
         assert!(store.indexed(key).is_none());

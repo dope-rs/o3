@@ -1,8 +1,9 @@
-use std::{cmp, mem};
+use std::{cmp, mem, ptr};
 
 use crate::depot::{
     self,
     heap::{self, hole},
+    raw::{Link as _, Word as _},
 };
 
 unsafe impl<
@@ -46,24 +47,21 @@ unsafe impl<
         let (_, entries, map) = unsafe { S::parts(owner) };
         let position = target;
         let [target, source] = unsafe { entries.get_disjoint_unchecked_mut([target, source]) };
-        let target = heap::raw::Position {
-            slot: target,
-            index: position,
-        };
         let value = unsafe { source.assume_init_ref() };
-        unsafe { heap::raw::Reindex::<S>::new(map).moved(value, &target) };
-        target.copy(value);
+        // SAFETY: Step retains distinct positions and this owner's exact reverse map.
+        unsafe {
+            S::reindex(map, value.identity, S::Position::from_offset(position));
+            ptr::copy_nonoverlapping(value, target.as_mut_ptr(), 1);
+        }
     }
 
     fn write<const PLACE: bool>(finish: hole::Finish<Self>) -> Self {
         let (owner, position, value) = finish.into_inner();
         let (_, entries, map) = unsafe { S::parts(owner) };
-        let target = heap::raw::Position {
-            slot: unsafe { entries.get_unchecked_mut(position) },
-            index: position,
-        };
+        let target = unsafe { entries.get_unchecked_mut(position) };
         if PLACE {
-            unsafe { heap::raw::Reindex::<S>::new(map).moved(&value, &target) };
+            // SAFETY: Finish retains this key and its admitted destination in the same owner.
+            unsafe { S::reindex(map, value.identity, S::Position::from_offset(position)) };
         }
         target.write(value);
         owner
@@ -79,7 +77,7 @@ fn detach<'a, const REMOVE: bool, S: heap::raw::Store>(
     let slot = unsafe { entries.get_unchecked_mut(position) };
     if REMOVE {
         // SAFETY: the same owner retains the slot's reciprocal reverse-map entry.
-        unsafe { heap::raw::Reindex::<S>::new(map).removed(slot.assume_init_ref()) };
+        unsafe { S::reindex(map, slot.assume_init_ref().identity, S::Position::NONE) };
     }
     slot
 }

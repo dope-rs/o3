@@ -25,8 +25,7 @@ impl<T> Pool<T> {
         let free = self.block.state().get();
         if free == 0 {
             return Err(ring::Full {
-                used: self.capacity(),
-                capacity: self.capacity(),
+                capacity: *self.block.extent(),
             });
         }
         self.block.state().set(free - 1);

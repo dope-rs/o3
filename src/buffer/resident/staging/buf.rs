@@ -219,13 +219,12 @@ impl<I: buffer::raw::SliceExt> Reserve<&mut Buf<'_>, owners::Measured<I>> {
             }
             State::Empty => {
                 let next = if target <= buf.pool.plan().warm()
-                    && let Some(cursor) = buf.pool.warm().acquire()
-                {
-                    Backing::Warm(pool::Span::staged(Reserve {
-                        buf: cursor,
+                    && let Some(cursor) = pool::Pool::staged(Reserve {
+                        buf: buf.pool.warm(),
                         target,
-                        source: src,
-                    }))
+                        source: &src,
+                    }) {
+                    Backing::Warm(cursor)
                 } else {
                     Backing::try_fresh(Reserve {
                         buf: &buf.pool,

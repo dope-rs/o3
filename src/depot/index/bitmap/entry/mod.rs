@@ -8,6 +8,3 @@ mod row;
 pub use row::Row;
 /// A completed removal retaining its original bounded row and source plane.
 pub struct Removed;
-
-mod found;
-pub(in crate::depot::index::bitmap) use found::Found;

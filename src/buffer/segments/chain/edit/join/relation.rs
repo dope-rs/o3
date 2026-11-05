@@ -185,8 +185,8 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                                     }))?;
                             let mut links = ends::Exclusive::empty();
                             unsafe {
-                                links.append_store(nodes, left);
-                                links.append_store(nodes, right);
+                                links.append_end(nodes, left);
+                                links.append_end(nodes, right);
                             }
                             let claim = claim.insert(Descriptor::new(
                                 links,
@@ -213,7 +213,7 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                             source: right,
                         } => {
                             let desc = unsafe { &mut *descs.value_ptr(left) };
-                            unsafe { desc.links.append_store(nodes, right) };
+                            unsafe { desc.links.append_end(nodes, right) };
                             desc
                         }
                         Links::Splice {
@@ -270,7 +270,7 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                                         available: 0,
                                     }))?;
                             let mut links = ends::Exclusive::empty();
-                            unsafe { links.append_store(store, index) };
+                            unsafe { links.append_end(store, index) };
                             (links, Output::Multi(claim))
                         }
                         handles::State::Multi(index) => {

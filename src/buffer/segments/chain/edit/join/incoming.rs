@@ -57,7 +57,7 @@ unsafe impl<T> depot::raw::Start<segments::Item<T>> for Incoming<'_, T> {
         let (links, count) = match self.input {
             join::Input::Single(index) => {
                 let mut links = ends::Exclusive::empty();
-                unsafe { links.append_store(store, index) };
+                unsafe { links.append_end(store, index) };
                 (links, 1)
             }
             join::Input::Multi { index, count } => (

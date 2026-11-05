@@ -1,14 +1,10 @@
 use heap::{Live, keyed, resident};
 pub(in crate::depot) use hole::Hole;
-pub(in crate::depot) use position::Position;
-pub(in crate::depot) use reindex::Reindex;
 pub(in crate::depot) use store::Store;
 
 use crate::depot::{heap, index};
 
 mod hole;
-mod position;
-mod reindex;
 mod store;
 
 unsafe impl<'a, K: crate::depot::raw::Address, P: Ord, C, I: index::Position>
@@ -63,3 +59,15 @@ mod queue;
 pub(in crate::depot) use queue::Queue;
 
 mod source;
+
+const _: () = {
+    use std::mem;
+
+    use heap::{hole::Step, indexed::Min};
+
+    let word = mem::size_of::<usize>();
+    assert!(mem::size_of::<heap::raw::Hole<&'static mut Min<usize>>>() == 4 * word);
+    assert!(mem::size_of::<heap::Entry<&'static mut Min<usize>>>() == 2 * word);
+    assert!(mem::size_of::<Step<'static, &'static mut Min<usize>>>() == 2 * word);
+    assert!(mem::size_of::<Option<Step<'static, &'static mut Min<usize>>>>() == 2 * word);
+};

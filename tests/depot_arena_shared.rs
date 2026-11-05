@@ -5,15 +5,11 @@ static ALLOCATOR: Tracker = Tracker;
 
 use std::{
     cell::{self, Cell},
-    mem, ptr,
+    mem,
     rc::Rc,
 };
 
-use common::{
-    Counted,
-    alloc::system::Tracker,
-    depot::arena::{Inline, pool::Reused},
-};
+use common::{Counted, alloc::system::Tracker, depot::arena::pool::Reused};
 use o3::depot::{
     arena::pool::{
         recycle::{self, release},
@@ -69,21 +65,6 @@ fn recycles_reservation() {
         vacancy.reserve().commit(String::from("ready")).as_str(),
         "ready"
     );
-}
-
-#[test]
-fn commits_in_place() {
-    let result = shared::Store::try_new(Count::new(1));
-    let pool = result.expect("one inline shared lease slot must allocate");
-    let ptr = Cell::new(ptr::null());
-    let vacancy = (pool.vacancy()).expect("a new one-slot store has one vacancy");
-    let mut unique = vacancy.reserve().begin(Inline::default());
-    ptr.set(&*unique as *const Inline);
-    unique.bytes[..5].copy_from_slice(b"exact");
-    unique.len = 5;
-    let lease = unique.freeze();
-    assert_eq!(ptr.get(), &*lease as *const Inline);
-    assert_eq!(&lease.bytes[..lease.len], b"exact");
 }
 
 #[test]

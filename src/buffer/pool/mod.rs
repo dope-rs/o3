@@ -11,7 +11,10 @@ pub use span::{
 
 use crate::{
     buffer,
-    buffer::{resident, write::consume},
+    buffer::{
+        resident::{self, staging},
+        write::consume,
+    },
 };
 
 pub mod borrowed;
@@ -123,6 +126,17 @@ impl<'d> Pool<state::Uninit, owners::Resident<'d>> {
     ) -> Result<Self, resident::AllocError> {
         let core = owners::Block::<owners::Accounted, state::Uninit>::try_new(tally, budget)?;
         Ok(Self { core })
+    }
+
+    pub(in crate::buffer) fn staged<I: buffer::raw::SliceExt>(
+        reserve: staging::Reserve<&Self, &owners::Measured<I>>,
+    ) -> Option<Span<owners::Resident<'d>>> {
+        let (pool, _, src) = reserve.into_parts();
+        Some(buffer::raw::Copy::copy(CopyIn {
+            span: pool.acquire()?,
+            sources: src.input(),
+            len: src.len(),
+        }))
     }
 }
 

@@ -81,7 +81,7 @@ impl<'a, T: buffer::raw::Segment> Original<'a, T> {
             handles::State::Single(index) => {
                 let (len, resident) = single(index);
                 let mut links = ends::Exclusive::empty();
-                unsafe { links.append_store(nodes, index) };
+                unsafe { links.append_end(nodes, index) };
                 (links, len, resident)
             }
         };

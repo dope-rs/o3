@@ -133,6 +133,12 @@ impl<Q, P> Vacancy<Q, P> {
     }
 }
 
+impl<Q> Vacancy<Q, u64> {
+    pub const fn hash(&self) -> u64 {
+        self.phase
+    }
+}
+
 impl<Q> Vacancy<Q> {
     pub(crate) fn new(proof: map::raw::Bucket<Q, map::raw::Vacant>) -> Self {
         let (owner, bucket) = proof.into_parts();

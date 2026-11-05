@@ -68,10 +68,9 @@ impl<T> Fifo<T> {
     }
 
     pub fn try_vacant(&mut self) -> Result<Vacant<'_, Fifo<T>>, ring::Full> {
-        let used = self.state.len();
-        let capacity = self.capacity();
-        if used == capacity {
-            return Err(ring::Full { used, capacity });
+        let capacity = *self.block.extent();
+        if self.state.len() == capacity.get() {
+            return Err(ring::Full { capacity });
         }
         Ok(ring::Vacant { source: self })
     }

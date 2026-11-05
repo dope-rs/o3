@@ -1,9 +1,7 @@
 use std::{
     marker, mem,
     num::NonZero,
-    ops,
     slice::{from_raw_parts, from_raw_parts_mut},
-    str,
 };
 
 use crate::{
@@ -70,41 +68,12 @@ unsafe impl<T: Retain> Retain for Option<T> {
     }
 }
 
-/// A complete immutable source whose entire visible range is valid UTF-8.
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct Utf8<O: buffer::raw::Source> {
-    owner: O,
-}
-
-impl<O: buffer::raw::Source> Utf8<O> {
-    /// Validates and retains one complete immutable UTF-8 source.
-    pub fn try_new(owner: O) -> Result<Self, str::Utf8Error> {
-        str::from_utf8(owner.as_ref())?;
-        Ok(Self { owner })
-    }
-
-    /// # Safety
-    /// The source's entire unchanged visible range is valid UTF-8.
-    pub unsafe fn new(owner: O) -> Self {
-        Self { owner }
-    }
-
-    pub fn as_str(&self) -> &str {
-        // SAFETY: construction proves UTF-8 and buffer::raw::Source preserves the complete range.
-        unsafe { str::from_utf8_unchecked(self.owner.as_ref()) }
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        self.owner.as_ref()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn len(&self) -> usize {
-        self.owner.as_ref().len()
-    }
+/// Retains a complete source whose UTF-8 was already validated.
+/// # Safety
+/// The source's entire unchanged visible range is valid UTF-8.
+pub unsafe fn utf8<O: Source>(owner: O) -> buffer::storage::Str<O> {
+    // SAFETY: the caller proves UTF-8 for this complete immutable source.
+    unsafe { buffer::storage::Str::new(owner) }
 }
 
 /// # Safety
@@ -266,36 +235,7 @@ impl<'a> Projection<'a, '_> {
 }
 
 /// Immutable UTF-8 in one exact allocation bound to its paying domain.
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct Text<'d> {
-    text: buffer::raw::Utf8<resident::Exact<'d>>,
-}
-
-impl<'d> Text<'d> {
-    /// # Safety
-    /// The complete immutable owner must contain valid UTF-8.
-    pub unsafe fn from_utf8(owner: resident::Exact<'d>) -> Self {
-        // SAFETY: the caller proves UTF-8 for this complete immutable allocation.
-        Self {
-            text: unsafe { buffer::raw::Utf8::new(owner) },
-        }
-    }
-
-    pub fn try_clone(&self) -> Result<Self, rc::Error> {
-        // SAFETY: retaining the exact owner preserves its complete validated UTF-8 range.
-        Ok(unsafe { Self::from_utf8(self.text.owner.try_clone()?) })
-    }
-}
-
-const _: () = assert!(size_of::<Text<'static>>() == size_of::<usize>());
-
-impl<'d> ops::Deref for Text<'d> {
-    type Target = buffer::raw::Utf8<resident::Exact<'d>>;
-    fn deref(&self) -> &Self::Target {
-        &self.text
-    }
-}
+pub type Text<'d> = buffer::storage::Str<resident::Exact<'d>>;
 
 /// Exclusive initialized suffix retained through its output operation.
 pub struct Output<'a, L = pool::Layout> {

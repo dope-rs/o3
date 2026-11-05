@@ -181,23 +181,6 @@ impl<L> pool::Span<owners::Plain<L>, pool::Owned, state::Initialized> {
 
 /// One acquired resident-pool backing without a duplicate pool owner.
 impl<'d> pool::Span<owners::Resident<'d>> {
-    pub(in crate::buffer) fn staged<I: buffer::raw::SliceExt>(
-        reserve: staging::Reserve<Self, owners::Measured<I>>,
-    ) -> Self {
-        let (mut cursor, _, src) = reserve.into_parts();
-        let start = cursor.len();
-        let target = cursor.entry().data();
-        let end = start + src.len();
-        buffer::raw::Copy::copy(Append {
-            cursor: &mut cursor,
-            sources: src.into_input(),
-            start,
-            target,
-            end,
-        });
-        cursor
-    }
-
     pub(in crate::buffer) fn try_extend<'a, I: buffer::raw::SliceExt>(
         slot: staging::Slot<'a, 'd>,
         slab: Option<&pool::Pool<state::Uninit, owners::Resident<'d>>>,

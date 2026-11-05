@@ -48,7 +48,7 @@ impl<T: AsRef<[u8]>> Input<T> {
         let len = value.as_ref().len();
         // SAFETY: admission proves this stable extent fits the signed byte count
         // domain, so conversion preserves the exact u32 value.
-        unsafe { bounded::raw::Proof::assume(len as u32).retain() }
+        unsafe { bounded::raw::u32(len as u32) }
     }
 }
 
@@ -62,6 +62,6 @@ impl Input<&[u8]> {
         let len = prefix.as_slice().len();
         // SAFETY: the immutable prefix retains len <= MAX, and the const bound
         // proves MAX <= END, so conversion preserves the exact u32 value.
-        unsafe { bounded::raw::Proof::assume(len as u32).retain() }
+        unsafe { bounded::raw::u32(len as u32) }
     }
 }
