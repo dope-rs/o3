@@ -1,4 +1,4 @@
-use std::{num::NonZero, ops};
+use std::{mem::MaybeUninit, num::NonZero, ops};
 
 use provided::account;
 
@@ -30,9 +30,19 @@ impl<const N: usize> Value<[u8; N]> {
 
 impl<T: buffer::raw::Source> Value<T> {
     pub fn try_new(value: T) -> Result<Self, bounded::Rejected<T>> {
-        if value.as_ref().len() > bounded::MAX {
+        if U32::<0, { bounded::MAX as u32 }>::try_usize(value.as_ref().len()).is_err() {
             return Err(bounded::Rejected::new(value));
         }
+        Ok(Self(value))
+    }
+}
+
+impl<'a> TryFrom<&'a mut [MaybeUninit<u8>]> for Value<&'a mut [MaybeUninit<u8>]> {
+    type Error = bounded::Overflow;
+
+    fn try_from(value: &'a mut [MaybeUninit<u8>]) -> Result<Self, Self::Error> {
+        U32::<0, { bounded::MAX as u32 }>::try_usize(value.len())
+            .map_err(bounded::Overflow::from_num)?;
         Ok(Self(value))
     }
 }

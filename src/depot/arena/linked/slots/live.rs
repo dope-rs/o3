@@ -70,11 +70,11 @@ impl<T, H: linked::Source<T>, Tag> Drop for Live<T, H, Tag> {
 
 impl<T, Tag> Live<T, &slots::Store<T>, Tag> {
     /// # Safety
-    /// The links are a live partition in this claim's exact store.
+    /// The links are a live partition in this claim's exact store; the claim has no successor.
     pub(crate) unsafe fn append(self, links: &mut ends::Exclusive<slots::Index<Tag>>) {
         let mut claim = self;
         let index = claim.index();
-        unsafe { links.append_store(claim.owner_mut(), index) };
+        unsafe { links.append_end(claim.owner_mut(), index) };
         unsafe { claim.publish() };
     }
 

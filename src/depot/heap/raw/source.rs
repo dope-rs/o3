@@ -1,4 +1,4 @@
-use std::{cmp, mem, ptr};
+use std::{cmp, ptr};
 
 use crate::depot::{
     self,
@@ -16,11 +16,11 @@ unsafe impl<
     type Value = heap::Stored<K, P>;
 
     fn len(&self) -> u32 {
-        *self.view().0
+        self.storage().state
     }
 
     unsafe fn len_mut(&mut self) -> &mut u32 {
-        unsafe { S::parts(self) }.0
+        &mut self.storage_mut().state
     }
 
     fn compare(entry: hole::At<&Self, &Self::Value>) -> cmp::Ordering {
@@ -38,13 +38,21 @@ unsafe impl<
     }
 
     fn read<const REMOVE: bool>(entry: hole::At<&mut Self>) -> Self::Value {
+        let (owner, position, ()) = entry.into_inner();
+        let (_, entries, map) = owner.storage_mut().parts_mut();
+        // SAFETY: At retains this exact initialized heap position and its exclusive owner.
+        let slot = unsafe { entries.get_unchecked_mut(position) };
+        if REMOVE {
+            // SAFETY: the same owner retains the slot's reciprocal reverse-map entry.
+            unsafe { S::reindex(map, slot.assume_init_ref().identity, S::Position::NONE) };
+        }
         // SAFETY: detachment retains this exact initialized slot until it is moved once.
-        unsafe { detach::<REMOVE, S>(entry).assume_init_read() }
+        unsafe { slot.assume_init_read() }
     }
 
     fn shift(step: hole::Step<'_, Self>) {
         let (owner, source, target) = step.into_inner();
-        let (_, entries, map) = unsafe { S::parts(owner) };
+        let (_, entries, map) = owner.storage_mut().parts_mut();
         let position = target;
         let [target, source] = unsafe { entries.get_disjoint_unchecked_mut([target, source]) };
         let value = unsafe { source.assume_init_ref() };
@@ -57,7 +65,7 @@ unsafe impl<
 
     fn write<const PLACE: bool>(finish: hole::Finish<Self>) -> Self {
         let (owner, position, value) = finish.into_inner();
-        let (_, entries, map) = unsafe { S::parts(owner) };
+        let (_, entries, map) = owner.storage_mut().parts_mut();
         let target = unsafe { entries.get_unchecked_mut(position) };
         if PLACE {
             // SAFETY: Finish retains this key and its admitted destination in the same owner.
@@ -66,20 +74,6 @@ unsafe impl<
         target.write(value);
         owner
     }
-}
-
-fn detach<'a, const REMOVE: bool, S: heap::raw::Store>(
-    entry: hole::At<&'a mut &mut S>,
-) -> &'a mut mem::MaybeUninit<heap::Stored<S::Key, S::Priority>> {
-    let (owner, position, ()) = entry.into_inner();
-    // SAFETY: At retains this exact initialized heap position and its exclusive owner.
-    let (_, entries, map) = unsafe { S::parts(owner) };
-    let slot = unsafe { entries.get_unchecked_mut(position) };
-    if REMOVE {
-        // SAFETY: the same owner retains the slot's reciprocal reverse-map entry.
-        unsafe { S::reindex(map, slot.assume_init_ref().identity, S::Position::NONE) };
-    }
-    slot
 }
 
 fn compare<S: heap::raw::Store>(

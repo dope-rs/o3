@@ -23,7 +23,7 @@ pub(in crate::buffer::segments) struct Back;
 pub(in crate::buffer::segments) trait Edge: Sized {
     /// # Safety
     /// `links` must exclusively own this edge's live descriptor ends and `claim`
-    /// its sole admitted node; both must remain unchanged until publication.
+    /// its sole admitted node with no successor; both remain unchanged until publication.
     unsafe fn insert<T>(
         self,
         links: &mut ends::Exclusive<slots::Index>,
@@ -192,7 +192,7 @@ impl Edge for Back {
         claim: slots::Live<T, &'_ slots::Store<T>>,
     ) {
         // SAFETY: the caller proved `links` is the live end-set of the claim's
-        // exact store and that `claim` is its sole admitted node.
+        // exact store and that `claim` is its sole admitted node with no successor.
         unsafe { claim.append(links) };
     }
 }

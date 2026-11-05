@@ -122,7 +122,9 @@ fn commits_spare() {
 
     let mut writer = owned.spare();
     writer.write_slice(b"r").expect("staged prefix");
-    let output = writer.spare_capacity_mut();
+    let output = o3::buffer::bytes::bounded::Value::try_from(writer.spare_capacity_mut())
+        .expect("native read extent")
+        .into_inner();
     assert_eq!(
         (output.as_ptr().cast::<u8>(), output.len()),
         (pointer.wrapping_add(4), FIXED_CAPACITY - 4)
