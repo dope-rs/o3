@@ -408,10 +408,16 @@ const _: () = {
     assert!(mem::size_of::<Option<Chunk<'static>>>() == mem::size_of::<&[u8]>());
 };
 
-pub(in crate::buffer) unsafe fn copy_slices<'a>(
-    sources: impl IntoIterator<Item = &'a [u8]>,
-    target: *mut u8,
-) {
+/// Copies slices consecutively without publishing a length.
+///
+/// # Safety
+/// The finite source sequence's total length must fit `isize` without overflow.
+/// `target` must be nonnull and retain exclusive writable storage for that range
+/// in one allocation; an aligned dangling pointer is allowed for a zero total.
+/// Sources must remain valid and disjoint from the entire destination throughout
+/// the call. Iterator callbacks must preserve these conditions and must not
+/// access the destination.
+pub unsafe fn copy_slices<'a>(sources: impl IntoIterator<Item = &'a [u8]>, target: *mut u8) {
     let mut offset = 0;
     for source in sources {
         // SAFETY: the caller retains all sources and their complete disjoint target.

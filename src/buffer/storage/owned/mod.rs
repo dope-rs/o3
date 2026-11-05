@@ -46,6 +46,20 @@ impl Owned {
         Ok(Self::from_heap(Some(heap)))
     }
 
+    /// Reserves a total capacity while preserving the initialized bytes.
+    /// Smaller targets leave the allocation unchanged.
+    pub fn try_reserve(
+        &mut self,
+        target: num::NonZero<u32>,
+    ) -> Result<(), crate::alloc::Exhausted> {
+        match &mut self.bytes.allocation {
+            Some(heap) => heap.try_reserve(target),
+            None => crate::buffer::raw::Heap::try_new((), target)
+                .map(|heap| self.bytes.allocation = Some(heap)),
+        }
+        .map_err(alloc::Error::into_alloc)
+    }
+
     pub fn try_build<E>(
         capacity: usize,
         build: impl FnOnce(&mut spans::Writer<'_, '_, false>) -> Result<(), E>,
@@ -129,14 +143,9 @@ impl<P: crate::buffer::raw::Policy, const CAP: u32> Owned<P, CAP> {
 }
 
 impl<P: crate::buffer::raw::Policy> Owned<P> {
-    pub(in crate::buffer) const EMPTY: Self = Self {
-        bytes: Bytes {
-            allocation: None,
-            len: 0,
-        },
-    };
+    pub(in crate::buffer) const EMPTY: Self = Self::from_heap(None);
 
-    pub(in crate::buffer) fn from_heap(heap: Option<crate::buffer::raw::Heap<P>>) -> Self {
+    pub(in crate::buffer) const fn from_heap(heap: Option<crate::buffer::raw::Heap<P>>) -> Self {
         Self {
             bytes: Bytes {
                 allocation: heap,

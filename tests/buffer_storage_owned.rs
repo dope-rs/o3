@@ -162,13 +162,41 @@ fn rejects_oversized_write() {
 }
 
 #[test]
-fn keeps_runtime_capacity() {
-    let mut owned = (Owned::try_with(5)).expect("the five-byte test buffer must allocate");
-    owned
-        .try_extend(b"exact")
-        .expect("required fixture outcome");
-    assert_eq!(owned.as_slice(), b"exact");
+fn grows_and_freezes() {
+    let mut owned = Owned::new();
+    let initial = num::NonZero::<u32>::MIN.saturating_add(4);
+    assert_eq!(
+        Tracker::fail_after(0, || owned.try_reserve(initial)),
+        Err(alloc::Exhausted)
+    );
+    assert_eq!((owned.capacity(), owned.len()), (0, 0));
+    owned.try_reserve(initial).expect("initial storage");
+    owned.try_extend(b"exact").expect("initialized prefix");
     assert!(owned.try_extend(b"!").is_err());
+    let pointer = owned.as_ptr();
+    let ((), count) = Tracker::count(|| {
+        owned
+            .try_reserve(num::NonZero::<u32>::MIN.saturating_add(3))
+            .expect("existing capacity");
+    });
+    assert_eq!(count, 0);
+    let target = num::NonZero::<u32>::MIN.saturating_add(9);
+    assert_eq!(
+        Tracker::fail_after(0, || owned.try_reserve(target)),
+        Err(alloc::Exhausted)
+    );
+    assert_eq!((owned.as_ptr(), owned.capacity()), (pointer, 5));
+    assert_eq!(owned.as_slice(), b"exact");
+    let ((), count) = Tracker::resizes(|| owned.try_reserve(target).expect("growth"));
+    assert_eq!(count, 1);
+    let pointer = owned.as_ptr();
+    let (shared, count) = Tracker::count(|| {
+        owned.try_extend(b"tail").expect("grown suffix");
+        owned.freeze()
+    });
+    assert_eq!(count, 0);
+    assert_eq!((shared.as_ptr(), shared.resident()), (pointer, 10));
+    assert_eq!(shared.as_slice(), b"exacttail");
 }
 
 #[test]
@@ -219,17 +247,6 @@ fn empty_owners_skip_alloc() {
 
 #[test]
 fn freezes_in_place() {
-    let (created, allocs) = Tracker::count(|| storage::Owned::try_with(8));
-    assert_eq!(allocs, 1);
-    let mut local = (created).expect("the measured eight-byte storage owner must allocate once");
-    let ptr = local.as_ptr();
-    let (shared, allocs) = Tracker::count(|| {
-        local.try_extend(b"payload").expect("the payload must fit");
-        local.freeze()
-    });
-    assert_eq!(allocs, 0);
-    assert_eq!(shared.as_ptr(), ptr);
-
     Capacity(8)
         .try_scope(|budget| {
             {
