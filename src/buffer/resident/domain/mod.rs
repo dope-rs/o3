@@ -5,11 +5,10 @@ use reuse::Reuse;
 
 pub(in crate::buffer::resident) mod budget;
 pub(in crate::buffer::resident) mod errors;
-pub(in crate::buffer::resident) mod lease;
 pub(in crate::buffer::resident) mod reuse;
 pub(in crate::buffer::resident) mod scope;
 
-use crate::{base::cell::region, buffer::resident};
+use crate::base::cell::region;
 
 /// One stable resident-accounting counter reused across generative regions.
 #[derive(Debug)]
@@ -49,14 +48,6 @@ impl Domain {
         Ok(Budget {
             core: crate::mem::raw::Bound::new(self, proof),
         })
-    }
-
-    pub(in crate::buffer) fn shrink(lease: &mut resident::Lease<'_>, capacity: num::NonZero<u32>) {
-        let budget = lease.debit.seed();
-        let core = budget.core();
-        let amount = lease.debit.amount().get() - capacity.get();
-        core.resident.refund(amount as usize);
-        lease.debit = crate::buffer::raw::Debit::new(budget, capacity);
     }
 }
 

@@ -6,25 +6,11 @@ impl<T> Layout<T> {
     /// Largest unpadded byte extent accepted at this element alignment.
     pub(crate) const MAX: u128 = isize::MAX as u128 - (mem::align_of::<T>() as u128 - 1);
 
-    pub(crate) const fn fits(len: usize) -> bool {
-        let size = mem::size_of::<T>() as u128;
-        size == 0 || len as u128 <= Self::MAX / size
-    }
-
-    pub(crate) const fn try_check(len: usize) -> Result<(), crate::alloc::Overflow> {
-        if !Self::fits(len) {
-            Err(crate::alloc::Overflow)
-        } else {
-            Ok(())
-        }
-    }
-
     pub(crate) const fn try_layout(len: usize) -> Result<alloc::Layout, crate::alloc::Overflow> {
-        if let Err(error) = Self::try_check(len) {
-            return Err(error);
+        match alloc::Layout::array::<T>(len) {
+            Ok(layout) => Ok(layout),
+            Err(_) => Err(crate::alloc::Overflow),
         }
-        // SAFETY: admission proves the complete array at its element alignment.
-        Ok(unsafe { Self::layout(len) })
     }
 
     pub(crate) const fn try_extend(

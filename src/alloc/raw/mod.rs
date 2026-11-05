@@ -1,4 +1,4 @@
-use std::{alloc, marker, mem, num::NonZero, pin, ptr};
+use std::{alloc, marker, mem, num::NonZero, ptr};
 
 pub use block::Block;
 pub use extent::Extent;
@@ -9,7 +9,7 @@ pub use shape::Shape;
 
 use crate::{
     alloc::{Exhausted, Overflow, Vacant, array},
-    base::{cell::region, marker::ThreadBound},
+    base::marker::ThreadBound,
 };
 mod layout;
 pub(crate) use layout::Root;
@@ -200,19 +200,16 @@ impl<T, E: Extent, S> AssumeInit for array::Block<mem::MaybeUninit<T>, E, S> {
             // SAFETY: the retained exact source supplies one item for each admitted
             // slot, in order; this slot is still unpublished and uninitialized.
             let place = unsafe { pointer.add(filled) };
-            let status = region::Token::scope_pinned(pin::Pin::new(&mut filled), |token, count| {
-                make(
-                    array::Slot {
-                        pointer: place,
-                        filled: count.get_mut(),
-                        proof: token.proof(),
-                        value: marker::PhantomData,
-                    },
-                    item,
-                )
-                .map(|done| *token.borrow(&done.value))
-            });
-            if let Err(error) = status {
+            // The HRTB requires this invariant slot's private completion;
+            // neither earlier nor nested calls can supply it.
+            if let Err(error) = make(
+                array::Slot {
+                    pointer: place,
+                    filled: &mut filled,
+                    value: marker::PhantomData,
+                },
+                item,
+            ) {
                 // SAFETY: this prefix includes every committed value, including the
                 // current one when the callback failed after insertion. The block still
                 // owns the backing as MaybeUninit<T> and releases it after make.

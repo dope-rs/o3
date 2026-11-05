@@ -10,7 +10,7 @@ use crate::buffer::{
 
 pub(super) enum Backing<'d> {
     Warm(pool::Span<owners::Resident<'d>>),
-    Local(window::State<resident::Lease<'d>, { u32::MAX as usize }>),
+    Local(window::State<resident::Budget<'d>, { u32::MAX as usize }>),
     Accounted(pool::Span<owners::Resident<'d>>),
 }
 

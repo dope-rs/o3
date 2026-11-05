@@ -29,15 +29,6 @@ impl<const CAP: usize> Range<CAP> {
         })
     }
 
-    fn try_slices<const N: usize>(
-        start: usize,
-        limit: usize,
-        slices: &[&[u8]; N],
-    ) -> Result<Self, Error> {
-        let end = Error::checked_end(start, limit.min(CAP), slices)?;
-        Ok(Self { start, end })
-    }
-
     fn fit<L: crate::buffer::raw::Length>(target: &Bytes<CAP, L>, amount: usize) -> Self {
         let start = target.len();
         Self {
@@ -149,12 +140,14 @@ impl<const CAP: usize, L: crate::buffer::raw::Length> Bytes<CAP, L> {
         limit: usize,
         slices: [&[u8]; N],
     ) -> Result<(), Error> {
-        let range = Range::<CAP>::try_slices(start.min(self.len()), limit, &slices)?;
-        buffer::raw::Copy::copy(Writing {
-            target: self,
-            sources: slices,
-            range,
-        });
+        let start = start.min(self.len());
+        let end = Error::checked_end(start, limit.min(CAP), &slices)?;
+        // SAFETY: admission bounds every disjoint source within this owner's
+        // backing; only the complete copy publishes the initialized end.
+        unsafe {
+            buffer::raw::SliceExt::copy_to(&slices, self.bytes.as_mut_ptr().add(start));
+        }
+        self.len = L::from_usize(end);
         Ok(())
     }
 
@@ -247,44 +240,13 @@ impl<const CAP: usize, L: crate::buffer::raw::Length> write::Sink for Bytes<CAP,
     type Error = Error;
 
     fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
-        let range = Range::<CAP>::try_new(self, bytes.len())?;
-        buffer::raw::Copy::copy(Writing {
-            target: self,
-            sources: bytes,
-            range,
-        });
+        self.try_reserve(bytes.len())?
+            .write(|output| output.copy_from_slice(bytes));
         Ok(())
     }
 
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
         self.try_replace(self.len(), CAP, slices)
-    }
-}
-
-/// Exact source bytes and their admitted range in one exclusively retained owner.
-struct Writing<'target, const CAP: usize, L, S> {
-    target: &'target mut Bytes<CAP, L>,
-    sources: S,
-    range: Range<CAP>,
-}
-
-// SAFETY: admission retains the same disjoint sources, exact destination range,
-// and exclusive owner; only their complete copy publishes the admitted end.
-unsafe impl<const CAP: usize, L: buffer::raw::Length, S: buffer::raw::SliceExt> buffer::raw::Copy
-    for Writing<'_, CAP, L, S>
-{
-    type Output = ();
-
-    fn parts(&mut self) -> (impl buffer::raw::SliceExt, *mut u8, usize) {
-        (
-            &self.sources,
-            self.target.bytes.as_mut_ptr(),
-            self.range.start,
-        )
-    }
-
-    unsafe fn publish(self) {
-        self.target.len = L::from_usize(self.range.end);
     }
 }
 

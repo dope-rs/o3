@@ -59,12 +59,14 @@ impl<T> ring::Cell<T> {
 }
 
 /// # Safety
-/// The owner is being destroyed and will never access its values again.
+/// Consume both initialized runs exclusively, without outstanding loans or reentry.
+/// Do not access or destroy these elements again; clear their state before
+/// any later owner operation, or finish destruction without revisiting them.
 pub(crate) unsafe fn drop_ring<S: depot::raw::RingEdit + ?Sized>(source: &mut S) {
     if mem::needs_drop::<S::Item>() {
-        // SAFETY: terminal ownership excludes every subsequent owner access.
+        // SAFETY: exclusive ownership retains both disjoint initialized runs.
         let (front, back) = unsafe { depot::raw::RingEdit::slices_mut(source) };
-        // SAFETY: terminal ownership consumes both initialized runs exactly once.
+        // SAFETY: both runs are consumed exactly once without competing access.
         unsafe {
             ptr::drop_in_place(front);
             ptr::drop_in_place(back);

@@ -143,30 +143,6 @@ impl<T, const PLANES: usize, A> Set<T, PLANES, A> {
     }
 }
 
-impl<T, const PLANES: usize> Core<T, PLANES> {
-    fn grow<S: planes::Seed<T>>(
-        &mut self,
-        len: u32,
-        seed: S,
-    ) -> Result<&mut Self, crate::alloc::Error> {
-        let len = len as usize;
-        let original = self.entries.len();
-        if len <= original {
-            return Ok(self);
-        }
-        self.entries.try_grow(len - original)?;
-        for index in original..len {
-            // SAFETY: admitted capacity covers this compact index and its next vacant slot.
-            unsafe {
-                let compact = links::Index::new_usize(index);
-                let value = seed.seed(compact);
-                self.entries.vacancy().insert(Node::new(compact, value));
-            }
-        }
-        Ok(self)
-    }
-}
-
 impl<T, const PLANES: usize, A> Set<T, PLANES, A> {
     /// Selects a payload and its admitted compact identity in one lookup.
     pub fn resolve(&self, index: usize) -> Option<(NonZero<u32>, &T)> {
@@ -259,20 +235,33 @@ impl<T, const PLANES: usize> Core<T, PLANES> {
         seed: impl planes::Seed<T>,
     ) -> Result<&mut Self, planes::Error<C>> {
         let old = self.entries.len();
-        if len.len() <= old {
+        let target = len.len();
+        if target <= old {
             return Ok(self);
         }
         let mut next = indexed::Min::try_new(len).map_err(planes::Error::Heap)?;
-        let core = self
-            .grow(len.len() as u32, seed)
-            .map_err(|error| planes::Error::Values {
-                capacity: len,
-                error,
-            })?;
+        // Retain seed destruction before priority migration and new-heap error cleanup.
+        {
+            let source = seed;
+            self.entries
+                .try_grow(target - old)
+                .map_err(|error| planes::Error::Values {
+                    capacity: len,
+                    error,
+                })?;
+            for index in old..target {
+                // SAFETY: admitted capacity covers this compact index and its next vacant slot.
+                unsafe {
+                    let compact = links::Index::new_usize(index);
+                    let value = source.seed(compact);
+                    self.entries.vacancy().insert(Node::new(compact, value));
+                }
+            }
+        }
         while let Some(timer) = heap.first_entry() {
             // SAFETY: the coupled owner retains one payload for every old priority.
             let index = unsafe { links::Index::new_usize(timer.index()) };
-            let entry = Entry::<T, PLANES>::new(core, index);
+            let entry = Entry::<T, PLANES>::new(self, index);
             let priority = timer.take();
             // SAFETY: the new heap covers this payload, and each old priority moves once.
             let live =
@@ -282,7 +271,7 @@ impl<T, const PLANES: usize> Core<T, PLANES> {
             vacant.set(priority);
         }
         *heap = next;
-        Ok(core)
+        Ok(self)
     }
 
     /// The admitted prefix is represented and every selected-plane hook is vacant.

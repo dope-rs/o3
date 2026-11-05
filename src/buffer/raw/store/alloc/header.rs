@@ -46,14 +46,54 @@ impl<P: crate::buffer::raw::Policy> Header<P> {
     }
 
     /// # Safety
+    /// The fresh region fits this header and capacity. Transfer either its full
+    /// debit or an existing unique owner's credit plus this exact same-policy delta.
+    pub(super) unsafe fn write(
+        pointer: ptr::NonNull<Self>,
+        capacity: num::NonZero<u32>,
+        debit: crate::buffer::raw::Debit<P>,
+    ) {
+        let policy = debit.commit();
+        // SAFETY: the caller transfers the complete charge and fresh region;
+        // initialization is infallible and precedes owner publication.
+        unsafe {
+            pointer.write(Self {
+                prefix: regions::Prefix::one(capacity),
+                policy,
+            });
+        }
+    }
+
+    /// # Safety
+    /// Exclusively own this header; the debit retains its exact policy and
+    /// covers the target capacity's positive growth delta.
+    pub(super) unsafe fn try_resize(
+        pointer: ptr::NonNull<Self>,
+        capacity: num::NonZero<u32>,
+        debit: crate::buffer::raw::Debit<P>,
+    ) -> Result<ptr::NonNull<Self>, alloc::Exhausted> {
+        // SAFETY: the caller retains this exact initialized header exclusively.
+        let old = Self::layout(unsafe { pointer.as_ref() }.capacity());
+        let new = Self::layout(capacity);
+        // SAFETY: both nonzero layouts preserve alignment; failure leaves the
+        // original owner live and drops only the uncommitted growth debit.
+        let mut pointer = unsafe { alloc::raw::resize(old, pointer.cast(), new)? }.cast::<Self>();
+        // SAFETY: realloc preserves the unique count and policy. Only capacity
+        // changes, and the exact delta commits without failure before publication.
+        unsafe { pointer.as_mut().set_capacity(capacity) };
+        debit.commit();
+        Ok(pointer)
+    }
+
+    /// # Safety
     /// Transfer the live header after `Last`, or from its sole static owner.
     pub(in crate::buffer) unsafe fn destroy(pointer: ptr::NonNull<Self>) {
         // SAFETY: the transferred owner keeps this initialized header live.
         let header = unsafe { pointer.as_ref() };
         let capacity = header.capacity();
-        // SAFETY: terminal ownership drops the complete charged policy once.
-        unsafe { ptr::drop_in_place(pointer.as_ptr()) };
-        // SAFETY: all initialized fields have been destroyed before disposal.
+        // SAFETY: terminal ownership transfers this header's complete charge once.
+        unsafe { header.policy.refund(capacity) };
+        // SAFETY: the charge has ended and the Copy policy has no destructor.
         unsafe { Self::free(pointer, capacity) };
     }
 
@@ -68,7 +108,8 @@ impl<P: crate::buffer::raw::Policy> Header<P> {
     }
 
     /// # Safety
-    /// The caller exclusively owns this header's configuration state.
+    /// Exclusively own this header with the matching allocation layout, and
+    /// settle its exact policy charge for the new capacity before publication.
     pub(in crate::buffer) unsafe fn set_capacity(&mut self, capacity: num::NonZero<u32>) {
         // SAFETY: the caller retains this header exclusively.
         unsafe { self.prefix.write(capacity) };
@@ -97,3 +138,6 @@ const _: () = {
     assert!(align_of::<regions::Prefix<num::NonZero<u32>>>() == align_of::<regions::Prefix>());
 };
 const _: () = assert!(align_of::<Header<()>>() >= 8);
+const _: () = assert!(
+    size_of::<Header<crate::buffer::resident::Budget<'static>>>() == size_of::<usize>() * 2
+);

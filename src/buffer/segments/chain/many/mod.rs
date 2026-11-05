@@ -156,7 +156,11 @@ impl<T: buffer::raw::Segment> TryFrom<(segments::Item<T>, segments::Item<T>)> fo
                 ));
             }
         };
-        Ok(Exact::try_new((first, second, growth))?.collect())
+        let source = buffer::raw::Batch {
+            owners: [first, second],
+            total: growth,
+        };
+        Ok(Exact::try_new(source)?.collect())
     }
 }
 

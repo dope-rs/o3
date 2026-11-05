@@ -174,18 +174,6 @@ impl buffer::raw::Total for Growth {
     }
 }
 
-impl<A, B> buffer::raw::Total for (A, B, Growth) {
-    fn count(&self) -> segments::Count {
-        self.2.count
-    }
-    fn len(&self) -> usize {
-        self.2.len
-    }
-    fn resident(&self) -> usize {
-        self.2.resident
-    }
-}
-
 impl<A, B> buffer::raw::Total for (A, B, Growth, Cause) {
     fn count(&self) -> segments::Count {
         self.2.count
@@ -199,7 +187,7 @@ impl<A, B> buffer::raw::Total for (A, B, Growth, Cause) {
 }
 
 unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
-    for (segments::Item<T>, segments::Item<T>, Growth)
+    for buffer::raw::Batch<[segments::Item<T>; 2], Growth>
 {
     type Output = segments::Many<T>;
     type Item = segments::Item<T>;
@@ -207,13 +195,14 @@ unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
 
     fn owners(self) -> impl Iterator<Item = segments::Item<T>> + buffer::raw::Total {
         buffer::raw::Batch {
-            owners: [self.0, self.1].into_iter(),
-            total: self.2,
+            owners: self.owners.into_iter(),
+            total: self.total,
         }
     }
 
     fn reject(self, error: crate::alloc::Error) -> Self::Error {
-        crate::mem::Rejected::new((self.0, self.1), assembly::Error::Metadata(error))
+        let [first, second] = self.owners;
+        crate::mem::Rejected::new((first, second), assembly::Error::Metadata(error))
     }
 }
 

@@ -16,49 +16,6 @@ use crate::{
 /// The complete state of one compact chain handle.
 pub type Sequence<T, H = Pool<T>> = Chain<T, H>;
 
-struct Node<'a, T, H: Handle<T>> {
-    source: &'a Sequence<T, H>,
-    index: slots::Index,
-}
-
-struct Links<'a, T, H: Handle<T>> {
-    source: &'a Sequence<T, H>,
-    index: slots::Index,
-}
-
-// SAFETY: state constructs Node only from this borrowed sequence's own single key.
-unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::Indexed<'a> for Node<'a, T, H> {
-    type Item = segments::Item<T>;
-
-    fn parts(self) -> (&'a slots::Store<Self::Item>, slots::Index) {
-        (handles::nodes(&self.source.handle), self.index)
-    }
-}
-
-// SAFETY: state selects this sequence's own multi key and retains its exact stores.
-unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::Linked<'a> for Links<'a, T, H> {
-    type Item = segments::Item<T>;
-    type Metadata = handles::Descriptor;
-
-    fn parts(
-        self,
-    ) -> (
-        &'a slots::Store<Self::Item>,
-        &'a slots::Store<Self::Metadata>,
-        slots::Index,
-    ) {
-        (
-            handles::nodes(&self.source.handle),
-            handles::descriptors(&self.source.handle),
-            self.index,
-        )
-    }
-
-    fn head(metadata: &Self::Metadata) -> slots::Index {
-        metadata.links.head_raw()
-    }
-}
-
 impl<T, H: Handle<T>> Chain<T, H> {
     pub fn clear(&mut self) {
         let key = mem::replace(&mut self.key, Key::EMPTY);
@@ -109,17 +66,13 @@ impl<T: buffer::raw::Segment, H: Handle<T>> Chain<T, H> {
         // SAFETY: the caller's nonempty owner proof excludes the empty key.
         match unsafe { self.key.occupied() } {
             handles::Occupied::Single(index) => {
-                let node = buffer::raw::Indexed::get(Node {
-                    source: self,
-                    index,
-                });
+                // SAFETY: this shared owner retains its exact initialized single node.
+                let node = unsafe { handles::nodes(&self.handle).value(index) };
                 view::Occupied::Single(index, node)
             }
             handles::Occupied::Multi(index) => {
-                let desc = buffer::raw::Linked::metadata(Links {
-                    source: self,
-                    index,
-                });
+                // SAFETY: this shared owner retains its exact initialized descriptor.
+                let desc = unsafe { handles::descriptors(&self.handle).value(index) };
                 view::Occupied::Multi(desc)
             }
         }

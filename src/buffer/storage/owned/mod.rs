@@ -155,7 +155,7 @@ impl<P: crate::buffer::raw::Policy> Owned<P> {
     }
 }
 
-impl<'d> Owned<resident::Lease<'d>> {
+impl<'d> Owned<resident::Budget<'d>> {
     pub fn try_compact(&mut self) -> Result<(), crate::alloc::Exhausted> {
         let Some(heap) = &mut self.bytes.allocation else {
             return Ok(());
@@ -192,12 +192,11 @@ const _: () = {
 };
 
 /// Unique bytes charged to one resident domain.
-impl<'d> storage::Owned<resident::Lease<'d>> {
+impl<'d> storage::Owned<resident::Budget<'d>> {
     /// Allocates against an existing debit without acquiring resident capacity again.
     /// Failure releases the consumed charge; a zero charge needs no allocation.
     pub fn try_from_charge(charge: resident::Charge<'d>) -> Result<Self, storage::AllocError> {
-        let storage = charge
-            .try_lease()
+        let storage = crate::buffer::raw::Debit::try_from_charge(charge)
             .map_err(storage::AllocError::Capacity)?
             .map(crate::buffer::raw::Heap::try_charged)
             .transpose()
@@ -253,7 +252,7 @@ impl<'d> storage::Owned<resident::Lease<'d>> {
 }
 
 const _: () =
-    assert!(size_of::<storage::Owned<resident::Lease<'static>>>() == size_of::<usize>() * 2);
+    assert!(size_of::<storage::Owned<resident::Budget<'static>>>() == size_of::<usize>() * 2);
 
 impl Default for Owned {
     fn default() -> Self {

@@ -12,7 +12,7 @@ pub struct Plan<T, E: alloc::raw::Extent> {
 
 impl<T, E: alloc::raw::Extent> Plan<T, E> {
     pub fn try_new(extent: E) -> Result<Self, alloc::Overflow> {
-        alloc::raw::Layout::<T>::try_check(extent.len())?;
+        alloc::raw::Layout::<T>::try_layout(extent.len())?;
         Ok(Self {
             extent,
             value: marker::PhantomData,
@@ -81,7 +81,7 @@ impl<T> Plan<T, usize> {
 
     pub(crate) fn from(len: u8) -> Self {
         const {
-            assert!(alloc::raw::Layout::<T>::fits(u8::MAX as usize), "layout");
+            assert!(Layout::array::<T>(u8::MAX as usize).is_ok(), "layout");
         };
         Self {
             extent: usize::from(len),

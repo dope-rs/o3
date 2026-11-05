@@ -262,7 +262,7 @@ impl<T> Capacity<T> {
     pub(crate) fn new<N: capacity::Extent>(capacity: N) -> Result<Self, alloc::Overflow> {
         let raw =
             bounded::U32::from_usize(capacity::Extent::get(capacity)).ok_or(alloc::Overflow)?;
-        alloc::raw::Layout::<Node<T>>::try_check(raw.into_usize())?;
+        alloc::raw::Layout::<Node<T>>::try_layout(raw.into_usize())?;
         Ok(Self {
             raw,
             value: marker::PhantomData,

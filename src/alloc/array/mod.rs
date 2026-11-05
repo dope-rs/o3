@@ -25,8 +25,7 @@ pub struct Block<T, E: alloc::raw::Extent, S = ()> {
 pub struct Slot<'slot, T> {
     pub(in crate::alloc) pointer: ptr::NonNull<T>,
     pub(in crate::alloc) filled: &'slot mut usize,
-    pub(in crate::alloc) proof: region::Proof<region::Identity<'slot>>,
-    pub(in crate::alloc) value: marker::PhantomData<fn(T) -> T>,
+    pub(in crate::alloc) value: marker::PhantomData<(region::Identity<'slot>, *mut T)>,
 }
 
 /// Completion of the single insertion admitted by this invariant scope.
@@ -34,7 +33,7 @@ pub struct Slot<'slot, T> {
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct Written<'slot> {
-    pub(in crate::alloc) value: region::Value<region::Identity<'slot>, ()>,
+    value: marker::PhantomData<region::Identity<'slot>>,
 }
 
 impl<'slot, T> Slot<'slot, T> {
@@ -47,7 +46,7 @@ impl<'slot, T> Slot<'slot, T> {
         unsafe { self.pointer.write(value) };
         *self.filled += 1;
         Written {
-            value: self.proof.bind(()),
+            value: marker::PhantomData,
         }
     }
 }

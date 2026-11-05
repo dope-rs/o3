@@ -13,7 +13,7 @@ pub(in crate::buffer) enum State<'d> {
     Slice,
     Owned(Option<regions::Tag>),
     Borrowed(regions::Tag<pool::Borrowed<'d>>),
-    Resident(crate::buffer::raw::Rc<resident::Lease<'d>>),
+    Resident(crate::buffer::raw::Rc<resident::Budget<'d>>),
     Accounted(owners::Registered<'d>),
     Provided(provided::Account<'d>),
 }

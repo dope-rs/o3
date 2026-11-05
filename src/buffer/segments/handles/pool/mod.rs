@@ -146,7 +146,7 @@ impl<T> Pool<T> {
         let handle = self.try_clone().map_err(segments::Error::Retain)?;
         let key = {
             let mut writer = exact::Writer::new(nodes);
-            let plan = reserve.start().0.try_run(|claim, owner| {
+            let (len, resident) = reserve.start().0.try_run(|claim, owner| {
                 unsafe { writer.push_claim(claim, owner) };
             })?;
             let links = writer.into_links();
@@ -154,12 +154,7 @@ impl<T> Pool<T> {
                 State::Empty => Key::EMPTY,
                 State::One => Key::single(links.head_raw()),
                 State::Many { count, claim } => {
-                    let live = claim.insert(Descriptor::new(
-                        links,
-                        count.nonzero(),
-                        plan.len(),
-                        plan.resident(),
-                    ));
+                    let live = claim.insert(Descriptor::new(links, count.nonzero(), len, resident));
                     let key = Key::multi(live.index());
                     unsafe { live.publish() };
                     key

@@ -2,7 +2,7 @@ use std::{num, ops, ptr};
 
 use crate::{
     buffer,
-    buffer::{resident, storage, storage::backing},
+    buffer::{raw::Policy as _, resident, storage, storage::backing},
     mem::rc,
 };
 
@@ -16,8 +16,8 @@ impl<P: crate::buffer::raw::Policy> Rc<P> {
         self.get().capacity()
     }
 
-    pub(in crate::buffer) fn seed(&self) -> P::Seed {
-        self.get().policy.seed()
+    pub(in crate::buffer) fn seed(&self) -> P {
+        self.get().policy
     }
 
     pub(in crate::buffer) fn data(&self) -> *const u8 {
@@ -31,13 +31,13 @@ impl<P: crate::buffer::raw::Policy> Rc<P> {
     }
 }
 
-impl Rc<resident::Lease<'_>> {
+impl Rc<resident::Budget<'_>> {
     pub(in crate::buffer) fn try_own(self) -> Result<Rc, Self> {
-        use crate::buffer::{raw::Header, resident::Lease};
+        use crate::buffer::{raw::Header, resident::Budget};
 
         const EXTRA: u32 = {
-            assert!(size_of::<Header<Lease<'_>>>() >= size_of::<Header<()>>());
-            let extra = size_of::<Header<Lease<'_>>>() - size_of::<Header<()>>();
+            assert!(size_of::<Header<Budget<'_>>>() >= size_of::<Header<()>>());
+            let extra = size_of::<Header<Budget<'_>>>() - size_of::<Header<()>>();
             assert!(extra <= u32::MAX as usize);
             extra as u32
         };
@@ -45,13 +45,13 @@ impl Rc<resident::Lease<'_>> {
         let Some(capacity) = original.checked_add(EXTRA) else {
             return Err(self);
         };
-        if !self.is_unique() || align_of::<Header<Lease<'_>>>() != align_of::<Header<()>>() {
+        if !self.is_unique() || align_of::<Header<Budget<'_>>>() != align_of::<Header<()>>() {
             return Err(self);
         }
         let pointer = self.into_raw();
         // SAFETY: the sole edge owns this policy exclusively. Refunding it ends
         // the resident-domain borrow before the same allocation becomes plain.
-        unsafe { ptr::drop_in_place(&raw mut (*pointer.as_ptr()).policy) };
+        unsafe { pointer.as_ref().policy.refund(original) };
         let mut pointer = pointer.cast::<Header<()>>();
         // SAFETY: admission proved identical allocation size and alignment. The
         // initialized common prefix retains its unique counted edge. Former policy
@@ -64,10 +64,6 @@ impl Rc<resident::Lease<'_>> {
 }
 
 impl<'a, P: crate::buffer::raw::Policy> Unique<'a, P> {
-    pub(in crate::buffer) fn capacity(&self) -> num::NonZero<u32> {
-        self.0.capacity()
-    }
-
     pub(in crate::buffer) fn policy(&self) -> &P {
         &self.0.get().policy
     }
@@ -76,20 +72,16 @@ impl<'a, P: crate::buffer::raw::Policy> Unique<'a, P> {
         self.0.data()
     }
 
-    pub(in crate::buffer) fn slot(self) -> &'a mut Rc<P> {
-        self.0
-    }
-
     /// Resizes this unique owner using the admitted target and exact delta debit.
     pub(in crate::buffer) fn try_resize(
         &mut self,
         target: num::NonZero<u32>,
-        debit: P::Charge,
+        debit: crate::buffer::raw::Debit<P>,
     ) -> Result<(), crate::alloc::Exhausted> {
         let pointer = self.0.as_ptr();
         // SAFETY: Unique retains the sole edge and the caller admitted this
         // target with its exact policy delta. Failure preserves the old owner.
-        let pointer = unsafe { crate::buffer::raw::Growth::try_resize(pointer, target, debit)? };
+        let pointer = unsafe { crate::buffer::raw::Header::try_resize(pointer, target, debit)? };
         // SAFETY: successful resize transferred the sole edge. Replace its stale
         // representation without dropping it or accessing its former address.
         unsafe {
@@ -103,7 +95,7 @@ impl<'a, P: crate::buffer::raw::Policy> Unique<'a, P> {
         self,
         pointer: ptr::NonNull<crate::buffer::raw::Header<P>>,
         target: num::NonZero<u32>,
-        debit: P::Charge,
+        debit: crate::buffer::raw::Debit<P>,
         range: ops::Range<u32>,
         tail: I,
     ) {
@@ -117,15 +109,15 @@ impl<'a, P: crate::buffer::raw::Policy> Unique<'a, P> {
             let source = buffer::raw::range(self.data(), range.start as usize, len);
             (source, tail).copy_to(dst.as_ptr());
         }
-        let current = self.capacity();
-        let slot = self.slot();
+        let current = self.0.capacity();
+        let slot = self.0;
         // SAFETY: Unique transfers the sole edge out of this exclusively held
         // slot. Publication restores the slot before any subsequent access.
         let old = unsafe { ptr::read(slot) }.into_raw();
         // SAFETY: the growth debit carries the source policy's exact seed. The
         // fresh header is initialized once before the old region is freed.
         unsafe {
-            crate::buffer::raw::Growth::write(old, pointer, target, debit);
+            crate::buffer::raw::Header::write(pointer, target, debit);
             ptr::write(slot, crate::buffer::raw::Rc::from_raw(pointer));
             crate::buffer::raw::Header::free(old, current);
         }
@@ -170,7 +162,7 @@ impl<P: buffer::raw::Policy> Rc<P> {
     }
 }
 
-impl<'d> backing::Owner<'d> for Rc<resident::Lease<'d>> {
+impl<'d> backing::Owner<'d> for Rc<resident::Budget<'d>> {
     fn root<'a>(&'a self) -> Option<backing::Root<'a, 'd>>
     where
         'd: 'a,

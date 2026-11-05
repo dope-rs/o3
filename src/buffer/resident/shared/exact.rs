@@ -19,7 +19,7 @@ impl<'d> Exact<'d> {
         }
     }
 
-    pub(in crate::buffer) fn from_init(inner: regions::Init<resident::Lease<'d>>) -> Self {
+    pub(in crate::buffer) fn from_init(inner: regions::Init<resident::Budget<'d>>) -> Self {
         Self {
             owner: Some(inner.bind()),
         }
@@ -41,7 +41,7 @@ impl<'d> Exact<'d> {
         budget: &resident::Budget<'d>,
         slices: [&[u8]; N],
     ) -> Result<Self, resident::AllocError> {
-        let inner = regions::Init::<resident::Lease<'d>>::try_copy(budget, slices)?;
+        let inner = regions::Init::<resident::Budget<'d>>::try_copy(budget, slices)?;
         Ok(inner.map_or_else(Self::new, Self::from_init))
     }
 

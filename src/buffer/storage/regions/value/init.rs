@@ -20,7 +20,7 @@ pub(in crate::buffer) struct Init<P: crate::buffer::raw::Policy = ()> {
 #[repr(transparent)]
 pub(in crate::buffer) struct Complete<'d> {
     pointer: ptr::NonNull<regions::Prefix<num::NonZero<u32>>>,
-    ownership: marker::PhantomData<Init<resident::Lease<'d>>>,
+    ownership: marker::PhantomData<Init<resident::Budget<'d>>>,
 }
 
 impl<P: crate::buffer::raw::Policy> Init<P> {
@@ -56,7 +56,7 @@ impl Init<()> {
     }
 }
 
-impl<'d> Init<resident::Lease<'d>> {
+impl<'d> Init<resident::Budget<'d>> {
     pub(in crate::buffer) fn bind(self) -> regions::Complete<'d> {
         Complete {
             pointer: self
@@ -92,7 +92,7 @@ impl<'d> Complete<'d> {
             unsafe { crate::buffer::raw::Header::<()>::slice(pointer.cast()) }
         } else {
             // SAFETY: bit zero encodes the transferred resident Init and its exact lifetime.
-            unsafe { crate::buffer::raw::Header::<resident::Lease<'d>>::slice(pointer.cast()) }
+            unsafe { crate::buffer::raw::Header::<resident::Budget<'d>>::slice(pointer.cast()) }
         };
         // SAFETY: this owner borrow keeps the complete initialized region live.
         unsafe { bytes.as_ref() }
@@ -109,7 +109,7 @@ impl<'d> Complete<'d> {
         } else {
             // SAFETY: the consumed resident Init retains its complete extent and policy lifetime.
             let allocation =
-                unsafe { crate::buffer::raw::Rc::<resident::Lease<'d>>::from_raw(pointer.cast()) };
+                unsafe { crate::buffer::raw::Rc::<resident::Budget<'d>>::from_raw(pointer.cast()) };
             Init { allocation }.into_buf().into()
         }
     }
@@ -157,14 +157,14 @@ impl<'d> Drop for Complete<'d> {
             unsafe { crate::buffer::raw::Header::<()>::destroy(pointer.cast()) };
         } else {
             // SAFETY: the last resident allocation edge retains its exact policy lifetime.
-            unsafe { crate::buffer::raw::Header::<resident::Lease<'d>>::destroy(pointer.cast()) };
+            unsafe { crate::buffer::raw::Header::<resident::Budget<'d>>::destroy(pointer.cast()) };
         }
     }
 }
 
 const _: () = {
     assert!(align_of::<crate::buffer::raw::Header<()>>() > 1);
-    assert!(align_of::<crate::buffer::raw::Header<resident::Lease<'static>>>() > 1);
+    assert!(align_of::<crate::buffer::raw::Header<resident::Budget<'static>>>() > 1);
     assert!(size_of::<Complete<'static>>() == size_of::<ptr::NonNull<()>>());
     assert!(size_of::<Option<Complete<'static>>>() == size_of::<ptr::NonNull<()>>());
 };

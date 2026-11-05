@@ -152,7 +152,7 @@ fn exhaustion_refunds() {
                 assert_eq!(exact.as_slice(), b"payload");
                 assert_eq!(budget.resident(), 7);
             });
-            assert_eq!(activity, [1, 24 + 7, 1, 24 + 7]);
+            assert_eq!(activity, [1, 16 + 7, 1, 16 + 7]);
             assert_eq!(budget.resident(), 0);
         })
         .expect("resident test domain must admit its budget");

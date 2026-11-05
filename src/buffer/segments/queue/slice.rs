@@ -162,22 +162,6 @@ impl<'a, T> Slice<'a, T> {
 
 const _: () = assert!(mem::size_of::<Slice<'static, u64>>() == 2 * mem::size_of::<u64>());
 
-/// Totals published only after every projected owner completed successfully.
-pub(in crate::buffer::segments) struct Finished {
-    len: usize,
-    resident: usize,
-}
-
-impl Finished {
-    pub(in crate::buffer::segments) const fn len(&self) -> usize {
-        self.len
-    }
-
-    pub(in crate::buffer::segments) const fn resident(&self) -> usize {
-        self.resident
-    }
-}
-
 pub(in crate::buffer::segments) struct Projected<'source, T: buffer::raw::Segment> {
     source: &'source queue::Slice<'source, T>,
     count: segments::Count,
@@ -198,7 +182,7 @@ unsafe impl<T: buffer::raw::Segment> depot::raw::Input<segments::Item<T>> for &P
     type Item = Result<segments::Item<T>, queue::RetainError>;
     type Error = queue::RetainError;
     type Context = ();
-    type Output = Finished;
+    type Output = (usize, usize);
 
     fn count(&self) -> capacity::Count {
         capacity::Count::new(self.count.into_raw())
@@ -287,17 +271,14 @@ unsafe impl<'source, T: buffer::raw::Segment, I> depot::raw::Exact for Views<'_,
 where
     I: Iterator<Item = segments::Item<buffer::View<'source, T>>>,
 {
-    type Output = Finished;
+    type Output = (usize, usize);
 
     fn remaining(&self) -> capacity::Count {
         self.remaining
     }
 
-    unsafe fn finish(self) -> Finished {
-        Finished {
-            len: self.plan.source.len(),
-            resident: self.resident,
-        }
+    unsafe fn finish(self) -> Self::Output {
+        (self.plan.source.len(), self.resident)
     }
 }
 

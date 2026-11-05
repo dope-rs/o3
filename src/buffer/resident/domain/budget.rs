@@ -2,7 +2,7 @@ use std::{num, ptr};
 
 use crate::{
     base::cell::region,
-    buffer::{resident, resident::Domain},
+    buffer::resident::Domain,
     mem::{self, credit},
 };
 
@@ -48,20 +48,20 @@ impl<'d> Budget<'d> {
         self.capacity() - self.resident()
     }
 
-    pub const fn charge(self) -> resident::Charge<'d> {
-        resident::Charge {
+    pub const fn charge(self) -> Charge<'d> {
+        Charge {
             budget: self,
             capacity: 0,
         }
     }
 
-    pub fn try_charge(self, capacity: usize) -> Result<resident::Charge<'d>, credit::Error> {
+    pub fn try_charge(self, capacity: usize) -> Result<Charge<'d>, credit::Error> {
         if let Some(amount) = num::NonZero::new(capacity) {
             self.core()
                 .resident
                 .try_acquire(amount, self.core().capacity)?;
         }
-        Ok(resident::Charge {
+        Ok(Charge {
             budget: self,
             capacity,
         })
@@ -70,3 +70,84 @@ impl<'d> Budget<'d> {
 
 const _: () = assert!(size_of::<Budget<'static>>() == size_of::<usize>());
 const _: () = assert!(size_of::<Option<Budget<'static>>>() == size_of::<Budget<'static>>());
+
+/// One exact resident debit. The lifetime cannot be detached by safe code.
+pub struct Charge<'d> {
+    budget: Budget<'d>,
+    capacity: usize,
+}
+
+impl<'d> Charge<'d> {
+    pub(in crate::buffer) const fn budget(&self) -> Budget<'d> {
+        self.budget
+    }
+
+    pub const fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Transfers part of this debit without changing the domain's resident total.
+    /// An oversized request leaves this charge unchanged.
+    pub fn try_split(&mut self, capacity: usize) -> Result<Self, credit::Error> {
+        let Some(remaining) = self.capacity.checked_sub(capacity) else {
+            return Err(credit::Error::new(
+                num::NonZero::<usize>::MIN.saturating_add(capacity - 1),
+                self.capacity,
+            ));
+        };
+        self.capacity = remaining;
+        Ok(Self {
+            budget: self.budget,
+            capacity,
+        })
+    }
+
+    pub fn try_resize(&mut self, capacity: usize) -> Result<(), credit::Error> {
+        let core = self.budget.core();
+        if let Some(amount) = num::NonZero::new(capacity.saturating_sub(self.capacity)) {
+            core.resident.try_acquire(amount, core.capacity)?;
+            self.capacity = capacity;
+        } else {
+            self.truncate(capacity);
+        }
+        Ok(())
+    }
+
+    pub(in crate::buffer) fn truncate(&mut self, capacity: usize) {
+        let capacity = capacity.min(self.capacity);
+        self.budget.core().resident.refund(self.capacity - capacity);
+        self.capacity = capacity;
+    }
+}
+
+impl Drop for Charge<'_> {
+    fn drop(&mut self) {
+        let core = self.budget.core();
+        core.resident.refund(self.capacity);
+    }
+}
+
+const _: () = assert!(size_of::<Charge<'static>>() == size_of::<usize>() * 2);
+const _: () = assert!(size_of::<Option<Charge<'static>>>() == size_of::<Charge<'static>>());
+
+mod raw {
+    use super::{Budget, credit, num};
+
+    impl crate::buffer::raw::Policy for Budget<'_> {
+        type Failure = credit::Error;
+
+        fn available(self) -> usize {
+            self.available()
+        }
+
+        fn try_acquire(self, amount: num::NonZero<u32>) -> Result<(), Self::Failure> {
+            let core = self.core();
+            let amount = num::NonZero::<usize>::MIN.saturating_add(amount.get() as usize - 1);
+            core.resident.try_acquire(amount, core.capacity)
+        }
+
+        unsafe fn refund(self, amount: num::NonZero<u32>) {
+            self.core().resident.refund(amount.get() as usize);
+        }
+    }
+}

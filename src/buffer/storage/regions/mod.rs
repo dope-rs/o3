@@ -25,7 +25,7 @@ pub(in crate::buffer) unsafe trait Initialize: Sized {
 
     fn try_init<P: crate::buffer::raw::Policy>(
         self,
-        seed: P::Seed,
+        seed: P,
     ) -> Result<regions::Init<P>, alloc::Error<P::Failure>> {
         use crate::buffer::raw::SliceExt as _;
 
@@ -299,10 +299,10 @@ impl<'d> From<regions::Shared<Option<regions::Tag>>> for regions::Shared<residen
     }
 }
 
-impl<'d> From<regions::Shared<crate::buffer::raw::Rc<resident::Lease<'d>>>>
+impl<'d> From<regions::Shared<crate::buffer::raw::Rc<resident::Budget<'d>>>>
     for regions::Shared<resident::State<'d>>
 {
-    fn from(region: regions::Shared<crate::buffer::raw::Rc<resident::Lease<'d>>>) -> Self {
+    fn from(region: regions::Shared<crate::buffer::raw::Rc<resident::Budget<'d>>>) -> Self {
         Self {
             owner: resident::State::Resident(region.owner),
             bytes: region.bytes,

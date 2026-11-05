@@ -121,7 +121,7 @@ impl<const N: usize> Slices<'_, N> {
         self,
         budget: &resident::Budget<'d>,
     ) -> Result<resident::Exact<'d>, copy::Error> {
-        let init = self.try_init::<resident::Lease<'d>>(*budget)?;
+        let init = self.try_init::<resident::Budget<'d>>(*budget)?;
         Ok(resident::Exact::from_init(init))
     }
 }

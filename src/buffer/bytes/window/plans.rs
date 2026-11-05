@@ -40,9 +40,8 @@ impl<'a, P: crate::buffer::raw::Policy, const MAX: usize, I: buffer::raw::SliceE
             let target = growth.capacity().nonzero();
             let amount = growth.amount();
             let error = {
-                let debit =
-                    P::try_acquire(crate::buffer::raw::Debit::grow(source.policy(), amount))
-                        .map_err(alloc::Error::Policy)?;
+                let debit = crate::buffer::raw::Debit::try_new(*source.policy(), amount)
+                    .map_err(alloc::Error::Policy)?;
                 if at_start {
                     match source.try_resize(target, debit) {
                         Ok(()) => {
@@ -113,12 +112,11 @@ impl<'a, P: buffer::raw::Policy, const MAX_CAPACITY: usize> Edit<'a, P, MAX_CAPA
         let window::State { buf, cap, head } = self.state;
         match buf.access() {
             Some(source) => {
-                let target =
-                    if ideal.amount().get() as usize <= P::available(source.policy().seed()) {
-                        ideal
-                    } else {
-                        required
-                    };
+                let target = if ideal.amount().get() as usize <= source.policy().available() {
+                    ideal
+                } else {
+                    required
+                };
                 let growth = Resize {
                     source,
                     ideal: target,
@@ -232,12 +230,12 @@ impl<'a, const MAX: usize> Edit<'a, (), MAX> {
     }
 }
 
-impl<'a, 'd> Edit<'a, resident::Lease<'d>, { u32::MAX as usize }> {
+impl<'a, 'd> Edit<'a, resident::Budget<'d>, { u32::MAX as usize }> {
     /// Consumes strict growth bound to this unchanged exclusive state.
     pub(in crate::buffer) fn try_reserve(
         reserve: staging::Reserve<
             (
-                &'a mut window::State<resident::Lease<'d>, { u32::MAX as usize }>,
+                &'a mut window::State<resident::Budget<'d>, { u32::MAX as usize }>,
                 &'a mut u32,
             ),
             (),
@@ -256,7 +254,7 @@ impl<'a, 'd> Edit<'a, resident::Lease<'d>, { u32::MAX as usize }> {
     pub(in crate::buffer) fn try_staged<I: buffer::raw::SliceExt>(
         append: staging::Reserve<
             (
-                &'a mut window::State<resident::Lease<'d>, { u32::MAX as usize }>,
+                &'a mut window::State<resident::Budget<'d>, { u32::MAX as usize }>,
                 &'a mut u32,
             ),
             owners::Measured<I>,
@@ -393,7 +391,7 @@ pub(in crate::buffer::bytes::window) fn try_copy<const MAX: usize>(
 }
 
 fn try_allocate<P: buffer::raw::Policy, const MAX: usize, I: buffer::raw::SliceExt>(
-    seed: P::Seed,
+    seed: P,
     ideal: window::Capacity<MAX>,
     need: window::Capacity<MAX>,
     sources: I,
@@ -427,7 +425,7 @@ const _: () = {
 
 pub(in crate::buffer) fn try_staged<'d, I: buffer::raw::SliceExt>(
     reserve: staging::Reserve<resident::Budget<'d>, (&[u8], owners::Measured<I>)>,
-) -> Result<window::State<resident::Lease<'d>, { u32::MAX as usize }>, alloc::Error<credit::Error>>
+) -> Result<window::State<resident::Budget<'d>, { u32::MAX as usize }>, alloc::Error<credit::Error>>
 {
     let (budget, target, (first, second)) = reserve.into_parts();
     let capacity = window::Capacity::from(target);

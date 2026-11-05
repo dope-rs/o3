@@ -48,7 +48,7 @@ impl<'d> Shared<'d> {
             return Ok(Self::new());
         };
         Ok(source
-            .try_init::<resident::Lease<'d>>(*budget)?
+            .try_init::<resident::Budget<'d>>(*budget)?
             .into_buf()
             .into())
     }
@@ -128,8 +128,8 @@ impl<'d> From<storage::Shared> for Shared<'d> {
         }
     }
 }
-impl<'d> From<storage::Shared<crate::buffer::raw::Rc<resident::Lease<'d>>>> for Shared<'d> {
-    fn from(shared: storage::Shared<crate::buffer::raw::Rc<resident::Lease<'d>>>) -> Self {
+impl<'d> From<storage::Shared<crate::buffer::raw::Rc<resident::Budget<'d>>>> for Shared<'d> {
+    fn from(shared: storage::Shared<crate::buffer::raw::Rc<resident::Budget<'d>>>) -> Self {
         Self {
             region: shared.into(),
         }

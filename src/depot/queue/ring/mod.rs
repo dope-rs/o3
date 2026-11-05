@@ -97,13 +97,13 @@ impl<T> Fifo<T> {
     }
 
     pub fn clear(&mut self) {
-        if !mem::needs_drop::<T>() && !self.state.is_empty() {
-            // SAFETY: this nonempty queue retains a valid head, length, and capacity.
-            unsafe { self.state.clear(self.capacity()) };
-            return;
-        }
-        while let Some(front) = self.front_entry() {
-            front.discard();
+        if !self.state.is_empty() {
+            // SAFETY: the exclusive owner destroys both initialized runs once,
+            // then clears their state while preserving the next physical slot.
+            unsafe {
+                crate::depot::raw::drop_ring(self);
+                self.state.clear(self.capacity());
+            }
         }
     }
 
