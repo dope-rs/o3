@@ -171,7 +171,9 @@ fn grows_and_freezes() {
     );
     assert_eq!((owned.capacity(), owned.len()), (0, 0));
     owned.try_reserve(initial).expect("initial storage");
-    owned.try_extend(b"exact").expect("initialized prefix");
+    // SAFETY: the two disjoint sources total the five reserved bytes;
+    // the retained initialized prefix is empty.
+    unsafe { buffer::raw::Slices::new(initial, [b"ex", b"act"]).replace(&mut owned, 0) };
     assert!(owned.try_extend(b"!").is_err());
     let pointer = owned.as_ptr();
     let ((), count) = Tracker::count(|| {
@@ -191,12 +193,36 @@ fn grows_and_freezes() {
     assert_eq!(count, 1);
     let pointer = owned.as_ptr();
     let (shared, count) = Tracker::count(|| {
-        owned.try_extend(b"tail").expect("grown suffix");
+        // SAFETY: the original five bytes remain initialized and the exact
+        // four-byte disjoint source fits the reserved ten-byte allocation.
+        unsafe {
+            buffer::raw::Slices::new(num::NonZero::<u32>::MIN.saturating_add(3), [b"t", b"ail"])
+                .replace(&mut owned, 5);
+        }
         owned.freeze()
     });
     assert_eq!(count, 0);
     assert_eq!((shared.as_ptr(), shared.resident()), (pointer, 10));
     assert_eq!(shared.as_slice(), b"exacttail");
+}
+
+#[test]
+fn replaces_suffix_without_growth() {
+    let mut owned = Owned::try_with(8).expect("replacement storage");
+    owned.try_extend(b"prefix").expect("initialized bytes");
+    let pointer = owned.as_ptr();
+    let ((), activity) = Tracker::measure(|| {
+        // SAFETY: the retained three-byte prefix is initialized, and the exact
+        // one-byte disjoint source fits the existing eight-byte allocation.
+        unsafe {
+            buffer::raw::Slices::new(num::NonZero::<u32>::MIN, [b"!", &[]]).replace(&mut owned, 3);
+        }
+    });
+    assert_eq!(activity, [0; 4]);
+    assert_eq!(
+        (owned.as_ptr(), owned.capacity(), owned.as_slice()),
+        (pointer, 8, &b"pre!"[..])
+    );
 }
 
 #[test]

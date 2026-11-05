@@ -65,6 +65,28 @@ impl<P: crate::buffer::raw::Policy, const CAP: u32> buffer::raw::Space for Bytes
     }
 }
 
+impl<const N: usize> buffer::raw::Slices<'_, N> {
+    /// Replaces the suffix after `prefix` and publishes the complete initialized length.
+    ///
+    /// # Safety
+    /// `prefix` must not exceed `target.len()`. The mathematical sum of `prefix`
+    /// and this source's exact length must not exceed `target.capacity()`.
+    /// Every source must remain valid and disjoint from the entire written range.
+    pub unsafe fn replace(self, target: &mut Bytes, prefix: u32) {
+        use buffer::raw::SliceExt as _;
+
+        // SAFETY: this positive source fits target's runtime capacity, which is
+        // zero without an allocation. The exclusive target therefore retains a heap.
+        let heap = unsafe { crate::mem::raw::initialized(&target.allocation) };
+        // SAFETY: the caller retains this exact disjoint suffix in that heap.
+        unsafe {
+            self.slices()
+                .copy_to(heap.as_ptr().cast_mut().add(prefix as usize).cast())
+        };
+        target.len = prefix + self.len().get();
+    }
+}
+
 // SAFETY: Bytes owns its heap and tracks only its initialized prefix; an
 // absent heap has length zero. Shared access cannot mutate either field.
 unsafe impl<P: crate::buffer::raw::Policy, const CAP: u32> buffer::raw::Prefix for Bytes<P, CAP> {
