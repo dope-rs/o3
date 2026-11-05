@@ -170,9 +170,7 @@ fn consume_keeps_source() {
         view.try_consume(1)
             .expect("one byte fits the selected view");
         let result = view.try_consume(usize::MAX);
-        let error = result
-            .err()
-            .expect("an oversized consume preserves the selected suffix");
+        let error = result.expect_err("an oversized consume preserves the selected suffix");
         let (required, left) = error.into_parts();
         assert_eq!((required.get(), left), (usize::MAX, 3));
         assert_eq!(view.as_slice(), b"cde");

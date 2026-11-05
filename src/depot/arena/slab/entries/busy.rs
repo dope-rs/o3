@@ -20,13 +20,11 @@ pub struct Busy<
     const PARTITIONS: usize = 1,
     P = (),
     S = storage::Heap,
-    I = storage::Eager,
 > where
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot) plane: marker::PhantomData<fn(P) -> P>,
-    pub(in crate::depot) core: &'a entries::Core<T, MAX, M, PARTITIONS, S, I>,
+    pub(in crate::depot) core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
     pub(in crate::depot) slot: &'a crate::depot::raw::SlabSlot<
         T,
         key::Generation<MAX>,
@@ -35,11 +33,10 @@ pub struct Busy<
     >,
 }
 
-impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S, I>
-    Busy<'a, T, MAX, M, PARTITIONS, P, S, I>
+impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S>
+    Busy<'a, T, MAX, M, PARTITIONS, P, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot) fn index(&self) -> u32 {
         // SAFETY: both constructors retain a slot borrowed from this core's allocation.
@@ -101,17 +98,16 @@ where
     }
 }
 
-impl<'a, T, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, P, S, I>
-    Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, P, S, I>
+impl<'a, T, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, P, S>
+    Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, P, S>
 where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot) fn withdraw(
         self,
     ) -> (
-        entries::Pending<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, P, S, I>,
+        entries::Pending<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, P, S>,
         T,
     ) {
         // SAFETY: this Exclusive guard owns the initialized slot's sole take authority.
@@ -127,12 +123,6 @@ where
             },
             value,
         )
-    }
-
-    pub(in crate::depot) fn read<Q>(
-        live: crate::depot::raw::Proof<(&Self, links::Index), Initialized<Q>>,
-    ) -> &T {
-        Self::project(live).1
     }
 
     pub(in crate::depot) fn project<Q>(
@@ -158,11 +148,10 @@ where
     }
 }
 
-impl<T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S, I> Drop
-    for Busy<'_, T, MAX, M, PARTITIONS, P, S, I>
+impl<T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S> Drop
+    for Busy<'_, T, MAX, M, PARTITIONS, P, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     fn drop(&mut self) {
         if M::REENTRANT {
@@ -171,11 +160,10 @@ where
     }
 }
 
-impl<T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S, I> crate::mem::Return
-    for Busy<'_, T, MAX, M, PARTITIONS, P, S, I>
+impl<T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S> crate::mem::Return
+    for Busy<'_, T, MAX, M, PARTITIONS, P, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     type Item = ();
 

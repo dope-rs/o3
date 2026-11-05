@@ -34,7 +34,7 @@ impl<'a, T, const G: usize, const N: usize> Slot<'a, T, G, N> {
     }
 
     /// Removes the resident from its current lane, if any.
-    pub fn clear(self) -> &'a T {
+    pub fn clear(&self) -> &'a T {
         let node = unsafe { self.owner.block.as_ref().get_unchecked(self.index.get()) };
         if self.index.is_linked(&node.hook) {
             let lane = unsafe { self.owner.block.values().get_unchecked(self.index.get()) }.get();

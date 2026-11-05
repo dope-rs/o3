@@ -11,64 +11,40 @@ use crate::{
     },
 };
 
-/// Heap-allocated slot storage; the default policy.
+/// Heap-allocated slot storage constructed eagerly; the default policy.
 pub struct Heap;
 
 /// Slot storage carried inline by its owner with a const slot count.
 pub struct Inline<const N: usize>;
 
-/// Every slot is constructed together with its storage.
-pub struct Eager;
-
-/// Each slot is constructed on first use.
+/// Heap-allocated slot storage constructed on first use.
 pub struct Lazy;
 
-/// Where one slab keeps its slots.
+/// Where and when one slab constructs its slots.
 pub trait Storage: entries::Sealed {
-    /// The slot plane of this storage policy under one initialization policy.
-    type Plane<T, const MAX: u32, M: entries::Mode, I: Init>: Plane<T, MAX, M>;
+    const LAZY: bool = false;
+
+    /// The slot plane of this storage policy.
+    type Plane<T, const MAX: u32, M: entries::Mode>: Plane<T, MAX, M>;
 }
 
 impl Storage for Heap {
-    type Plane<T, const MAX: u32, M: entries::Mode, I: Init> = <I as Init>::Heap<T, MAX, M>;
+    type Plane<T, const MAX: u32, M: entries::Mode> = HeapEager<T, MAX, M>;
 }
 
 impl<const N: usize> Storage for Inline<N> {
-    type Plane<T, const MAX: u32, M: entries::Mode, I: Init> = <I as Init>::Inline<N, T, MAX, M>;
+    type Plane<T, const MAX: u32, M: entries::Mode> = InlineEager<N, T, MAX, M>;
 }
 
 impl entries::Sealed for Heap {}
 
 impl<const N: usize> entries::Sealed for Inline<N> {}
 
-/// When one slab constructs each slot.
-pub trait Init: entries::Sealed {
-    const LAZY: bool;
-
-    /// The heap slot plane of this initialization policy.
-    type Heap<T, const MAX: u32, M: entries::Mode>: HeapPlane<T, MAX, M>;
-
-    /// The inline slot plane of this initialization policy.
-    type Inline<const N: usize, T, const MAX: u32, M: entries::Mode>: InlinePlane<T, MAX, M>;
-}
-
-impl Init for Eager {
-    const LAZY: bool = false;
-
-    type Heap<T, const MAX: u32, M: entries::Mode> = HeapEager<T, MAX, M>;
-
-    type Inline<const N: usize, T, const MAX: u32, M: entries::Mode> = InlineEager<N, T, MAX, M>;
-}
-
-impl Init for Lazy {
+impl Storage for Lazy {
     const LAZY: bool = true;
 
-    type Heap<T, const MAX: u32, M: entries::Mode> = HeapLazy<T, MAX, M>;
-
-    type Inline<const N: usize, T, const MAX: u32, M: entries::Mode> = InlineLazy<N, T, MAX, M>;
+    type Plane<T, const MAX: u32, M: entries::Mode> = HeapLazy<T, MAX, M>;
 }
-
-impl entries::Sealed for Eager {}
 
 impl entries::Sealed for Lazy {}
 
@@ -202,10 +178,8 @@ pub struct InlineEager<const N: usize, T, const MAX: u32, M: entries::Mode> {
     cells: [cell::Cell<mem::MaybeUninit<u32>>; N],
 }
 
-impl<const N: usize, T, const MAX: u32, M: entries::Mode> InlinePlane<T, MAX, M>
-    for InlineEager<N, T, MAX, M>
-{
-    fn inline(init: impl Fn(u32) -> Slot<T, MAX, M>) -> Self {
+impl<const N: usize, T, const MAX: u32, M: entries::Mode> InlineEager<N, T, MAX, M> {
+    pub(in crate::depot::arena::slab) fn inline(init: impl Fn(u32) -> Slot<T, MAX, M>) -> Self {
         const { assert!(N <= u32::MAX as usize, "inline slot count") };
         Self {
             slots: array::from_fn(|index| init(index as u32)),
@@ -227,59 +201,6 @@ impl<const N: usize, T, const MAX: u32, M: entries::Mode> Plane<T, MAX, M>
 
     fn as_ref(&self) -> &[Slot<T, MAX, M>] {
         &self.slots
-    }
-}
-
-/// One inline extent whose slots are constructed on first use.
-pub struct InlineLazy<const N: usize, T, const MAX: u32, M: entries::Mode> {
-    slots: [cell::UnsafeCell<mem::MaybeUninit<Slot<T, MAX, M>>>; N],
-    cells: [cell::Cell<mem::MaybeUninit<u32>>; N],
-    built: cell::Cell<u32>,
-}
-
-impl<const N: usize, T, const MAX: u32, M: entries::Mode> InlinePlane<T, MAX, M>
-    for InlineLazy<N, T, MAX, M>
-{
-    fn inline(_: impl Fn(u32) -> Slot<T, MAX, M>) -> Self {
-        const { assert!(N <= u32::MAX as usize, "inline slot count") };
-        Self {
-            slots: [const { cell::UnsafeCell::new(mem::MaybeUninit::uninit()) }; N],
-            cells: [const { cell::Cell::new(mem::MaybeUninit::uninit()) }; N],
-            built: cell::Cell::new(0),
-        }
-    }
-}
-
-impl<const N: usize, T, const MAX: u32, M: entries::Mode> Plane<T, MAX, M>
-    for InlineLazy<N, T, MAX, M>
-{
-    fn count(&self) -> capacity::Count {
-        capacity::Count::new(N as u32)
-    }
-
-    fn tail(&self) -> &[cell::Cell<mem::MaybeUninit<u32>>] {
-        &self.cells
-    }
-
-    fn as_ref(&self) -> &[Slot<T, MAX, M>] {
-        // SAFETY: construction wrote every slot below the built prefix of this
-        // inline extent, which stays live for this shared borrow.
-        unsafe { slice::from_raw_parts(self.slots.as_ptr().cast(), self.built() as usize) }
-    }
-
-    fn built(&self) -> u32 {
-        self.built.get()
-    }
-
-    fn push(&self, slot: Slot<T, MAX, M>) -> Option<&Slot<T, MAX, M>> {
-        let index = self.built();
-        if index as usize >= N {
-            return None;
-        }
-        // SAFETY: this index is below the inline extent and uninitialized.
-        let slot = unsafe { (*self.slots.get_unchecked(index as usize).get()).write(slot) };
-        self.built.set(index + 1);
-        Some(slot)
     }
 }
 
@@ -326,19 +247,9 @@ pub trait HeapPlane<T, const MAX: u32, M: entries::Mode>: Plane<T, MAX, M> {
     ) -> Result<Self, alloc::Error>;
 }
 
-/// The slot operations of one inline plane: an extent resident in its owner.
-pub trait InlinePlane<T, const MAX: u32, M: entries::Mode>: Plane<T, MAX, M> {
-    /// Builds the resident extent, delegating slot construction to `init`.
-    fn inline(init: impl Fn(u32) -> Slot<T, MAX, M>) -> Self;
-}
-
 impl<T, const MAX: u32, M: entries::Mode> entries::Sealed for HeapEager<T, MAX, M> {}
 impl<T, const MAX: u32, M: entries::Mode> entries::Sealed for HeapLazy<T, MAX, M> {}
 impl<const N: usize, T, const MAX: u32, M: entries::Mode> entries::Sealed
     for InlineEager<N, T, MAX, M>
-{
-}
-impl<const N: usize, T, const MAX: u32, M: entries::Mode> entries::Sealed
-    for InlineLazy<N, T, MAX, M>
 {
 }

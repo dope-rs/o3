@@ -3,7 +3,7 @@ use crate::{
     buffer::{
         storage,
         storage::regions,
-        write::{SpareExt as _, consume, spans},
+        write::{SpareExt as _, spans},
     },
 };
 
@@ -30,9 +30,9 @@ impl Exact {
         let mut spare = owned.spare();
         let mut exact = spare.exact();
         build(&mut exact).map_err(BuildError::Build)?;
-        consume::Error::check(exact.cursor.limit() as usize, exact.cursor.len() as usize)
-            .map_err(BuildError::Length)?;
-        exact.cursor.commit();
+        exact
+            .try_commit()
+            .map_err(|error| BuildError::Length(error.into()))?;
         spare.commit();
         let Some(heap) = owned.bytes.allocation else {
             return Ok(Self::new());

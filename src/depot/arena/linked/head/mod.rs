@@ -29,28 +29,22 @@ impl<Tag> List<Tag> {
 
 const _: () = assert!(mem::size_of::<List>() == mem::size_of::<u32>());
 
-/// Exclusive head of a forward chain stored in external slots.
-#[repr(transparent)]
-pub struct Exclusive<L: crate::depot::raw::Link = u32>(L);
-
 /// Interior-mutable head of a forward chain stored in external slots.
 #[repr(transparent)]
-pub struct Cell<L: crate::depot::raw::Link = u32>(cell::Cell<L>);
+pub struct Cell<L: crate::depot::raw::Link = u32>(pub(in crate::depot) cell::Cell<L>);
 
 /// Owner-bound proof of one present exclusive head.
 #[must_use = "a present head must be consumed or left linked"]
-pub struct Front<O, L: crate::depot::raw::Link = u32> {
-    owner: O,
+pub struct Front<'a, L: crate::depot::raw::Link = u32> {
+    owner: &'a Cell<L>,
     present: crate::depot::raw::Present<L>,
 }
 
-impl<O, L: crate::depot::raw::Link> Front<O, L> {
+impl<L: crate::depot::raw::Link> Front<'_, L> {
     pub fn item(&self) -> L::Item {
         self.present.item()
     }
-}
 
-impl<L: depot::raw::Link, O: Owner<L>> Front<O, L> {
     /// # Safety
     /// The transition owns this exact head's storage and does not reenter the head.
     pub(in crate::depot) unsafe fn pop<I, P: depot::raw::HeadPop<L, I>>(
@@ -59,26 +53,8 @@ impl<L: depot::raw::Link, O: Owner<L>> Front<O, L> {
         input: I,
     ) -> P::Output {
         let (next, result) = unsafe { pop.pop(self.present.item(), input) };
-        self.owner.store(next);
+        self.owner.0.set(next);
         result
-    }
-}
-
-impl<L: crate::depot::raw::Link> Exclusive<L> {
-    pub const fn new(first: L) -> Self {
-        Self(first)
-    }
-
-    pub const fn raw(&self) -> L {
-        self.0
-    }
-
-    pub fn front(&mut self) -> Option<Front<&mut Self, L>> {
-        let present = crate::depot::raw::Present::new(self.raw())?;
-        Some(Front {
-            owner: self,
-            present,
-        })
     }
 }
 
@@ -91,7 +67,7 @@ impl<L: crate::depot::raw::Link> Cell<L> {
         self.0.get()
     }
 
-    pub fn front(&self) -> Option<Front<&Self, L>> {
+    pub fn front(&self) -> Option<Front<'_, L>> {
         let present = crate::depot::raw::Present::new(self.raw())?;
         Some(Front {
             owner: self,
@@ -101,15 +77,9 @@ impl<L: crate::depot::raw::Link> Cell<L> {
 }
 
 const _: () = {
-    assert!(mem::size_of::<Exclusive>() == mem::size_of::<u32>());
     assert!(mem::size_of::<Cell>() == mem::size_of::<u32>());
-    assert!(mem::size_of::<Exclusive<u16>>() == mem::size_of::<u16>());
     assert!(mem::size_of::<Cell<u16>>() == mem::size_of::<u16>());
-    assert!(mem::align_of::<Exclusive>() == mem::align_of::<u32>());
-    assert!(mem::size_of::<Option<Exclusive>>() == mem::size_of::<Option<u32>>());
-    assert!(mem::size_of::<Option<Exclusive<u16>>>() == mem::size_of::<Option<u16>>());
-    assert!(mem::size_of::<Front<&'static mut Exclusive>>() == 2 * mem::size_of::<usize>());
-    assert!(mem::size_of::<Front<&'static Cell>>() == 2 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Front<'static>>() == 2 * mem::size_of::<usize>());
 };
 
 impl<Tag> List<Tag> {
@@ -143,35 +113,3 @@ impl<Tag> List<Tag> {
         Some(unsafe { slots::Entry::new(store, self) })
     }
 }
-
-/// A closed native head loan whose writes retain its original storage identity.
-pub trait Owner<L: depot::raw::Link>: Sealed<L> {
-    fn raw(&self) -> L;
-    fn store(self, next: L);
-}
-
-impl<L: depot::raw::Link> Sealed<L> for &mut Exclusive<L> {}
-impl<L: depot::raw::Link> Sealed<L> for &Cell<L> {}
-
-impl<L: depot::raw::Link> Owner<L> for &mut Exclusive<L> {
-    fn raw(&self) -> L {
-        self.0
-    }
-
-    fn store(self, next: L) {
-        self.0 = next;
-    }
-}
-
-impl<L: depot::raw::Link> Owner<L> for &Cell<L> {
-    fn raw(&self) -> L {
-        self.0.get()
-    }
-
-    fn store(self, next: L) {
-        self.0.set(next);
-    }
-}
-
-mod sealed;
-pub(in crate::depot) use sealed::Sealed;

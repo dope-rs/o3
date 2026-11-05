@@ -45,8 +45,41 @@ impl<T: buffer::raw::Segment> Drain<'_, queue::Fifo<T>> {
 
 impl<T: buffer::raw::Segment> Drain<'_, segments::Chain<T>> {
     pub fn commit(self) {
-        if let Some(prefix) = segments::Consume::new(self) {
-            prefix.commit();
+        use segments::{Tail, chain::edit, handles};
+
+        let Some(mut amount) = NonZero::new(self.amount) else {
+            return;
+        };
+        // The admitted positive prefix retains a nonempty exclusive chain.
+        let head = segments::Front {
+            sequence: self.target,
+        };
+        loop {
+            match head.position() {
+                handles::Occupied::Single(index) => {
+                    let mut single = edit::Single {
+                        sequence: head.sequence,
+                        index,
+                    };
+                    let owner = buffer::raw::IndexedMut::get_mut(&mut single);
+                    match Tail::positive(owner, amount) {
+                        Some(tail) => tail.commit(),
+                        None => single.discard(),
+                    }
+                    return;
+                }
+                handles::Occupied::Multi(index) => {
+                    let left = edit::Multi {
+                        sequence: &mut *head.sequence,
+                        index,
+                    }
+                    .consume(amount);
+                    let Some(left) = left else {
+                        return;
+                    };
+                    amount = left;
+                }
+            }
         }
     }
 }

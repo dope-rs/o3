@@ -1,4 +1,4 @@
-use std::{num::NonZero, ops};
+use std::num::NonZero;
 
 use handles::Descriptor;
 
@@ -23,7 +23,7 @@ pub(in crate::buffer::segments::chain::prefix) struct Body<'a, T> {
 }
 
 pub(in crate::buffer::segments::chain::prefix) struct Topology<'a, T> {
-    body: Body<'a, T>,
+    pub(in crate::buffer::segments::chain::prefix) body: Body<'a, T>,
     output: Output<'a>,
 }
 
@@ -263,18 +263,5 @@ impl<T> Topology<'_, T> {
                 unsafe { live.publish() };
             }
         }
-    }
-}
-
-impl<'a, T> ops::Deref for Topology<'a, T> {
-    type Target = Body<'a, T>;
-    fn deref(&self) -> &Self::Target {
-        &self.body
-    }
-}
-
-impl<T> ops::DerefMut for Topology<'_, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.body
     }
 }

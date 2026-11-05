@@ -43,15 +43,14 @@ unsafe impl<'a, T, const MAX: u32, C, P> crate::depot::raw::Project<links::Index
 }
 
 // SAFETY: the exact exclusive source and operation plane survive native slot admission.
-unsafe impl<'a, T, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, C, P, S, I>
+unsafe impl<'a, T, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, C, P, S>
     crate::depot::raw::Project<links::Index, P>
-    for (&'a Core<T, MAX, Exclusive<RECYCLE>, PARTITIONS, S, I>, C)
+    for (&'a Core<T, MAX, Exclusive<RECYCLE>, PARTITIONS, S>, C)
 where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
-    type Output = (Busy<'a, T, MAX, Exclusive<RECYCLE>, PARTITIONS, P, S, I>, C);
+    type Output = (Busy<'a, T, MAX, Exclusive<RECYCLE>, PARTITIONS, P, S>, C);
 
     unsafe fn project(self, index: links::Index) -> Self::Output {
         let (core, context) = self;
@@ -70,12 +69,11 @@ where
 }
 
 // SAFETY: the live proof retains this exact pinned owner's initialized slot and shared loan.
-unsafe impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S, I>
-    crate::depot::raw::Project<u32> for &'a slab::Pinned<T, Tag, MAX, RECYCLE, PARTITIONS, S, I>
+unsafe impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S>
+    crate::depot::raw::Project<u32> for &'a slab::Pinned<T, Tag, MAX, RECYCLE, PARTITIONS, S>
 where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
     type Output = &'a T;
 
@@ -90,15 +88,14 @@ where
 }
 
 // SAFETY: the exact exclusive pinned loan remains in Anchored until its consuming transition.
-unsafe impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S, I>
+unsafe impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S>
     crate::depot::raw::Project<u32>
-    for Pin<&'a mut slab::Pinned<T, Tag, MAX, RECYCLE, PARTITIONS, S, I>>
+    for Pin<&'a mut slab::Pinned<T, Tag, MAX, RECYCLE, PARTITIONS, S>>
 where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
-    type Output = slab::Anchored<'a, T, Tag, MAX, RECYCLE, PARTITIONS, S, I>;
+    type Output = slab::Anchored<'a, T, Tag, MAX, RECYCLE, PARTITIONS, S>;
 
     unsafe fn project(self, index: u32) -> Self::Output {
         // SAFETY: a live slot is below the retained capacity, which excludes the sentinel.

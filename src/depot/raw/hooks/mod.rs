@@ -124,7 +124,7 @@ mod endpoint;
 mod member;
 mod mutation;
 pub(in crate::depot) use endpoint::{EndpointHook, EndpointWord, Neighbor};
-pub(in crate::depot) use member::{Membership, Removal};
+pub(in crate::depot) use member::Removal;
 pub(in crate::depot) use mutation::{Detach, Insert, Pop, Splice};
 
 mod lanes;

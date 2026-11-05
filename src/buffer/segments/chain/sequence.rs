@@ -1,26 +1,20 @@
-use std::{marker, mem};
+use std::mem;
 
 use crate::{
     buffer,
     buffer::{
         segments,
         segments::{
-            Handle, Key, Pool,
+            Chain, Handle, Key, Pool,
             chain::{view, view::iter::Iter},
             handles,
         },
     },
-    depot::arena::linked::{self, fifo::ends, slots},
+    depot::arena::linked::{self, slots},
 };
 
 /// The complete state of one compact chain handle.
-#[derive(Debug)]
-#[repr(C)]
-pub struct Sequence<T, H: Handle<T> = Pool<T>> {
-    pub(in crate::buffer::segments) handle: H,
-    pub(in crate::buffer::segments) key: Key,
-    pub(in crate::buffer::segments) owner: marker::PhantomData<fn() -> T>,
-}
+pub type Sequence<T, H = Pool<T>> = Chain<T, H>;
 
 struct Node<'a, T, H: Handle<T>> {
     source: &'a Sequence<T, H>,
@@ -65,7 +59,7 @@ unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::Linked<'a> for Links<'a, T, H>
     }
 }
 
-impl<T, H: Handle<T>> Sequence<T, H> {
+impl<T, H: Handle<T>> Chain<T, H> {
     pub fn clear(&mut self) {
         let key = mem::replace(&mut self.key, Key::EMPTY);
         Self::release(&self.handle, &key);
@@ -86,19 +80,18 @@ impl<T, H: Handle<T>> Sequence<T, H> {
         // SAFETY: this detached multi key uniquely owns its exact descriptor.
         let (mut desc, retired) = unsafe { descs.detached(index) }.take();
         // SAFETY: the descriptor owns this exact tracked node-store partition.
-        let mut links = unsafe { ends::Bound::new(nodes, &mut desc.links) };
-        links.clear();
+        unsafe { desc.links.clear(nodes) };
         retired.release();
     }
 }
 
-impl<T, H: Handle<T>> Drop for Sequence<T, H> {
+impl<T, H: Handle<T>> Drop for Chain<T, H> {
     fn drop(&mut self) {
         Self::release(&self.handle, &self.key);
     }
 }
 
-impl<T: buffer::raw::Segment, H: Handle<T>> Sequence<T, H> {
+impl<T: buffer::raw::Segment, H: Handle<T>> Chain<T, H> {
     pub(in crate::buffer::segments) fn state(&self) -> view::State<'_, T> {
         if self.key.is_empty() {
             return view::State::Empty;

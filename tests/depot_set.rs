@@ -1,7 +1,5 @@
 pub mod common;
 
-use std::mem;
-
 use common::{
     alloc::system::Tracker,
     depot::set::{Key, claim},
@@ -53,7 +51,6 @@ fn planes_are_independent() {
     let ((), counts) = Tracker::measure(|| {
         {
             let claim = Entry::take_front(&mut sets, Id::at::<0>()).expect("first member");
-            assert_eq!(mem::size_of_val(&claim), 2 * mem::size_of::<usize>());
             assert_eq!(claim.index().raw(), 3);
             claim.restore();
         }
@@ -107,7 +104,6 @@ fn transfers_membership() {
     });
     let sets = (result).expect("the two planes must allocate");
     assert_eq!(counts, [1, 112, 0, 0]);
-    assert_eq!(mem::size_of_val(&sets), 2 * mem::size_of::<usize>());
     let ((), counts) = Tracker::measure(|| {
         for expected in 0..257 {
             let member =

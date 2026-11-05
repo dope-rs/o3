@@ -300,7 +300,7 @@ fn keeps_empty_contracts() {
             assert!(matches!(prefix.try_detach(), Ok(owner) if owner.is_empty()));
         }
         scope::Owner::with(source, |owner| {
-            let error = owner.view().try_rsplit::<1>().err().expect("empty source");
+            let error = owner.view().try_rsplit::<1>().expect_err("empty source");
             assert_eq!(error.into_parts(), (NonZero::<usize>::MIN, 0));
             let (_, range) = owner
                 .view()

@@ -23,8 +23,8 @@ mod cell;
 mod entry;
 mod slots;
 pub use entry::{
-    anchor::Anchor, anchored::Anchored, borrowed::Borrowed, occupied::Occupied, rest::Rest,
-    restore::Withdrawn, staged::Staged, vacant::Vacant,
+    anchor::Anchor, anchored::Anchored, borrowed::Borrowed, occupied::Occupied, restore::Withdrawn,
+    staged::Staged, vacant::Vacant,
 };
 
 /// One issued identity retaining its reserved slot until installation or retirement.
@@ -64,19 +64,19 @@ pub struct Pinned<
     const RECYCLE: bool = false,
     const PARTITIONS: usize = 1,
     S = storage::Heap,
-    I = storage::Eager,
 > where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
-    pub(in crate::depot) core: entries::Core<T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, S, I>,
+    pub(in crate::depot) core: entries::Core<T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, S>,
     _pin: marker::PhantomPinned,
     tag: marker::PhantomData<fn() -> Tag>,
 }
 
-impl<T, Tag, const MAX: u32, const PARTITIONS: usize, I: storage::Init>
-    Pinned<T, Tag, MAX, false, PARTITIONS, storage::Heap, I>
+impl<T, Tag, const MAX: u32, const PARTITIONS: usize, S> Pinned<T, Tag, MAX, false, PARTITIONS, S>
+where
+    S: storage::Storage,
+    S::Plane<T, MAX, entries::Exclusive>: storage::HeapPlane<T, MAX, entries::Exclusive>,
 {
     /// Allocates one pinned heap extent under its slot initialization policy.
     pub fn try_new(cap: capacity::Count) -> Result<Self, crate::alloc::Error> {
@@ -88,8 +88,8 @@ impl<T, Tag, const MAX: u32, const PARTITIONS: usize, I: storage::Init>
     }
 }
 
-impl<T, Tag, const MAX: u32, const PARTITIONS: usize, const N: usize, I: storage::Init> Default
-    for Pinned<T, Tag, MAX, false, PARTITIONS, storage::Inline<N>, I>
+impl<T, Tag, const MAX: u32, const PARTITIONS: usize, const N: usize> Default
+    for Pinned<T, Tag, MAX, false, PARTITIONS, storage::Inline<N>>
 {
     /// Builds the complete inline slot plane without allocating.
     fn default() -> Self {
@@ -101,12 +101,11 @@ impl<T, Tag, const MAX: u32, const PARTITIONS: usize, const N: usize, I: storage
     }
 }
 
-impl<T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S, I>
-    Pinned<T, Tag, MAX, RECYCLE, PARTITIONS, S, I>
+impl<T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S>
+    Pinned<T, Tag, MAX, RECYCLE, PARTITIONS, S>
 where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
     pub fn capacity(&self) -> usize {
         self.core.slots.capacity()
@@ -118,7 +117,7 @@ where
 
     pub fn vacant(
         self: Pin<&mut Self>,
-    ) -> Option<slab::Anchor<'_, T, Tag, MAX, RECYCLE, PARTITIONS, S, I>> {
+    ) -> Option<slab::Anchor<'_, T, Tag, MAX, RECYCLE, PARTITIONS, S>> {
         let store = self.into_ref().get_ref();
         Some(slab::Anchor {
             entry: store.core.free()?,
@@ -137,7 +136,7 @@ where
     pub fn anchor(
         self: Pin<&mut Self>,
         parts: key::Parts<MAX>,
-    ) -> Option<slab::Anchored<'_, T, Tag, MAX, RECYCLE, PARTITIONS, S, I>> {
+    ) -> Option<slab::Anchored<'_, T, Tag, MAX, RECYCLE, PARTITIONS, S>> {
         let store = self.into_ref().get_ref();
         let entry = entries::Occupied::key(&store.core, parts.index(), parts.generation())?;
         Some(slab::Anchored {

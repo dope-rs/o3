@@ -87,10 +87,6 @@ impl<T> Fifo<T> {
         Some(self.front_entry()?.remove())
     }
 
-    pub fn front(&self) -> Option<&T> {
-        crate::depot::raw::RingRead::front(self)
-    }
-
     /// Borrows the current front exclusively so inspection and removal refer
     /// to the same entry without a second occupancy check.
     pub fn front_entry(&mut self) -> Option<Front<'_, Fifo<T>>> {
@@ -98,14 +94,6 @@ impl<T> Fifo<T> {
             return None;
         }
         Some(ring::Front { source: self })
-    }
-
-    pub fn get(&self, index: usize) -> Option<&T> {
-        crate::depot::raw::RingRead::get(self, index)
-    }
-
-    pub fn as_slices(&self) -> (&[T], &[T]) {
-        crate::depot::raw::RingRead::as_slices(self)
     }
 
     pub fn clear(&mut self) {
@@ -225,11 +213,6 @@ impl<T> Cell<T> {
 
     pub fn pop_front(&self) -> Option<T> {
         crate::depot::raw::RingCell::take_front(self)
-    }
-
-    /// Drops every resident value in place.
-    pub fn clear(&self) {
-        crate::depot::raw::RingDestroy::clear(self);
     }
 
     pub const fn capacity(&self) -> usize {

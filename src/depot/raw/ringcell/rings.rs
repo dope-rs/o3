@@ -2,31 +2,29 @@ use std::{mem, ptr, slice};
 
 use crate::depot::{self, queue::ring};
 
-/// A ring whose shared borrow keeps every resident value stable.
-/// # Safety
-/// No operation through a shared borrow may move, replace, or destroy a value.
-pub(crate) unsafe trait RingRead: depot::raw::RingStore {
-    fn front(&self) -> Option<&Self::Item> {
-        if self.state().is_empty() {
+impl<T> ring::Fifo<T> {
+    pub fn front(&self) -> Option<&T> {
+        if self.state.is_empty() {
             return None;
         }
-        Some(unsafe { &*self.entries().add(self.state().head()).cast::<Self::Item>() })
+        // SAFETY: this nonempty FIFO's shared borrow retains its initialized head.
+        Some(unsafe { &*self.block.as_ptr().add(self.state.head()).cast::<T>() })
     }
 
-    fn get(&self, index: usize) -> Option<&Self::Item> {
-        if index >= self.state().len() {
+    pub fn get(&self, index: usize) -> Option<&T> {
+        if index >= self.state.len() {
             return None;
         }
-        let position = unsafe { self.state().position(self.capacity(), index) };
+        let position = unsafe { self.state.position(self.capacity(), index) };
         // SAFETY: the bounds check admits this initialized logical offset.
-        Some(unsafe { &*self.entries().add(position).cast::<Self::Item>() })
+        Some(unsafe { &*self.block.as_ptr().add(position).cast::<T>() })
     }
 
-    fn as_slices(&self) -> (&[Self::Item], &[Self::Item]) {
-        let state = self.state();
+    pub fn as_slices(&self) -> (&[T], &[T]) {
+        let state = self.state;
         let (start, [front, back]) = state.prefix(self.capacity(), state.len());
-        let entries = self.entries().cast::<Self::Item>();
-        // SAFETY: RingRead retains the two exact initialized runs for this borrow.
+        let entries = self.block.as_ptr().cast::<T>();
+        // SAFETY: this FIFO retains the two exact initialized runs for this borrow.
         unsafe {
             (
                 slice::from_raw_parts(entries.add(start), front),
@@ -36,23 +34,24 @@ pub(crate) unsafe trait RingRead: depot::raw::RingStore {
     }
 }
 
-/// # Safety
-/// A retiring slot cannot be reused until its in-place destructor finishes.
-pub(crate) unsafe trait RingDestroy: depot::raw::RingCell {
-    fn clear(&self) {
+impl<T> ring::Cell<T> {
+    /// Drops every resident value in place.
+    pub fn clear(&self) {
         loop {
-            let mut state = self.state();
+            let mut state = self.state.get();
             if state.is_empty() {
                 return;
             }
             let index = unsafe { state.pop_front(self.capacity()) };
-            unsafe { self.publish(state) };
+            self.state.set(state);
             // SAFETY: publish removal before Drop can reenter, then reload state.
+            // Insertion cannot reuse the retiring slot until its destructor finishes.
             unsafe {
-                self.entries()
+                self.block
+                    .as_ptr()
                     .cast_mut()
                     .add(index)
-                    .cast::<Self::Item>()
+                    .cast::<T>()
                     .drop_in_place()
             };
         }
@@ -124,9 +123,6 @@ unsafe impl<T> crate::depot::raw::RingStore for ring::Fifo<T> {
     }
 }
 
-// SAFETY: every resident mutation requires an exclusive ring::Fifo borrow.
-unsafe impl<T> crate::depot::raw::RingRead for ring::Fifo<T> {}
-
 // SAFETY: the shared cell owns exactly the initialized range described by state.
 unsafe impl<T> crate::depot::raw::RingStore for ring::Cell<T> {
     type Item = T;
@@ -141,9 +137,6 @@ unsafe impl<T> crate::depot::raw::RingStore for ring::Cell<T> {
         self.block.as_ptr()
     }
 }
-
-// SAFETY: ring::Cell insertion requires a non-reentrant unsafe admission.
-unsafe impl<T> crate::depot::raw::RingDestroy for ring::Cell<T> {}
 
 // SAFETY: ring::Pool retains the exact backing and initialized range across shared operations.
 unsafe impl<T> crate::depot::raw::RingStore for ring::Pool<T> {

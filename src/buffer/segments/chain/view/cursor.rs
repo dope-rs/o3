@@ -53,13 +53,31 @@ impl<'a, T: buffer::raw::Segment> Cursor<'a, T> {
         }
     }
 
-    pub(in crate::buffer) fn remaining(&self) -> usize {
+    pub(in crate::buffer::segments) fn new<H: Handle<T>>(source: &'a Chain<T, H>) -> Self {
+        let sequence = source;
+        let nodes = handles::nodes(&sequence.handle);
+        let (head, len) = match sequence.state() {
+            view::State::Empty => (slots::Index::NONE, 0),
+            view::State::Single(index, item) => (index, item.len().get()),
+            view::State::Multi(desc) => (desc.links.head_raw(), desc.len),
+        };
+        Self {
+            // SAFETY: this sequence borrow retains the exact immutable live chain.
+            nodes: unsafe { linked::Iter::new(nodes, head) },
+            current: &[],
+            remaining: len,
+        }
+    }
+}
+
+// SAFETY: construction borrows the same sequence for topology and byte total;
+// every node retains a nonempty Item and each advance consumes an exact prefix.
+unsafe impl<'a, T: buffer::raw::Segment> buffer::raw::Scatter<'a> for Cursor<'a, T> {
+    fn remaining(&self) -> usize {
         self.remaining
     }
 
-    /// # Safety
-    /// Positive remaining and cap/left bounds belong to this unchanged borrowed chain.
-    pub(in crate::buffer) unsafe fn next_chunk<const MAX: usize>(
+    unsafe fn advance<const MAX: usize>(
         &mut self,
         cap: NonZero<usize>,
         _left: NonZero<usize>,
@@ -78,22 +96,6 @@ impl<'a, T: buffer::raw::Segment> Cursor<'a, T> {
         // SAFETY: the retained item proves nonemptiness; cap and left preserve
         // the caller's byte bound and the source's exact progress.
         unsafe { buffer::raw::Chunk::new(bytes) }
-    }
-
-    pub(in crate::buffer::segments) fn new<H: Handle<T>>(source: &'a Chain<T, H>) -> Self {
-        let sequence = source;
-        let nodes = handles::nodes(&sequence.handle);
-        let (head, len) = match sequence.state() {
-            view::State::Empty => (slots::Index::NONE, 0),
-            view::State::Single(index, item) => (index, item.len().get()),
-            view::State::Multi(desc) => (desc.links.head_raw(), desc.len),
-        };
-        Self {
-            // SAFETY: this sequence borrow retains the exact immutable live chain.
-            nodes: unsafe { linked::Iter::new(nodes, head) },
-            current: &[],
-            remaining: len,
-        }
     }
 }
 

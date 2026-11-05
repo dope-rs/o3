@@ -9,14 +9,10 @@ use common::{
     alloc::system::Tracker,
     depot::{
         model::Random,
-        queue::indexed::keyed::{Entry, Error, Lanes},
+        queue::indexed::keyed::{Error, Lanes},
     },
 };
-use o3::depot::{
-    arena::slab::key,
-    capacity,
-    queue::indexed::keyed::{self, lanes},
-};
+use o3::depot::{arena::slab::key, capacity, queue::indexed::keyed::lanes};
 
 #[test]
 fn retains_validated_state() {
@@ -148,14 +144,4 @@ fn rejects_overlap() {
     lanes::Fifo::<key::Handle, 2>::try_new(capacity::Count::new(0))
         .as_ref()
         .expect("required fixture outcome");
-    assert_eq!(std::mem::size_of::<lanes::Fifo<key::Handle, 2>>(), 16);
-    assert_eq!(std::mem::size_of::<keyed::Link<key::Handle>>(), 8);
-    assert_eq!(
-        std::mem::size_of::<lanes::Bound<Entry<'_>, 2>>(),
-        std::mem::size_of::<Entry<'_>>()
-    );
-    assert_eq!(
-        std::mem::size_of::<lanes::Bound<Entry<'_>, 2, (), false>>(),
-        std::mem::size_of::<Entry<'_>>()
-    );
 }

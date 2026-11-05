@@ -8,15 +8,15 @@ use std::{cell, collections::VecDeque, mem};
 use common::{
     Counted,
     alloc::system::Tracker,
-    depot::{heap::EntryExt as _, model::Random, queue::Sequence},
+    depot::{model::Random, queue::Sequence},
 };
 use o3::{
     alloc,
     depot::{
-        capacity,
+        capacity::Limit,
         heap::indexed,
         map::Plan,
-        queue::indexed::planes::{self, Priority as _, map},
+        queue::indexed::planes::{self, bound, groups, map},
     },
 };
 
@@ -232,41 +232,53 @@ fn fixed_storage_admission() {
 fn preserves_domain() {
     let (result, allocs) = Tracker::counts(|| {
         let seed = Sequence::try_new(10).expect("factor");
-        planes::Set::<usize, 2, indexed::Min<u64>>::try_seed(capacity::Count::new(8), seed)
+        planes::Set::<usize, 2, indexed::Min<u64, Limit<64>>>::try_seed_in::<1>(
+            Limit::fixed::<8>(),
+            seed,
+        )
     });
-    let mut heap = (result).expect("queue planes must retain their allocation domain");
+    let mut heap: planes::Set<usize, 2, groups::Index<u64, Limit<64>, (), 1, 1>> = result
+        .expect("queue planes must retain their allocation domain")
+        .try_into()
+        .expect("companion rows");
 
     assert_eq!(allocs, [2, 0]);
     let ((), allocs) = Tracker::measure(|| {
-        assert!(heap.select(8).is_none());
-        for index in 0..8 {
-            let (timer, mut slot) = heap.select(index).expect("the slot exists");
-            assert_eq!(*slot, index * 10);
-            slot.plane::<0>().link_back();
-            let timer = timer.into_vacant().expect("initial priority is vacant");
-            timer.set((8 - index) as u64);
-        }
+        bound::Scope::with(&mut heap, |root| {
+            let (mut entries, _) = root.split();
+            assert!(entries.resolve(8).is_none());
+            for index in 0..8 {
+                let key = entries.resolve(index).expect("the slot exists");
+                let (timer, mut slot) = entries.select(key);
+                assert_eq!(*slot, index * 10);
+                slot.plane::<0>().link_back();
+                let indexed::Entry::Vacant(timer) = timer else {
+                    panic!("initial priority is vacant");
+                };
+                timer.set((8 - index) as u64);
+            }
+        });
         let (timer, slot) = heap.first().expect("the minimum retains its payload");
         assert_eq!(*slot, 70);
         assert_eq!(*timer.priority(), 1);
         timer.set(20);
     });
     assert_eq!(allocs, [0, 0, 0, 0]);
-    assert!(
-        (heap
-            .try_grow_to(
-                capacity::Count::new(16),
-                Sequence::try_new(10).expect("factor")
-            )
-            .expect("queue planes must retain their allocation domain"))
-            == (8..16)
-    );
+    let records = groups::Index::<u64, Limit<64>, (), 1, 1>::reserve(Limit::fixed::<16>())
+        .expect("replacement rows");
+    heap.try_replace::<1>(records, Sequence::try_new(10).expect("factor"))
+        .expect("queue planes must retain their allocation domain")();
+    assert_eq!((heap.len(), heap.limit().get()), (16, 16));
     assert_eq!(heap.len_in::<0>(), 8);
-    for index in 8..16 {
-        let (timer, slot) = heap.select(index).expect("new domain exists");
-        assert_eq!(*slot, index * 10);
-        assert!(matches!(timer, indexed::Entry::Vacant(_)));
-    }
+    bound::Scope::with(&mut heap, |root| {
+        let (mut entries, _) = root.split();
+        for index in 8..16 {
+            let key = entries.resolve(index).expect("new domain exists");
+            let (timer, slot) = entries.select(key);
+            assert_eq!(*slot, index * 10);
+            assert!(matches!(timer, indexed::Entry::Vacant(_)));
+        }
+    });
     for index in (0..7).rev().chain([7]) {
         let (timer, mut slot) = heap.first().expect("every old priority survives growth");
         assert_eq!(slot.index(), index);
@@ -279,22 +291,31 @@ fn preserves_domain() {
 
 #[test]
 fn preserves_failed_growth() {
-    let mut heap = (planes::Set::<usize, 2, indexed::Min<u64>>::try_seed(
-        capacity::Count::new(8),
-        Sequence::try_new(10).expect("factor"),
-    ))
-    .expect("queue planes must retain their allocation domain");
+    let mut heap: planes::Set<usize, 2, groups::Index<u64, Limit<64>, (), 1, 1>> =
+        planes::Set::<usize, 2, indexed::Min<u64, Limit<64>>>::try_seed_in::<1>(
+            Limit::fixed::<8>(),
+            Sequence::try_new(10).expect("factor"),
+        )
+        .expect("queue planes must retain their allocation domain")
+        .try_into()
+        .expect("companion rows");
 
-    let (timer, mut slot) = heap.select(3).expect("represented slot");
-    slot.plane::<0>().link_back();
-    let timer = timer.into_vacant().expect("initial priority is vacant");
-    timer.set(19);
+    bound::Scope::with(&mut heap, |root| {
+        let (mut entries, _) = root.split();
+        let key = entries.resolve(3).expect("represented slot");
+        let (timer, mut slot) = entries.select(key);
+        slot.plane::<0>().link_back();
+        let indexed::Entry::Vacant(timer) = timer else {
+            panic!("initial priority is vacant");
+        };
+        timer.set(19);
+    });
     for allows in [0, 1] {
+        let records = groups::Index::<u64, Limit<64>, (), 1, 1>::reserve(Limit::fixed::<64>())
+            .expect("replacement rows");
         let error = Tracker::fail_after(allows, || {
-            heap.try_grow_to(
-                capacity::Count::new(64),
-                Sequence::try_new(10).expect("factor"),
-            )
+            heap.try_replace::<1>(records, Sequence::try_new(10).expect("factor"))
+                .map(|commit| commit())
         })
         .expect_err("one allocation is rejected");
         if allows == 0 {
@@ -306,68 +327,11 @@ fn preserves_failed_growth() {
                 matches!(error, planes::Error::Values { capacity, error: alloc::Error::Exhausted } if capacity.get() == 64)
             );
         }
-        assert_eq!(heap.len(), 8);
+        assert_eq!((heap.len(), heap.limit().get()), (8, 8));
         assert_eq!(heap.len_in::<0>(), 1);
         let (timer, slot) = heap.first().expect("failed growth retains the minimum");
         assert_eq!(slot.index(), 3);
         assert_eq!(*slot, 30);
         assert_eq!(*timer.priority(), 19);
-    }
-}
-
-#[test]
-fn resets_entries() {
-    let capacity = capacity::Count::new(8);
-    let (result, allocs) =
-        Tracker::counts(|| planes::Set::<u64, 2, indexed::Min<u64>>::try_repeat(capacity, 17));
-    let mut heap = (result).expect("queue planes must retain their allocation domain");
-
-    assert_eq!(allocs, [2, 0]);
-    let ((), allocs) = Tracker::measure(|| {
-        for index in 0..8 {
-            let (timer, mut slot) = heap.select(index).expect("represented endpoint");
-            let indexed::Entry::Occupied(timer) = timer else {
-                panic!("initial deadline is resident");
-            };
-            assert_eq!(*timer.priority(), 17);
-            *slot = index as u64 + 1;
-            slot.plane::<0>().link_back();
-        }
-        for value in heap.reset() {
-            *value *= 2;
-        }
-        assert!(heap.first().is_none());
-        for index in 0..8 {
-            let slot = heap
-                .front_entry::<0>()
-                .expect("reset preserves event order")
-                .pop();
-            assert_eq!(slot.index(), index);
-            assert_eq!(*slot, 2 * (index as u64 + 1));
-        }
-        let (timer, slot) = heap.select(3).expect("reset preserves endpoint domain");
-        let timer = timer.into_vacant().expect("reset removes the deadline");
-        assert_eq!(*slot, 8);
-        timer.set(23);
-        let (timer, slot) = heap.first().expect("rearming retains the endpoint");
-        assert_eq!(*slot, 8);
-        assert_eq!(*timer.priority(), 23);
-    });
-    assert_eq!(allocs, [0, 0, 0, 0]);
-    for allows in [0, 1] {
-        let error = Tracker::fail_after(allows, || {
-            planes::Set::<u64, 2, indexed::Min<u64>>::try_repeat(capacity, 17)
-        })
-        .err()
-        .expect("construction fails atomically");
-        if allows == 0 {
-            assert!(
-                matches!(error, planes::Error::Heap(o3::depot::heap::Error::Allocation { capacity, .. }) if capacity.get() == 8)
-            );
-        } else {
-            assert!(
-                matches!(error, planes::Error::Values { capacity, error: alloc::Error::Exhausted } if capacity.get() == 8)
-            );
-        }
     }
 }

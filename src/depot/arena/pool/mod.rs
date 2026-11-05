@@ -6,7 +6,7 @@ use crate::{
         recycle::release,
         shared::{Header, Initialized, Resident},
     },
-    mem::rc,
+    mem::{raw::Edge, rc},
 };
 
 pub mod recycle;
@@ -37,14 +37,9 @@ pub struct Unique<
 
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct Shared<
-    'a,
-    T: crate::mem::raw::Edge,
-    O: crate::depot::raw::PoolSharing<T>,
-    P: crate::depot::raw::PoolPolicy<T, O>,
-> {
-    entry: crate::mem::raw::Owner<pool::Counted<T, O, P>>,
-    owner: marker::PhantomData<fn(&'a O, P) -> &'a O>,
+pub struct Shared<'a, T> {
+    entry: crate::mem::raw::Owner<pool::Counted<T>>,
+    owner: marker::PhantomData<fn(&'a T) -> &'a T>,
 }
 
 impl<'a, T, O: crate::depot::raw::PoolOwner<T>, P: crate::depot::raw::PoolPolicy<T, O>>
@@ -102,14 +97,9 @@ impl<T, O: crate::depot::raw::PoolOwner<T>, P: crate::depot::raw::PoolMutable<T,
     }
 }
 
-impl<
-    'a,
-    T: crate::mem::raw::Edge,
-    O: crate::depot::raw::PoolSharing<T>,
-    P: crate::depot::raw::PoolPolicy<T, O>,
-> Unique<'a, T, O, P>
-{
-    pub fn freeze(self) -> Shared<'a, T, O, P> {
+impl<'a, T> Unique<'a, Resident<T>, Header<T>, Initialized> {
+    pub fn freeze(self) -> Shared<'a, T> {
+        // SAFETY: begin/try_unique retain an initialized value with an empty reference domain.
         unsafe { self.get().get_ref().activate() };
         let this = mem::ManuallyDrop::new(self);
         Shared {
@@ -119,7 +109,8 @@ impl<
         }
     }
 
-    pub fn freeze_pair(self) -> (Shared<'a, T, O, P>, Shared<'a, T, O, P>) {
+    pub fn freeze_pair(self) -> (Shared<'a, T>, Shared<'a, T>) {
+        // SAFETY: this unique view owns the empty domain and publishes exactly two edges.
         unsafe { self.get().get_ref().start_pair() };
         let this = mem::ManuallyDrop::new(self);
         (
@@ -148,15 +139,9 @@ impl<T, O: crate::depot::raw::PoolOwner<T>, P: crate::depot::raw::PoolPolicy<T, 
     }
 }
 
-impl<
-    'a,
-    T: crate::mem::raw::Edge,
-    O: crate::depot::raw::PoolSharing<T>,
-    P: crate::depot::raw::PoolPolicy<T, O>,
-> Shared<'a, T, O, P>
-{
-    pub(crate) fn get(&self) -> &T {
-        self.entry.get().get()
+impl<'a, T> Shared<'a, T> {
+    fn get(&self) -> &Resident<T> {
+        &self.entry.get().entry.value
     }
 
     pub fn is_same(&self, other: &Self) -> bool {
@@ -170,7 +155,7 @@ impl<
         })
     }
 
-    pub fn try_unique(self) -> Result<Unique<'a, T, O, P>, Self> {
+    pub fn try_unique(self) -> Result<Unique<'a, Resident<T>, Header<T>, Initialized>, Self> {
         if !self.get().is_unique() {
             return Err(self);
         }
@@ -190,7 +175,7 @@ impl<'owner, T> pool::Unique<'owner, Resident<T>, Header<T>> {
         unsafe { self.map() }
     }
 
-    pub fn commit(self, value: T) -> pool::Shared<'owner, Resident<T>, Header<T>, Initialized> {
+    pub fn commit(self, value: T) -> pool::Shared<'owner, T> {
         self.begin(value).freeze()
     }
 }
@@ -209,7 +194,7 @@ impl<T> ops::DerefMut for pool::Unique<'_, Resident<T>, Header<T>, Initialized> 
     }
 }
 
-impl<T> ops::Deref for pool::Shared<'_, Resident<T>, Header<T>, Initialized> {
+impl<T> ops::Deref for pool::Shared<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -257,35 +242,21 @@ pub struct Entry<T, O> {
     pub(in crate::depot::arena::pool) state: cell::Cell<*mut O>,
 }
 
-/// Policy-specific counted view of the same initialized pool slot.
+/// Counted view of the same initialized shared-value slot.
 #[derive(Debug)]
 #[repr(transparent)]
-pub(in crate::depot) struct Counted<
-    T: crate::mem::raw::Edge,
-    O: crate::depot::raw::PoolSharing<T>,
-    P: crate::depot::raw::PoolPolicy<T, O>,
-> {
-    entry: Entry<T, O>,
-    policy: marker::PhantomData<fn(P)>,
+struct Counted<T> {
+    entry: Entry<Resident<T>, Header<T>>,
 }
 
-impl<
-    T: crate::mem::raw::Edge,
-    O: crate::depot::raw::PoolSharing<T>,
-    P: crate::depot::raw::PoolPolicy<T, O>,
-> Counted<T, O, P>
-{
-    /// # Safety
-    /// The pointer transfers the terminal edge of this exact initialized counted view.
-    pub(in crate::depot) unsafe fn destroy(pointer: ptr::NonNull<Self>) {
-        P::retire(Terminal {
+// SAFETY: this view retains an initialized value and its original pool owner
+// until the final counted edge transfers the slot to its retirement policy.
+unsafe impl<T> crate::mem::raw::Target for Counted<T> {
+    unsafe fn destroy(pointer: ptr::NonNull<Self>) {
+        <Initialized as crate::depot::raw::PoolPolicy<Resident<T>, Header<T>>>::retire(Terminal {
             entry: pointer.cast(),
             owner: marker::PhantomData,
         });
-    }
-
-    pub(crate) fn get(&self) -> &T {
-        &self.entry.value
     }
 }
 
@@ -339,12 +310,7 @@ impl<T, O> Entry<T, O> {
 }
 
 // SAFETY: the transparent view preserves the initialized entry's exact reference domain.
-unsafe impl<
-    T: crate::mem::raw::Edge,
-    O: crate::depot::raw::PoolSharing<T>,
-    P: crate::depot::raw::PoolPolicy<T, O>,
-> crate::mem::raw::Edge for Counted<T, O, P>
-{
+unsafe impl<T> crate::mem::raw::Edge for Counted<T> {
     fn count(&self) -> &crate::mem::raw::Count {
         self.entry.value.count()
     }

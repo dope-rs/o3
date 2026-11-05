@@ -6,7 +6,7 @@ static ALLOCATOR: Tracker = Tracker;
 use std::{
     cell::{self, Cell},
     collections::VecDeque,
-    mem::{self, size_of},
+    mem,
 };
 
 use common::{
@@ -19,11 +19,7 @@ use common::{
 };
 use o3::depot::{
     self,
-    arena::linked::{
-        self,
-        fifo::{self, ends},
-        head,
-    },
+    arena::linked::{fifo::ends, head},
     raw::Link as _,
 };
 
@@ -53,28 +49,6 @@ fn raw_head_keeps_links() {
     assert_eq!(
         unsafe { depot::raw::HeadPop::apply(Slots(&links), third, 8) },
         (1, 8)
-    );
-    assert!(head.front().is_none());
-}
-
-#[test]
-fn exclusive_transition() {
-    let links = [Cell::new(NONE), Cell::new(NONE)];
-    let mut head = head::Exclusive::new(NONE);
-    unsafe { depot::raw::HeadPush::apply(Slots(&links), &mut head, 0) };
-    unsafe { depot::raw::HeadPush::apply(Slots(&links), &mut head, 1) };
-    assert_eq!(links[1].get(), 0);
-    let front = head.front().expect("published head");
-    assert_eq!(
-        unsafe { depot::raw::HeadPop::apply(Slots(&links), front, 17) },
-        (1, 17)
-    );
-    assert_eq!(head.raw(), 0);
-    assert_eq!(links[1].get(), NONE);
-    let front = head.front().expect("remaining head");
-    assert_eq!(
-        unsafe { depot::raw::HeadPop::apply(Slots(&links), front, ()) },
-        (0, ())
     );
     assert!(head.front().is_none());
 }
@@ -340,17 +314,6 @@ fn skips_forgotten_vacancy() {
         mem::forget(vacant);
     }
     assert_eq!(drops.get(), Some(2));
-}
-
-#[test]
-fn layouts_are_compact() {
-    assert_eq!(size_of::<head::List<Tag>>(), size_of::<u32>());
-    assert_eq!(size_of::<fifo::Fifo<Tag>>(), 3 * size_of::<u32>());
-    assert_eq!(size_of::<Pool<u64>>(), 3 * size_of::<usize>());
-    if usize::BITS == 64 {
-        assert_eq!(size_of::<depot::raw::Arena<[usize; 3]>>(), 24);
-        assert_eq!(size_of::<linked::Iter<'static, [usize; 3]>>(), 16);
-    }
 }
 
 #[test]

@@ -159,16 +159,14 @@ fn classifies_without_copy() {
 }
 
 #[test]
-fn scoped_is_covariant() {
+fn scoped_returns_metadata() {
     let pool = (segments::Pool::try_new(segments::Plan {
         segments: 2,
         chains: 1,
     }))
-    .expect("the covariance pool must allocate");
-    let scope = ();
-    let mut chain = shorten_pool_borrow(pool.scoped(), &scope);
-    let owner =
-        (storage::Shared::try_copy(b"borrowed")).expect("the covariant scoped owner must allocate");
+    .expect("the scoped pool must allocate");
+    let mut chain = pool.scoped();
+    let owner = (storage::Shared::try_copy(b"borrowed")).expect("the scoped owner must allocate");
     chain
         .try_push(owner)
         .as_ref()
@@ -345,11 +343,4 @@ fn matches_flat_model() {
             + usize::from(second.count() >= segments::Count::TWO);
         assert_eq!(pool.available().chains + multi, pool.capacity().chains);
     }
-}
-
-fn shorten_pool_borrow<'long: 'short, 'short>(
-    chain: segments::Chain<storage::Shared, &'long segments::Header<storage::Shared>>,
-    _scope: &'short (),
-) -> segments::Chain<storage::Shared, &'short segments::Header<storage::Shared>> {
-    chain
 }

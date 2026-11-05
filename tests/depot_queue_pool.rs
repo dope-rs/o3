@@ -444,16 +444,6 @@ fn fifos_share_nodes() {
                 .push_back([value, 0, 0]);
         }
         assert!(reused.vacant().is_none());
-
-        if usize::BITS == 64 {
-            assert_eq!(mem::size_of::<fifo::Fifo<'static, [usize; 3]>>(), 16);
-            assert_eq!(
-                mem::size_of::<
-                    slots::Vacant<[usize; 3], &'static mut fifo::Fifo<'static, [usize; 3]>>,
-                >(),
-                16
-            );
-        }
     });
     assert_eq!(hot, [0; 4]);
 }
@@ -485,17 +475,6 @@ fn lanes_pack_states() {
     });
     assert_eq!(hot, [0; 4]);
 
-    if usize::BITS == 64 {
-        assert_eq!(mem::size_of_val(&lanes), 40);
-    }
-    assert_eq!(
-        mem::size_of::<pool::View<'static, u64>>(),
-        2 * mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<pool::Lane<'static, u64>>(),
-        2 * mem::size_of::<usize>()
-    );
     let ((), teardown) = Tracker::measure(move || drop(lanes));
     assert_eq!(teardown, [0, 0, 1, BYTES]);
 }

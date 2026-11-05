@@ -14,7 +14,7 @@ use crate::{
             self, entries,
             key::{self, cycle},
             lookup,
-            storage::{self, HeapPlane, InlinePlane, Plane, Storage},
+            storage::{self, HeapPlane, Plane, Storage},
         },
         capacity,
         index::Initialized,
@@ -44,22 +44,19 @@ pub(in crate::depot) struct Core<
     M: Mode,
     const PARTITIONS: usize = 1,
     S = storage::Heap,
-    I = storage::Eager,
 > where
     S: storage::Storage,
-    I: storage::Init,
 {
-    pub(in crate::depot) slots: <S as storage::Storage>::Plane<T, MAX, M, I>,
+    pub(in crate::depot) slots: <S as storage::Storage>::Plane<T, MAX, M>,
     free: [cell::Cell<u32>; PARTITIONS],
     len: cell::Cell<u32>,
     mode: marker::PhantomData<M>,
     _thread: ThreadBound,
 }
 
-impl<T, const MAX: u32, M: Mode, const PARTITIONS: usize, S, I> Core<T, MAX, M, PARTITIONS, S, I>
+impl<T, const MAX: u32, M: Mode, const PARTITIONS: usize, S> Core<T, MAX, M, PARTITIONS, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     const VALID_PARTITIONS: () = assert!(
         PARTITIONS == 1 || PARTITIONS == 2,
@@ -88,14 +85,14 @@ where
         }
     }
 
-    fn from_slots(slots: S::Plane<T, MAX, M, I>) -> Self {
+    fn from_slots(slots: S::Plane<T, MAX, M>) -> Self {
         let count = slots.capacity();
         let boundary = count.div_ceil(PARTITIONS);
         Self {
             slots,
             free: array::from_fn(|group| {
                 let index = if group == 0 { 0 } else { boundary };
-                cell::Cell::new(if I::LAZY || index >= count {
+                cell::Cell::new(if S::LAZY || index >= count {
                     NONE
                 } else {
                     index as u32
@@ -133,7 +130,7 @@ where
             // SAFETY: this exclusive owner retains the initialized dense prefix,
             // including an interior guard deliberately forgotten by its caller.
             let slot = unsafe { self.slots.as_ref().get_unchecked(index as usize) };
-            Busy::<_, MAX, M, PARTITIONS, (), S, I> {
+            Busy::<_, MAX, M, PARTITIONS, (), S> {
                 core: self,
                 slot,
                 plane: marker::PhantomData,
@@ -143,11 +140,7 @@ where
     }
 }
 
-impl<T, const MAX: u32, M: Mode, const PARTITIONS: usize, I>
-    Core<T, MAX, M, PARTITIONS, storage::Heap, I>
-where
-    I: storage::Init,
-{
+impl<T, const MAX: u32, M: Mode, const PARTITIONS: usize> Core<T, MAX, M, PARTITIONS> {
     /// Each permanent retirement removes one distinct admitted heap slot.
     pub(in crate::depot) fn remaining(&self) -> capacity::Count {
         capacity::Count::new(
@@ -167,11 +160,17 @@ where
             slab::Vacancy::Full
         }
     }
+}
 
+impl<T, const MAX: u32, M: Mode, const PARTITIONS: usize, S> Core<T, MAX, M, PARTITIONS, S>
+where
+    S: storage::Storage,
+    S::Plane<T, MAX, M>: HeapPlane<T, MAX, M>,
+{
     pub(in crate::depot) fn try_new(cap: capacity::Count) -> Result<Self, alloc::Error> {
         let epoch = key::Generation::<MAX>::MIN;
         let () = Self::VALID_PARTITIONS;
-        let slots = <storage::Heap as Storage>::Plane::<T, MAX, M, I>::try_alloc(cap, |index| {
+        let slots = S::Plane::<T, MAX, M>::try_alloc(cap, |index| {
             let links = Self::links(index, cap.get());
             crate::depot::raw::SlabSlot::free(epoch, links.next, links.prev)
         })?;
@@ -179,15 +178,13 @@ where
     }
 }
 
-impl<T, const MAX: u32, M: Mode, const PARTITIONS: usize, const N: usize, I>
-    Core<T, MAX, M, PARTITIONS, storage::Inline<N>, I>
-where
-    I: storage::Init,
+impl<T, const MAX: u32, M: Mode, const PARTITIONS: usize, const N: usize>
+    Core<T, MAX, M, PARTITIONS, storage::Inline<N>>
 {
     pub(in crate::depot) fn new() -> Self {
         let epoch = key::Generation::<MAX>::MIN;
         let () = Self::VALID_PARTITIONS;
-        let slots = <storage::Inline<N> as Storage>::Plane::<T, MAX, M, I>::inline(|index| {
+        let slots = <storage::Inline<N> as Storage>::Plane::<T, MAX, M>::inline(|index| {
             let links = Self::links(index, N);
             crate::depot::raw::SlabSlot::free(epoch, links.next, links.prev)
         });
@@ -195,11 +192,9 @@ where
     }
 }
 
-impl<T, const MAX: u32, M: Mode, const PARTITIONS: usize, S, I> Drop
-    for Core<T, MAX, M, PARTITIONS, S, I>
+impl<T, const MAX: u32, M: Mode, const PARTITIONS: usize, S> Drop for Core<T, MAX, M, PARTITIONS, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     fn drop(&mut self) {
         // SAFETY: the consumed core owns this initialized dense prefix and its
@@ -216,12 +211,11 @@ where
     }
 }
 
-impl<T, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S, I>
-    Core<T, MAX, Exclusive<RECYCLE>, PARTITIONS, S, I>
+impl<T, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S>
+    Core<T, MAX, Exclusive<RECYCLE>, PARTITIONS, S>
 where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot) fn read<P>(
         live: crate::depot::raw::Proof<(&Self, links::Index), Initialized<P>>,
@@ -240,13 +234,11 @@ where
 mod sealed;
 pub(in crate::depot) use sealed::Sealed;
 
-impl<'a, T, const MAX: u32, M: Mode, const PARTITIONS: usize, S, I>
-    Core<T, MAX, M, PARTITIONS, S, I>
+impl<'a, T, const MAX: u32, M: Mode, const PARTITIONS: usize, S> Core<T, MAX, M, PARTITIONS, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
-    pub(in crate::depot) fn free(&'a self) -> Option<Pending<'a, T, MAX, M, PARTITIONS, (), S, I>> {
+    pub(in crate::depot) fn free(&'a self) -> Option<Pending<'a, T, MAX, M, PARTITIONS, (), S>> {
         if let Some(pending) = self.head_at(&self.free[0]) {
             return Some(pending);
         }
@@ -255,7 +247,7 @@ where
         {
             return Some(pending);
         }
-        if !I::LAZY {
+        if !S::LAZY {
             return None;
         }
         let slot = crate::depot::raw::SlabSlot::free(key::Generation::<MAX>::MIN, NONE, NONE);
@@ -271,7 +263,7 @@ where
     fn head_at(
         &'a self,
         head: &cell::Cell<u32>,
-    ) -> Option<Pending<'a, T, MAX, M, PARTITIONS, (), S, I>> {
+    ) -> Option<Pending<'a, T, MAX, M, PARTITIONS, (), S>> {
         let raw = head.get();
         if raw == NONE {
             return None;
@@ -301,7 +293,7 @@ where
     pub(in crate::depot) fn in_range(
         &'a self,
         mut range: ops::Range<u32>,
-    ) -> Option<Pending<'a, T, MAX, M, PARTITIONS, (), S, I>> {
+    ) -> Option<Pending<'a, T, MAX, M, PARTITIONS, (), S>> {
         let cap = self.slots.capacity() as u32;
         if range == (0..cap) {
             return self.free();
@@ -338,7 +330,7 @@ where
     pub(in crate::depot) fn at(
         &'a self,
         index: u32,
-    ) -> Option<Pending<'a, T, MAX, M, PARTITIONS, (), S, I>> {
+    ) -> Option<Pending<'a, T, MAX, M, PARTITIONS, (), S>> {
         if index >= self.slots.built() {
             return None;
         }
@@ -348,7 +340,7 @@ where
 
     pub(in crate::depot) fn allocated(
         live: crate::depot::raw::Proof<(&'a Self, u32), Initialized<entries::Allocated>>,
-    ) -> Option<Pending<'a, T, MAX, M, PARTITIONS, (), S, I>> {
+    ) -> Option<Pending<'a, T, MAX, M, PARTITIONS, (), S>> {
         let (owner, index) = live.into_inner();
         // SAFETY: the consumed proof retains this exact initialized backing slot.
         let slot = unsafe { owner.slots.as_ref().get_unchecked(index as usize) };
@@ -363,7 +355,7 @@ where
 
     pub(in crate::depot) fn try_occupied(
         live: crate::depot::raw::Proof<(&'a Self, u32), Initialized<entries::Allocated>>,
-    ) -> lookup::Result<Occupied<'a, T, MAX, M, PARTITIONS, S, I>, M> {
+    ) -> lookup::Result<Occupied<'a, T, MAX, M, PARTITIONS, S>, M> {
         let (core, index) = live.into_inner();
         // SAFETY: the consumed proof retains this exact allocated backing slot.
         let slot = unsafe { core.slots.as_ref().get_unchecked(index as usize) };
@@ -377,11 +369,9 @@ where
     }
 }
 
-impl<'a, T, const MAX: u32, M: Mode, const PARTITIONS: usize, S, I>
-    Core<T, MAX, M, PARTITIONS, S, I>
+impl<'a, T, const MAX: u32, M: Mode, const PARTITIONS: usize, S> Core<T, MAX, M, PARTITIONS, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot) fn is_full(&'a self) -> bool {
         self.slots.built() as usize >= self.slots.capacity()

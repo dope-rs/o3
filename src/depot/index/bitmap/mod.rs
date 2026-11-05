@@ -4,7 +4,6 @@ pub use error::Error;
 pub use fill::Fill;
 pub use shape::Shape;
 mod width;
-pub(in crate::depot::index::bitmap) use init::Init;
 pub(in crate::depot::index::bitmap) use level::Level;
 pub use width::Width;
 
@@ -14,28 +13,10 @@ mod fill;
 mod word;
 pub use word::Word;
 
-mod init;
 mod level;
 mod shape;
 
 use std::num::NonZero;
-
-/// The two storage domains used by bitmap owners.
-pub trait Size: Copy {
-    fn bits(self) -> u32;
-}
-
-impl Size for u32 {
-    fn bits(self) -> u32 {
-        self
-    }
-}
-
-impl Size for NonZero<u32> {
-    fn bits(self) -> u32 {
-        self.get()
-    }
-}
 
 use std::marker;
 

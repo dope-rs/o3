@@ -1,7 +1,5 @@
 pub(in crate::buffer::pool) mod lease;
-use std::{marker, mem, ops, ptr};
-
-use pool::Lease;
+use std::{marker, mem, ptr};
 
 use crate::{
     buffer,
@@ -19,25 +17,16 @@ pub(in crate::buffer::pool) mod complete;
 pub(in crate::buffer::pool) mod copy;
 pub(in crate::buffer::pool) mod frozen;
 
-/// A writable span retaining an initialized slot lease.
+/// Owns one live slot edge and its initialized prefix. The backing and prefix
+/// cannot be replaced independently through this capability.
 #[derive(Debug)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct Span<K: crate::buffer::raw::Backing = owners::Plain, M = pool::Owned, S = state::Uninit>
 {
-    pub(in crate::buffer::pool) lease: Lease<K, M, S>,
-}
-
-impl<K: crate::buffer::raw::Backing, M, S> ops::Deref for Span<K, M, S> {
-    type Target = Lease<K, M, S>;
-    fn deref(&self) -> &Self::Target {
-        &self.lease
-    }
-}
-
-impl<K: crate::buffer::raw::Backing, M, S> ops::DerefMut for Span<K, M, S> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.lease
-    }
+    pub(in crate::buffer::pool) slots: owners::Ptr<K, S>,
+    pub(in crate::buffer::pool) key: owners::Key,
+    pub(in crate::buffer::pool) len: u32,
+    pub(in crate::buffer::pool) root: M,
 }
 
 impl<K: crate::buffer::raw::Backing, S> Span<K, pool::Owned, S> {
@@ -75,25 +64,11 @@ impl<K: crate::buffer::raw::Backing, M, S> Span<K, M, S> {
     pub(in crate::buffer::pool) fn new(active: owners::Active<K, S>, root: M) -> Self {
         let active = mem::ManuallyDrop::new(active);
         Self {
-            lease: Lease {
-                slots: active.slots,
-                key: active.key,
-                len: 0,
-                root,
-            },
+            slots: active.slots,
+            key: active.key,
+            len: 0,
+            root,
         }
-    }
-}
-
-// SAFETY: Span tracks exactly its initialized prefix.
-unsafe impl<K: crate::buffer::raw::Backing, M, S> pool::raw::Init for Span<K, M, S> {
-    type Backing = K;
-    type Root = M;
-    type State = S;
-
-    fn into_parts(self) -> (Span<K, M, S>, usize, usize) {
-        let len = self.len();
-        (self, 0, len)
     }
 }
 
@@ -136,12 +111,10 @@ impl<S: state::State, L> pool::Span<owners::Plain<L>, pool::Owned, S> {
     pub fn freeze(self) -> pool::Span<owners::Plain<L>, pool::Owned, pool::Frozen> {
         let this = mem::ManuallyDrop::new(self);
         Span {
-            lease: Lease {
-                slots: this.slots.erase_state(),
-                key: this.key,
-                len: this.len,
-                root: this.root,
-            },
+            slots: this.slots.erase_state(),
+            key: this.key,
+            len: this.len,
+            root: this.root,
         }
     }
 }
@@ -149,7 +122,9 @@ impl<S: state::State, L> pool::Span<owners::Plain<L>, pool::Owned, S> {
 impl<'pool, S: state::State, L> pool::Span<owners::Plain<L>, pool::Borrowed<'pool>, S> {
     #[must_use]
     pub fn freeze(self) -> storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>> {
-        pool::raw::Init::into_shared(self)
+        let len = self.len();
+        // SAFETY: consuming the span retains its exact initialized prefix.
+        unsafe { pool::raw::into_shared(self, 0, len) }
     }
 }
 

@@ -183,9 +183,7 @@ fn bounds_admitted_writes() {
         .as_ref()
         .expect("required fixture outcome");
     let result = limit.try_extend(b"jkl");
-    let error = result
-        .err()
-        .expect("physical capacity does not authorize a larger quota");
+    let error = result.expect_err("physical capacity does not authorize a larger quota");
     let (required, room) = error.into_parts();
     assert_eq!((required.get(), room), (3, 2));
     assert_eq!(limit.remaining(), 2);
@@ -280,9 +278,7 @@ fn appends_in_place() {
         .try_consume(8)
         .expect("the initialized head and body must fit");
     let result = cursor.try_consume(usize::MAX);
-    let error = result
-        .err()
-        .expect("an oversized consume must preserve the initialized suffix");
+    let error = result.expect_err("an oversized consume must preserve the initialized suffix");
     let (required, room) = error.into_parts();
     assert_eq!((required.get(), room), (usize::MAX, 4));
     assert_eq!(cursor.as_ref(), b"tail");

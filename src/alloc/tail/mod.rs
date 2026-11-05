@@ -1,5 +1,4 @@
 pub use block::Block;
-pub use entry::Entry;
 pub use plan::Plan;
 pub(in crate::alloc::tail) use plan::Prefix;
 pub use uninit::Uninit;
@@ -12,7 +11,6 @@ const _: () = {
 };
 
 mod block;
-mod entry;
 mod plan;
 mod uninit;
 mod view;

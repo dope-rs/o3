@@ -342,6 +342,8 @@ impl<Tag> ends::Exclusive<slots::Index<Tag>> {
         }
     }
 
+    /// # Safety
+    /// Both exclusive live partitions belong to `store` and are disjoint.
     pub(crate) unsafe fn append_chain<T>(&mut self, store: &slots::Store<T>, source: &mut Self) {
         unsafe {
             Self::append(depot::raw::Proof::new((self, source, |previous, head| {
@@ -359,64 +361,15 @@ impl<Tag> ends::Exclusive<slots::Index<Tag>> {
     ) -> slots::Index<Tag> {
         unsafe { self.detach(index, (), |index, ()| (store.next(index), index)) }
     }
-}
 
-const _: () = assert!(mem::size_of::<ends::Exclusive<slots::Index>>() == 2 * mem::size_of::<u32>());
-
-/// An exclusive partition borrowed together with its exact slot store.
-pub(crate) struct Bound<'a, T, Tag = ()> {
-    store: &'a slots::Store<T>,
-    links: &'a mut Exclusive<slots::Index<Tag>>,
-}
-
-impl<'a, T, Tag> Bound<'a, T, Tag> {
     /// # Safety
-    /// `links` owns a disjoint live partition in `store`, with tracked reclamation.
-    pub(crate) unsafe fn new(
-        store: &'a slots::Store<T>,
-        links: &'a mut Exclusive<slots::Index<Tag>>,
-    ) -> Self {
-        Self { store, links }
-    }
-
-    pub(crate) fn front(
-        &mut self,
-    ) -> Option<slots::Front<'_, T, Tag, Exclusive<slots::Index<Tag>>>> {
-        // SAFETY: the binding retains the exact store and exclusive partition.
-        unsafe { slots::Front::new(self.store, self.links) }
-    }
-
-    pub(crate) fn clear(&mut self) {
-        while let Some(front) = self.front() {
+    /// This owner retains a disjoint live partition in `store`, with tracked reclamation.
+    pub(crate) unsafe fn clear<T>(&mut self, store: &slots::Store<T>) {
+        // SAFETY: this borrow retains the exact store and exclusive partition.
+        while let Some(front) = unsafe { slots::Front::new(store, self) } {
             front.discard();
         }
     }
 }
 
-/// Two disjoint partitions certified to belong to one store.
-pub(crate) struct Pair<'a, T, Tag = ()> {
-    store: &'a slots::Store<T>,
-    target: &'a mut Exclusive<slots::Index<Tag>>,
-    source: &'a mut Exclusive<slots::Index<Tag>>,
-}
-
-impl<'a, T, Tag> Pair<'a, T, Tag> {
-    /// # Safety
-    /// Both exclusive live partitions belong to `store` and are disjoint.
-    pub(crate) unsafe fn new(
-        store: &'a slots::Store<T>,
-        target: &'a mut Exclusive<slots::Index<Tag>>,
-        source: &'a mut Exclusive<slots::Index<Tag>>,
-    ) -> Self {
-        Self {
-            store,
-            target,
-            source,
-        }
-    }
-
-    pub(crate) fn append(self) {
-        // SAFETY: the pair owns the same-store and disjointness proof through mutation.
-        unsafe { self.target.append_chain(self.store, self.source) };
-    }
-}
+const _: () = assert!(mem::size_of::<ends::Exclusive<slots::Index>>() == 2 * mem::size_of::<u32>());

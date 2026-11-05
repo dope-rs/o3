@@ -8,17 +8,7 @@ use crate::{
     },
 };
 
-/// Owns one live slot edge and its initialized prefix. The backing and prefix
-/// cannot be replaced independently through this capability.
-#[derive(Debug)]
-#[repr(C)]
-pub struct Lease<K: crate::buffer::raw::Backing = owners::Plain, M = pool::Owned, S = state::Uninit>
-{
-    pub(in crate::buffer::pool) slots: owners::Ptr<K, S>,
-    pub(in crate::buffer::pool) key: owners::Key,
-    pub(in crate::buffer::pool) len: u32,
-    pub(in crate::buffer::pool) root: M,
-}
+pub use super::Span as Lease;
 
 impl<K: crate::buffer::raw::Backing, M, S> Lease<K, M, S> {
     pub const fn len(&self) -> usize {

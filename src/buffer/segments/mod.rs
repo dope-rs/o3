@@ -5,7 +5,6 @@
 use std::{mem, num::NonZero};
 
 use assembly::total;
-pub(in crate::buffer::segments) use chain::edit::Consume;
 pub use chain::{
     Chain,
     edit::drain::Drain,

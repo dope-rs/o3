@@ -37,4 +37,4 @@ pub unsafe trait RingCell: crate::depot::raw::RingStore {
 }
 
 mod rings;
-pub(crate) use rings::{RingDestroy, RingRead, drop_ring};
+pub(crate) use rings::drop_ring;

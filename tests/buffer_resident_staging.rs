@@ -487,8 +487,7 @@ fn growth_preserves_failure() {
                         });
 
                         let error = result
-                            .err()
-                            .expect("failed local growth must preserve its resident cause");
+                            .expect_err("failed local growth must preserve its resident cause");
                         let (error,) = match error {
                             reserve::Error::Resident(error) => Some((error,)),
                             _ => None,

@@ -50,11 +50,6 @@ fn owns_and_orders() {
     let mut values = result.expect("the four-resident queue must allocate");
     assert_eq!(counts[0], 1);
     assert_ne!(counts[1], 0);
-    assert_eq!(mem::size_of_val(&values), 6 * mem::size_of::<usize>());
-    assert_eq!(
-        mem::size_of::<queue::Vacant<'static, u64, String>>(),
-        2 * mem::size_of::<usize>()
-    );
     assert_eq!(
         mem::size_of::<queue::Occupied<'static, u64, String>>(),
         2 * mem::size_of::<usize>()

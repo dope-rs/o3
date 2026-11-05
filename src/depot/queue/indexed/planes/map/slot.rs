@@ -40,68 +40,24 @@ impl<K, V, const N: usize> Slot<'_, K, V, N> {
 
 impl<'a, K, V, const N: usize, const P: usize> Slot<'a, K, V, N, phase::Linked<P>> {
     pub fn unlink(self) -> Slot<'a, K, V, N, phase::Vacant<P>> {
-        crate::depot::raw::Membership::<true>::transition(self)
+        let hooks = map::Hooks {
+            core: self.core,
+            plane: P,
+        };
+        // SAFETY: this phase retains exclusive hook authority and its linked membership in P.
+        unsafe { self.core.queues[P].unlink(&hooks, self.index) }.idle();
+        self.into_phase()
     }
 }
 
 impl<'a, K, V, const N: usize, const P: usize> Slot<'a, K, V, N, phase::Vacant<P>> {
     pub fn link_back(self) -> Slot<'a, K, V, N, phase::Linked<P>> {
-        crate::depot::raw::Membership::<false>::transition(self)
-    }
-}
-
-// SAFETY: the slot retains exclusive hook authority and its resolved membership in P.
-unsafe impl<'a, K, V, const N: usize, const P: usize> crate::depot::raw::Membership<true>
-    for Slot<'a, K, V, N, phase::Linked<P>>
-{
-    type Output = Slot<'a, K, V, N, phase::Vacant<P>>;
-
-    fn parts(
-        &self,
-    ) -> (
-        &links::Chain<u32>,
-        impl crate::depot::raw::Hooks + '_,
-        links::Index,
-    ) {
-        (
-            &self.core.queues[P],
-            map::Hooks {
-                core: self.core,
-                plane: P,
-            },
-            self.index,
-        )
-    }
-
-    unsafe fn finish(self) -> Self::Output {
-        self.into_phase()
-    }
-}
-
-// SAFETY: the slot retains exclusive hook authority and its resolved vacancy in P.
-unsafe impl<'a, K, V, const N: usize, const P: usize> crate::depot::raw::Membership<false>
-    for Slot<'a, K, V, N, phase::Vacant<P>>
-{
-    type Output = Slot<'a, K, V, N, phase::Linked<P>>;
-
-    fn parts(
-        &self,
-    ) -> (
-        &links::Chain<u32>,
-        impl crate::depot::raw::Hooks + '_,
-        links::Index,
-    ) {
-        (
-            &self.core.queues[P],
-            map::Hooks {
-                core: self.core,
-                plane: P,
-            },
-            self.index,
-        )
-    }
-
-    unsafe fn finish(self) -> Self::Output {
+        let hooks = map::Hooks {
+            core: self.core,
+            plane: P,
+        };
+        // SAFETY: this phase retains exclusive hook authority and its vacancy in P.
+        unsafe { self.core.queues[P].link_back(&hooks, self.index) };
         self.into_phase()
     }
 }

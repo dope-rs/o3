@@ -116,35 +116,6 @@ impl<K, V, const N: usize> Table<K, V, N> {
     }
 }
 
-/// A directory query retaining the exact installed-record owner.
-/// # Safety
-/// Query's directory and every published payload belong to this unchanged owner.
-pub(in crate::depot::queue::indexed::planes::map) unsafe trait Source<K, V, const N: usize>:
-    map::raw::Query<Payload = links::Index>
-{
-    fn owner(&self) -> &Table<K, V, N>;
-
-    fn record(entry: map::Found<&Self>) -> &Record<K, V> {
-        let (source, index) = entry.project();
-        // SAFETY: the found bucket and Source retain this exact installed record.
-        unsafe { source.owner().core.record(*index) }
-    }
-}
-
-// SAFETY: both query implementations project the same borrowed table's directory.
-unsafe impl<K, V, const N: usize> Source<K, V, N> for &Table<K, V, N> {
-    fn owner(&self) -> &Table<K, V, N> {
-        self
-    }
-}
-
-// SAFETY: the exclusive query retains this same installed-record owner.
-unsafe impl<K, V, const N: usize> Source<K, V, N> for &mut Table<K, V, N> {
-    fn owner(&self) -> &Table<K, V, N> {
-        self
-    }
-}
-
 // SAFETY: only installation publishes a directory index; removal retires it first.
 unsafe impl<'a, K, V, const N: usize> map::raw::Query for &'a Table<K, V, N> {
     const SPARE: bool = true;
@@ -157,7 +128,9 @@ unsafe impl<'a, K, V, const N: usize> map::raw::Query for &'a Table<K, V, N> {
     }
 
     fn value(entry: map::Found<&Self>) -> &K {
-        &Self::record(entry).key
+        let (owner, index) = entry.project();
+        // SAFETY: the found bucket retains this owner's installed record.
+        &unsafe { owner.core.record(*index) }.key
     }
 
     fn occupied(entry: map::Found<Self>) -> Self::Occupied {
@@ -179,7 +152,9 @@ unsafe impl<'a, K, V, const N: usize> map::raw::Query for &'a mut Table<K, V, N>
     }
 
     fn value(entry: map::Found<&Self>) -> &K {
-        &Self::record(entry).key
+        let (owner, index) = entry.project();
+        // SAFETY: the found bucket retains this owner's installed record.
+        &unsafe { owner.core.record(*index) }.key
     }
 
     fn occupied(entry: map::Found<Self>) -> Self::Occupied {

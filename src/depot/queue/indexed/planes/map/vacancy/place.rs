@@ -1,4 +1,4 @@
-use planes::map::{Error, Table, table::Source};
+use planes::map::{Error, Table};
 
 use crate::depot::{
     map,
@@ -10,13 +10,6 @@ pub(in crate::depot::queue::indexed::planes::map) struct Place<'a, K, V, const N
     pub(super) owner: &'a mut Table<K, V, N>,
     pub(super) index: links::Index,
     pub(super) key: K,
-}
-
-// SAFETY: reservation retains the same table used by this query's directory projection.
-unsafe impl<K: Copy, V, const N: usize> Source<K, V, N> for Place<'_, K, V, N> {
-    fn owner(&self) -> &Table<K, V, N> {
-        self.owner
-    }
 }
 
 impl<'a, K: Copy, V, const N: usize> Place<'a, K, V, N> {
@@ -60,11 +53,13 @@ unsafe impl<K: Copy, V, const N: usize> map::raw::Query for Place<'_, K, V, N> {
     }
 
     fn value(entry: map::Found<&Self>) -> &K {
-        &Self::record(entry).key
+        let (place, index) = entry.project();
+        // SAFETY: the found bucket retains this owner's installed record.
+        &unsafe { place.owner.core.record(*index) }.key
     }
 
     fn occupied(entry: map::Found<Self>) -> Self::Occupied {
-        let stored = Self::record(entry.read()).key;
+        let stored = *Self::value(entry.read());
         let (owner, _) = entry.into_parts();
         Error::Key {
             key: owner.key,

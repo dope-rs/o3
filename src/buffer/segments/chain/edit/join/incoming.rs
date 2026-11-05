@@ -53,7 +53,7 @@ unsafe impl<T> depot::raw::Start<segments::Item<T>> for Incoming<'_, T> {
         impl depot::raw::Exact<Item = segments::Item<T>, Output = ()>,
         (),
     ) {
-        let store = handles::nodes(&self.source.sequence.handle);
+        let store = handles::nodes(&self.source.handle);
         let (links, count) = match self.input {
             join::Input::Single(index) => {
                 let mut links = ends::Exclusive::empty();
@@ -61,7 +61,7 @@ unsafe impl<T> depot::raw::Start<segments::Item<T>> for Incoming<'_, T> {
                 (links, 1)
             }
             join::Input::Multi { index, count } => (
-                unsafe { handles::descriptors(&self.source.sequence.handle).detached(index) }
+                unsafe { handles::descriptors(&self.source.handle).detached(index) }
                     .take()
                     .0
                     .links,
@@ -71,7 +71,7 @@ unsafe impl<T> depot::raw::Start<segments::Item<T>> for Incoming<'_, T> {
         (
             Drain {
                 store,
-                key: &mut self.source.sequence.key,
+                key: &mut self.source.key,
                 links,
                 remaining: capacity::Count::new(count),
             },

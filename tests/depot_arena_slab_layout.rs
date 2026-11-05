@@ -49,12 +49,9 @@ fn identity_follows_insert() {
 }
 
 #[test]
-fn owner_remains_unpin() {
-    fn assert_unpin<T: Unpin>() {}
-
-    assert_unpin::<slab::Store<marker::PhantomPinned>>();
+fn owner_move_keeps_values() {
     let result = slab::Store::<marker::PhantomPinned>::try_new(capacity::Count::new(1));
-    let mut table = result.expect("the one-slot Unpin table must allocate");
+    let mut table = result.expect("the one-slot table must allocate");
     let key = (table.insert(marker::PhantomPinned)).expect("vacant pinned-value slot");
     let moved = table;
     assert!(moved.try_get(key).ok().is_some());

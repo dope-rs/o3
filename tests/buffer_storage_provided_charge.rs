@@ -99,7 +99,6 @@ fn projected_prefix_keeps_provided_owner() {
         });
         assert!(empty.as_ref().is_empty());
         assert!(!arena.has_returned());
-        drop(empty);
         assert_eq!(unique.as_slice(), b"ctly");
         drop(unique);
         assert!(arena.has_returned());
@@ -370,7 +369,7 @@ fn rejects_without_refund() {
             (held, pointer)
         };
         let result = held.project(7..8);
-        let rejected = result.err().expect("range exceeds registration");
+        let rejected = result.expect_err("range exceeds registration");
         let (held, error) = rejected.into_parts();
         assert_eq!((error.start(), error.end(), error.len()), (7, 8, 7));
         assert_eq!(held.as_slice(), b"exactly");

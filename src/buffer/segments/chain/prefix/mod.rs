@@ -42,9 +42,9 @@ impl<'a, T: buffer::raw::Segment> Projection<'a, T> {
         target: &'a mut Chain<T, Pool<T>>,
         shape: Shape<'a, T>,
     ) -> Result<Self, segments::Error> {
-        let target = Original::new(&target.sequence.handle, &mut target.sequence.key, |index| {
+        let target = Original::new(&target.handle, &mut target.key, |index| {
             // SAFETY: the exclusive target key owns its live single node.
-            let owner = unsafe { handles::nodes(&target.sequence.handle).value(index) };
+            let owner = unsafe { handles::nodes(&target.handle).value(index) };
             (owner.len().get(), buffer::Residency::resident(owner))
         });
         let relation = if target.handle().is_same(shape.source) {
@@ -77,7 +77,7 @@ impl<'a, T: buffer::raw::Segment> Projection<'a, T> {
         let reserve = slots::Input::try_new(store, self)?;
         let (nodes, mut output) = reserve.try_start()?;
         let source = nodes.run(|claim, value| {
-            unsafe { claim.insert(value).append(&mut output.links) };
+            unsafe { claim.insert(value).append(&mut output.body.links) };
         });
         source.restore();
         output.restore();
@@ -133,19 +133,19 @@ unsafe impl<T: buffer::raw::Segment> depot::raw::TryStart<segments::Item<T>> for
             self.count,
             &self.relation,
         )?;
-        let output = handles::nodes(target.handle);
+        let output = handles::nodes(target.body.handle);
         if let Relation::Same = self.relation {
             while self.shape.full != segments::Count::EMPTY {
-                let index = source.links.head_raw();
-                let index = unsafe { source.links.detach_store(input, index) };
-                unsafe { target.links.append_store(output, index) };
+                let index = source.body.links.head_raw();
+                let index = unsafe { source.body.links.detach_store(input, index) };
+                unsafe { target.body.links.append_store(output, index) };
                 self.shape.full = segments::Count::new(self.shape.full.into_raw().wrapping_sub(1));
             }
         }
-        source.len -= self.shape.amount;
-        source.resident -= self.shape.full_resident;
-        target.len = self.len;
-        target.resident = self.resident;
+        source.body.len -= self.shape.amount;
+        source.body.resident -= self.shape.full_resident;
+        target.body.len = self.len;
+        target.body.resident = self.resident;
         Ok((
             Drain {
                 source,
@@ -161,10 +161,10 @@ impl<T: buffer::raw::Segment> Iterator for Drain<'_, T> {
     type Item = segments::Item<T>;
 
     fn next(&mut self) -> Option<segments::Item<T>> {
-        let store = handles::nodes(self.source.handle);
+        let store = handles::nodes(self.source.body.handle);
         if self.full != segments::Count::EMPTY {
-            let index = self.source.links.head_raw();
-            let index = unsafe { self.source.links.detach_store(store, index) };
+            let index = self.source.body.links.head_raw();
+            let index = unsafe { self.source.body.links.detach_store(store, index) };
             self.full = segments::Count::new(self.full.into_raw().wrapping_sub(1));
             return Some(unsafe { store.detached(index) }.take().0);
         }

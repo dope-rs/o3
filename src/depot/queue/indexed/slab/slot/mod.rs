@@ -10,7 +10,7 @@ use crate::depot::{
     queue::{indexed::slab, tagged},
 };
 
-/// An initialized slot retaining its owner and exact membership phase.
+/// An admitted slot retaining its owner and exact membership phase.
 #[must_use]
 pub struct Slot<
     'a,
@@ -42,7 +42,7 @@ impl<
         // SAFETY: this admitted slot belongs to an allocated block.
         unsafe { self.core.block.values().as_ptr().add(self.index.get()) }
     }
-    pub fn key(&self) -> slab::Handle<Tag, MAX> {
+    pub(in crate::depot) fn handle(&self) -> slab::Handle<Tag, MAX> {
         // SAFETY: this slot retains its exact initialized metadata and generation.
         let epoch = unsafe { self.core.block.metadata.add(self.index.get()).as_ref() }.generation;
         slab::Handle::new(self.index, epoch)
@@ -101,6 +101,9 @@ impl<
     C: crate::depot::raw::Count,
 > Slot<'a, T, Tag, MAX, H, N, C>
 {
+    pub fn key(&self) -> slab::Handle<Tag, MAX> {
+        self.handle()
+    }
     pub fn into_mut(self) -> &'a mut T {
         // SAFETY: this consuming transition retains the original exclusive source lifetime.
         unsafe { (&mut *self.value()).assume_init_mut() }
@@ -126,12 +129,7 @@ impl<
         // SAFETY: the consumed detached phase owns one initialized value.
         let value = unsafe { (&*self.value()).assume_init_read() };
         self.state_mut().len -= 1;
-        (
-            value,
-            slab::Vacant {
-                entry: self.into_phase(phase::Vacant),
-            },
-        )
+        (value, self.into_phase(phase::Vacant))
     }
     pub(in crate::depot::queue) fn discard(mut self) {
         unsafe { (&mut *self.value()).assume_init_drop() };
@@ -249,14 +247,14 @@ impl<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count> Splice<'a, T, Tag,
     ) -> Slot<'a, T, Tag, MAX, links::Hook, 0, C> {
         match self {
             Self::Root(slot) => {
-                let key = slot.key();
+                let key = slot.handle();
                 slot.insert(build(None, key))
             }
             Self::Parent(parent) => {
                 let (slot, index) = parent.into_inner();
-                let key = slot.key();
+                let key = slot.handle();
                 let parent = Slot {
-                    core: &mut *slot.entry.core,
+                    core: &mut *slot.core,
                     index,
                     phase: phase::Occupied,
                 }
@@ -280,7 +278,7 @@ impl<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count> Splice<'a, T, Tag,
             Self::Parent(parent) => {
                 let (slot, index) = parent.into_inner();
                 let parent = Slot {
-                    core: &mut *slot.entry.core,
+                    core: &mut *slot.core,
                     index,
                     phase: phase::Occupied,
                 }

@@ -118,7 +118,7 @@ fn returns_rejected_owners() {
         let (result, activity) = Tracker::measure(|| shared.project(bounds.clone()));
         assert_eq!(activity, [0; 4]);
 
-        let error = result.err().expect("invalid bounds");
+        let error = result.expect_err("invalid bounds");
         let (shared, error) = error.into_parts();
         assert_eq!(
             (error.start(), error.end(), error.len()),
@@ -130,7 +130,7 @@ fn returns_rejected_owners() {
         let (result, activity) = Tracker::measure(|| shared.project(bounds.clone()));
         assert_eq!(activity, [0; 4]);
 
-        let error = result.err().expect("invalid resident bounds");
+        let error = result.expect_err("invalid resident bounds");
         let (shared, error) = error.into_parts();
         assert_eq!(
             (error.start(), error.end(), error.len()),
@@ -229,8 +229,7 @@ fn prefix_keeps_mutable_owner() {
         let error = owner
             .view()
             .try_split_at(five)
-            .err()
-            .expect("prefix exceeds suffix");
+            .expect_err("prefix exceeds suffix");
         (error, owner.into_inner())
     });
     assert_eq!(error.into_parts(), (five, 4));

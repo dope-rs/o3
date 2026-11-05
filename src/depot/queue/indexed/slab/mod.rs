@@ -73,12 +73,10 @@ impl<
 
     pub fn vacant(&mut self) -> Option<slab::Vacant<'_, T, Tag, MAX, H, N, C, phase::Vacant>> {
         let (core, [index]) = Reserved::new(self)?.into_parts();
-        Some(slab::Vacant {
-            entry: slab::Slot {
-                core,
-                index,
-                phase: phase::Vacant,
-            },
+        Some(slab::Slot {
+            core,
+            index,
+            phase: phase::Vacant,
         })
     }
 

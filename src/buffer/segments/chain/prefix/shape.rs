@@ -42,8 +42,8 @@ impl<'a, T: buffer::raw::Segment> Shape<'a, T> {
                 desc.links.head_raw(),
             ),
         };
-        let source = &sequence.sequence.handle;
-        let key = &mut sequence.sequence.key;
+        let source = &sequence.handle;
+        let key = &mut sequence.key;
         let Some(mut rest) = NonZero::new(amount) else {
             return Ok(Self {
                 full: segments::Count::EMPTY,

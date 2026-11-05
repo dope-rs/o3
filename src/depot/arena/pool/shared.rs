@@ -79,14 +79,8 @@ const _: () = {
         mem::size_of::<Option<pool::Unique<'static, Resident<()>, Header<()>, Initialized>>>()
             == mem::size_of::<usize>()
     );
-    assert!(
-        mem::size_of::<pool::Shared<'static, Resident<()>, Header<()>, Initialized>>()
-            == mem::size_of::<usize>()
-    );
-    assert!(
-        mem::size_of::<Option<pool::Shared<'static, Resident<()>, Header<()>, Initialized>>>()
-            == mem::size_of::<usize>()
-    );
+    assert!(mem::size_of::<pool::Shared<'static, ()>>() == mem::size_of::<usize>());
+    assert!(mem::size_of::<Option<pool::Shared<'static, ()>>>() == mem::size_of::<usize>());
 };
 
 // SAFETY: this policy is installed only after the resident value is initialized.

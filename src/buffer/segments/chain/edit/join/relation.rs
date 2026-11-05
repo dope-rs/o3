@@ -8,10 +8,7 @@ use crate::{
         segments,
         segments::{
             Key,
-            chain::{
-                Assemble,
-                edit::{Cause, join::incoming::Incoming},
-            },
+            chain::edit::{Cause, join::incoming::Incoming},
             handles,
             handles::Descriptor,
         },
@@ -21,11 +18,6 @@ use crate::{
         capacity,
     },
 };
-
-pub(in crate::buffer::segments) struct Join<C> {
-    first: C,
-    second: C,
-}
 
 type Exclusive<'a, T> = (&'a mut segments::Chain<T>, &'a mut segments::Chain<T>);
 
@@ -107,11 +99,11 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
         let (pair, state) = match self {
             Relation::Same(mut pair) => {
                 let (target, source) = &pair;
-                let links = match (target.sequence.key.state(), source.sequence.key.state()) {
+                let links = match (target.key.state(), source.key.state()) {
                     (_, handles::State::Empty) => return Ok(()),
                     (handles::State::Empty, _) => {
                         let (target, source) = &mut pair;
-                        mem::swap(&mut target.sequence.key, &mut source.sequence.key);
+                        mem::swap(&mut target.key, &mut source.key);
                         return Ok(());
                     }
                     (handles::State::Single(target), handles::State::Single(source)) => {
@@ -131,15 +123,12 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
             }
             Relation::Other(pair) => {
                 let (_, source) = &pair;
-                let from = match source.sequence.key.state() {
+                let from = match source.key.state() {
                     handles::State::Empty => return Ok(()),
                     handles::State::Single(index) => Input::Single(index),
                     handles::State::Multi(index) => Input::Multi {
                         index,
-                        count: unsafe {
-                            handles::descriptors(&source.sequence.handle).value(index)
-                        }
-                        .count,
+                        count: unsafe { handles::descriptors(&source.handle).value(index) }.count,
                     },
                 };
                 (pair, Placement::Other(from))
@@ -165,140 +154,137 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                 resident,
             },
         };
-        let result = (|| {
-            match state {
-                Placement::Same(links) => {
-                    let (target, source) = &mut total.pair;
-                    let nodes = handles::nodes(&target.sequence.handle);
-                    let descs = handles::descriptors(&target.sequence.handle);
-                    let desc = match links {
-                        Links::Singles {
-                            target: left,
-                            source: right,
-                        } => {
-                            let claim =
-                                descs
-                                    .vacant()
-                                    .ok_or(Cause::Descriptors(capacity::Shortage {
+        let result =
+            (|| {
+                match state {
+                    Placement::Same(links) => {
+                        let (target, source) = &mut total.pair;
+                        let nodes = handles::nodes(&target.handle);
+                        let descs = handles::descriptors(&target.handle);
+                        let desc = match links {
+                            Links::Singles {
+                                target: left,
+                                source: right,
+                            } => {
+                                let claim = descs.vacant().ok_or(Cause::Descriptors(
+                                    capacity::Shortage {
                                         requested: NonZero::<usize>::MIN,
                                         available: 0,
-                                    }))?;
-                            let mut links = ends::Exclusive::empty();
-                            unsafe {
-                                links.append_end(nodes, left);
-                                links.append_end(nodes, right);
+                                    },
+                                ))?;
+                                let mut links = ends::Exclusive::empty();
+                                unsafe {
+                                    links.append_end(nodes, left);
+                                    links.append_end(nodes, right);
+                                }
+                                let claim = claim.insert(Descriptor::new(
+                                    links,
+                                    total.sum.count,
+                                    total.sum.len,
+                                    total.sum.resident,
+                                ));
+                                target.key = Key::multi(claim.index());
+                                source.key = Key::EMPTY;
+                                unsafe { claim.publish() };
+                                return Ok(());
                             }
-                            let claim = claim.insert(Descriptor::new(
-                                links,
-                                total.sum.count,
-                                total.sum.len,
-                                total.sum.resident,
-                            ));
-                            target.sequence.key = Key::multi(claim.index());
-                            source.sequence.key = Key::EMPTY;
-                            unsafe { claim.publish() };
-                            return Ok(());
-                        }
-                        Links::Prepend {
-                            target: left,
-                            source: right,
-                        } => {
-                            let desc = unsafe { &mut *descs.value_ptr(right) };
-                            unsafe { desc.links.prepend_link(nodes, left) };
-                            target.sequence.key = Key::multi(right);
-                            desc
-                        }
-                        Links::Push {
-                            target: left,
-                            source: right,
-                        } => {
-                            let desc = unsafe { &mut *descs.value_ptr(left) };
-                            unsafe { desc.links.append_end(nodes, right) };
-                            desc
-                        }
-                        Links::Splice {
-                            target: left,
-                            source: right,
-                        } => {
-                            let (mut from, retired) = unsafe { descs.detached(right) }.take();
-                            let desc = unsafe { &mut *retired.release().value_ptr(left) };
-                            // SAFETY: Relation::Same retained disjoint chains in this exact store.
-                            let pair =
-                                unsafe { ends::Pair::new(nodes, &mut desc.links, &mut from.links) };
-                            pair.append();
-                            desc
-                        }
-                    };
-                    desc.count = total.sum.count;
-                    desc.len = total.sum.len;
-                    desc.resident_bytes = total.sum.resident;
-                    source.sequence.key = Key::EMPTY;
-                    Ok(())
-                }
-                Placement::Other(from) => {
-                    let (target, source) = &mut total.pair;
-                    let store = handles::nodes(&target.sequence.handle);
-                    let table = handles::descriptors(&target.sequence.handle);
-                    let nodes = slots::Input::try_new(
-                        store,
-                        Incoming {
-                            source,
-                            input: from,
-                        },
-                    )?;
-                    let (mut links, output) = match target.sequence.key.state() {
-                        handles::State::Empty => {
-                            let output = if total.sum.count.get() == 1 {
-                                Output::Single
-                            } else {
+                            Links::Prepend {
+                                target: left,
+                                source: right,
+                            } => {
+                                let desc = unsafe { &mut *descs.value_ptr(right) };
+                                unsafe { desc.links.prepend_link(nodes, left) };
+                                target.key = Key::multi(right);
+                                desc
+                            }
+                            Links::Push {
+                                target: left,
+                                source: right,
+                            } => {
+                                let desc = unsafe { &mut *descs.value_ptr(left) };
+                                unsafe { desc.links.append_end(nodes, right) };
+                                desc
+                            }
+                            Links::Splice {
+                                target: left,
+                                source: right,
+                            } => {
+                                let (mut from, retired) = unsafe { descs.detached(right) }.take();
+                                let desc = unsafe { &mut *retired.release().value_ptr(left) };
+                                // SAFETY: Relation::Same retained disjoint chains in this exact store.
+                                unsafe { desc.links.append_chain(nodes, &mut from.links) };
+                                desc
+                            }
+                        };
+                        desc.count = total.sum.count;
+                        desc.len = total.sum.len;
+                        desc.resident_bytes = total.sum.resident;
+                        source.key = Key::EMPTY;
+                        Ok(())
+                    }
+                    Placement::Other(from) => {
+                        let (target, source) = &mut total.pair;
+                        let store = handles::nodes(&target.handle);
+                        let table = handles::descriptors(&target.handle);
+                        let nodes = slots::Input::try_new(
+                            store,
+                            Incoming {
+                                source,
+                                input: from,
+                            },
+                        )?;
+                        let (mut links, output) = match target.key.state() {
+                            handles::State::Empty => {
+                                let output = if total.sum.count.get() == 1 {
+                                    Output::Single
+                                } else {
+                                    let claim = table.vacant().ok_or(Cause::Descriptors(
+                                        capacity::Shortage {
+                                            requested: NonZero::<usize>::MIN,
+                                            available: 0,
+                                        },
+                                    ))?;
+                                    Output::Multi(claim)
+                                };
+                                (ends::Exclusive::empty(), output)
+                            }
+                            handles::State::Single(index) => {
                                 let claim = table.vacant().ok_or(Cause::Descriptors(
                                     capacity::Shortage {
                                         requested: NonZero::<usize>::MIN,
                                         available: 0,
                                     },
                                 ))?;
-                                Output::Multi(claim)
-                            };
-                            (ends::Exclusive::empty(), output)
+                                let mut links = ends::Exclusive::empty();
+                                unsafe { links.append_end(store, index) };
+                                (links, Output::Multi(claim))
+                            }
+                            handles::State::Multi(index) => {
+                                let (desc, claim) = unsafe { table.detached(index) }.take();
+                                (desc.links, Output::Multi(claim))
+                            }
+                        };
+                        target.key = Key::EMPTY;
+                        nodes.start().0.run(|claim, value| {
+                            unsafe { claim.insert(value).append(&mut links) };
+                        });
+                        match output {
+                            Output::Single => target.key = Key::single(links.head_raw()),
+                            Output::Multi(claim) => {
+                                let claim = claim.insert(Descriptor::new(
+                                    links,
+                                    total.sum.count,
+                                    total.sum.len,
+                                    total.sum.resident,
+                                ));
+                                target.key = Key::multi(claim.index());
+                                unsafe { claim.publish() };
+                            }
                         }
-                        handles::State::Single(index) => {
-                            let claim =
-                                table
-                                    .vacant()
-                                    .ok_or(Cause::Descriptors(capacity::Shortage {
-                                        requested: NonZero::<usize>::MIN,
-                                        available: 0,
-                                    }))?;
-                            let mut links = ends::Exclusive::empty();
-                            unsafe { links.append_end(store, index) };
-                            (links, Output::Multi(claim))
-                        }
-                        handles::State::Multi(index) => {
-                            let (desc, claim) = unsafe { table.detached(index) }.take();
-                            (desc.links, Output::Multi(claim))
-                        }
-                    };
-                    target.sequence.key = Key::EMPTY;
-                    nodes.start().0.run(|claim, value| {
-                        unsafe { claim.insert(value).append(&mut links) };
-                    });
-                    match output {
-                        Output::Single => target.sequence.key = Key::single(links.head_raw()),
-                        Output::Multi(claim) => {
-                            let claim = claim.insert(Descriptor::new(
-                                links,
-                                total.sum.count,
-                                total.sum.len,
-                                total.sum.resident,
-                            ));
-                            target.sequence.key = Key::multi(claim.index());
-                            unsafe { claim.publish() };
-                        }
+                        Ok(())
                     }
-                    Ok(())
                 }
-            }
-        })();
+            })();
         match result {
             Ok(()) => Ok(()),
             Err(cause) => Err(Rejected::Capacity(Capacity { cause, total })),
@@ -306,30 +292,26 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
     }
 }
 
-impl<C> Join<C> {
-    pub(in crate::buffer::segments) fn new(first: C, second: C) -> Self {
-        Self { first, second }
-    }
+impl<T: buffer::raw::Segment> TryFrom<(Self, Self)> for segments::Many<T> {
+    type Error = crate::mem::Rejected<(Self, Self), assembly::Error>;
 
-    pub(in crate::buffer::segments) fn try_commit<T: buffer::raw::Segment>(
-        mut self,
-    ) -> Result<C, crate::mem::Rejected<(C, C), assembly::Error>>
-    where
-        C: Assemble<T>,
-    {
-        match Relation::new((self.first.sequence(), self.second.sequence())).try_commit() {
-            Ok(()) => Ok(self.first),
+    fn try_from((mut first, mut second): (Self, Self)) -> Result<Self, Self::Error> {
+        match Relation::new((&mut first.0, &mut second.0)).try_commit() {
+            Ok(()) => Ok(first),
             Err(Rejected::Total(cause)) => Err(crate::mem::Rejected::new(
-                (self.first, self.second),
+                (first, second),
                 assembly::Error::Total(cause),
             )),
             Err(Rejected::Capacity(Capacity {
                 total: Total { sum, .. },
                 cause,
             })) => {
-                let current = self.first.sequence().count();
+                let current = first.0.count();
                 let capacity = Capacity {
-                    total: Total { pair: self, sum },
+                    total: Total {
+                        pair: (first, second),
+                        sum,
+                    },
                     cause,
                 };
                 Ok(segments::Exact::try_reserve(capacity, current)?.collect())
@@ -348,15 +330,15 @@ impl<T> Rejected<(&mut segments::Chain<T>, &mut segments::Chain<T>)> {
 }
 
 // SAFETY: this total owns both unchanged chains and their checked cardinality.
-unsafe impl<T: buffer::raw::Segment, C: Assemble<T>> buffer::raw::Sequence<T>
-    for Capacity<Join<C>>
+unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
+    for Capacity<(segments::Many<T>, segments::Many<T>)>
 {
-    type Output = C;
+    type Output = segments::Many<T>;
     type Item = segments::Item<T>;
-    type Error = crate::mem::Rejected<(C, C), assembly::Error>;
+    type Error = crate::mem::Rejected<(segments::Many<T>, segments::Many<T>), assembly::Error>;
 
     fn owners(self) -> impl Iterator<Item = segments::Item<T>> + buffer::raw::Total {
-        let Join { first, second } = self.total.pair;
+        let (first, second) = self.total.pair;
         let mut first: segments::Chain<T> = first.into();
         let mut second: segments::Chain<T> = second.into();
         let owners =
@@ -368,12 +350,14 @@ unsafe impl<T: buffer::raw::Segment, C: Assemble<T>> buffer::raw::Sequence<T>
     }
 
     fn reject(self, error: crate::alloc::Error) -> Self::Error {
-        let Join { first, second } = self.total.pair;
+        let (first, second) = self.total.pair;
         crate::mem::Rejected::new((first, second), self.cause.allocation(error))
     }
 }
 
-impl<C> buffer::raw::Total for Capacity<Join<C>> {
+impl<T: buffer::raw::Segment> buffer::raw::Total
+    for Capacity<(segments::Many<T>, segments::Many<T>)>
+{
     fn count(&self) -> segments::Count {
         segments::Count::new(self.total.sum.count.get())
     }

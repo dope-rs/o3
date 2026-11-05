@@ -71,8 +71,8 @@ fn fills_disjoint_borrows() {
 
 #[test]
 fn keeps_pointer_layout() {
-    use o3::depot::arena::pool::{Shared, shared};
-    type Owner = Shared<'static, shared::Resident<u64>, shared::Header<u64>, shared::Initialized>;
+    use o3::depot::arena::pool::Shared;
+    type Owner = Shared<'static, u64>;
     assert_eq!(
         mem::size_of::<Result<Owner, o3::mem::rc::Error>>(),
         mem::size_of::<Owner>()

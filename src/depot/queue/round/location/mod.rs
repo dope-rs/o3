@@ -2,11 +2,9 @@ use std::{cell, marker, mem, ops};
 
 use crate::depot::queue::{
     links,
-    round::{self, Conflict, Error, Idle, Linked, lanes::stores, phase},
+    round::{self, Idle, Linked, lanes::stores, phase},
 };
 
-pub(super) mod conflict;
-pub(super) mod error;
 pub(super) mod idle;
 pub(super) mod linked;
 
@@ -121,56 +119,6 @@ impl<'a, T, const G: usize, const N: usize, P> Location<&'a round::Lanes<T, G, N
     }
 }
 
-impl<'a, T, const G: usize, const N: usize> Location<&'a mut round::Lanes<T, G, N>> {
-    pub fn try_insert(
-        self,
-    ) -> Result<
-        Location<&'a mut round::Lanes<T, G, N>, Linked>,
-        Conflict<&'a mut round::Lanes<T, G, N>>,
-    > {
-        let access = self.access();
-        if !self.position.index.is_linked(&access.node.hook) {
-            return Ok(self.phase::<Idle<true>>().push_back());
-        }
-        let actual = access.ownership.get();
-        let target = self.position.lane;
-        let mut entry = self;
-        entry.position.lane = actual;
-        let member = entry.phase::<Linked>();
-        if actual != target {
-            return Err(Conflict {
-                member,
-                requested: target,
-            });
-        }
-        Ok(member)
-    }
-
-    pub fn try_remove(
-        self,
-    ) -> Result<
-        Location<&'a mut round::Lanes<T, G, N>, Idle<false>>,
-        Error<&'a mut round::Lanes<T, G, N>>,
-    > {
-        let access = self.access();
-        if !self.position.index.is_linked(&access.node.hook) {
-            return Err(Error::Vacant(self.phase()));
-        }
-        let actual = access.ownership.get();
-        let target = self.position.lane;
-        let mut entry = self;
-        entry.position.lane = actual;
-        let member = entry.phase::<Linked>();
-        if actual != target {
-            return Err(Error::Lane(Conflict {
-                member,
-                requested: target,
-            }));
-        }
-        Ok(member.remove())
-    }
-}
-
 impl<T, const G: usize, const N: usize, P> Location<&mut round::Lanes<T, G, N>, P> {
     /// Borrows the admitted resident independently of its membership phase.
     pub fn get(&self) -> &T {
@@ -268,5 +216,4 @@ const _: () = {
         mem::size_of::<Option<Location<&'static mut round::Lanes<(), 1>, Idle<false>>>>()
             == 2 * word
     );
-    assert!(mem::size_of::<Conflict<&'static mut round::Lanes<(), 1>>>() == 3 * word);
 };

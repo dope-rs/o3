@@ -6,7 +6,6 @@ use std::{
 };
 
 pub use array::Array;
-pub(in crate::buffer) use cursor::Cursor;
 pub use reserved::Reserved;
 pub use slice::Slice;
 pub use staged::Staged;
@@ -84,39 +83,11 @@ impl Sink for Vec<u8> {
 
 mod array;
 pub mod consume;
-mod cursor;
 pub mod edit;
 mod reserved;
 mod slice;
 pub mod spans;
 mod staged;
-
-/// Rejected complete write, before either source or destination advances.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Error {
-    Capacity(consume::Error),
-    Overflow(Overflow),
-}
-
-const _: () = assert!(size_of::<Error>() == 3 * size_of::<usize>());
-
-/// Exact operands of an unrepresentable combined write length.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Overflow {
-    pub length: usize,
-    pub added: NonZero<usize>,
-}
-
-impl Overflow {
-    fn add(length: usize, added: usize) -> Result<usize, Self> {
-        length.checked_add(added).ok_or_else(|| Self {
-            length,
-            added: NonZero::<usize>::MIN.saturating_add(added - 1),
-        })
-    }
-}
-
-const _: () = assert!(size_of::<Overflow>() == 2 * size_of::<usize>());
 
 /// Appends to one vector without exposing or removing its existing prefix.
 #[derive(Debug)]
@@ -332,22 +303,18 @@ impl<'a> Spare<'a> {
     }
 
     pub fn bounded(&mut self) -> spans::Writer<'_, 'a, false> {
-        spans::Writer {
-            cursor: Cursor::new(self),
-        }
+        spans::Writer::new(self)
     }
 
     pub fn exact(&mut self) -> spans::Writer<'_, 'a, true> {
-        spans::Writer {
-            cursor: Cursor::new(self),
-        }
+        spans::Writer::new(self)
     }
 
     pub fn try_exact<'writer>(
         &'writer mut self,
         len: usize,
     ) -> Result<spans::Writer<'writer, 'a, true>, consume::Error> {
-        Cursor::try_new(self, len).map(|cursor| spans::Writer { cursor })
+        spans::Writer::try_new(self, len)
     }
 
     /// Admits the exact source before dependent work, then copies only on success.

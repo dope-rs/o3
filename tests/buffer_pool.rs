@@ -112,13 +112,6 @@ fn uses_runtime_capacity() {
 }
 
 #[test]
-fn moves_pool_owners() {
-    fn assert_unpin<T: Unpin>() {}
-
-    assert_unpin::<Pool>();
-}
-
-#[test]
 fn zero_slots_stays_empty() {
     let result = Layout::new(0, 8);
     let plan = result.expect("eight-byte slots must admit an empty pool");

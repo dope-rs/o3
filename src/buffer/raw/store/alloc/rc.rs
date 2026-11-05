@@ -6,51 +6,28 @@ use crate::{
     mem::rc,
 };
 
-#[derive(Debug)]
-#[repr(transparent)]
-pub(in crate::buffer) struct Rc<P: crate::buffer::raw::Policy = ()> {
-    pub(super) owner: crate::mem::raw::Owner<crate::buffer::raw::Header<P>>,
-}
+pub(in crate::buffer) type Rc<P = ()> = crate::mem::raw::Owner<crate::buffer::raw::Header<P>>;
 
 #[repr(transparent)]
 pub(in crate::buffer) struct Unique<'a, P: crate::buffer::raw::Policy = ()>(&'a mut Rc<P>);
 
 impl<P: crate::buffer::raw::Policy> Rc<P> {
-    pub(in crate::buffer) fn header(&self) -> &crate::buffer::raw::Header<P> {
-        self.owner.get()
-    }
-
     pub(in crate::buffer) fn capacity(&self) -> num::NonZero<u32> {
-        self.header().capacity()
+        self.get().capacity()
     }
 
     pub(in crate::buffer) fn seed(&self) -> P::Seed {
-        self.header().policy.seed()
+        self.get().policy.seed()
     }
 
     pub(in crate::buffer) fn data(&self) -> *const u8 {
-        crate::buffer::raw::Header::data(self.owner.as_ptr()).as_ptr()
+        crate::buffer::raw::Header::data(self.as_ptr()).as_ptr()
     }
 
     pub(in crate::buffer) fn is_unique(&self) -> bool {
         use crate::mem::raw::Edge as _;
 
-        self.header().prefix.is_unique()
-    }
-
-    pub(in crate::buffer) fn into_raw(self) -> ptr::NonNull<crate::buffer::raw::Header<P>> {
-        self.owner.into_raw()
-    }
-
-    /// # Safety
-    /// `pointer` transfers one live shared owner edge for this exact policy.
-    pub(in crate::buffer) unsafe fn from_raw(
-        pointer: ptr::NonNull<crate::buffer::raw::Header<P>>,
-    ) -> Self {
-        Self {
-            // SAFETY: the caller transfers this exact initialized counted edge.
-            owner: unsafe { crate::mem::raw::Owner::from_raw(pointer) },
-        }
+        self.get().prefix.is_unique()
     }
 }
 
@@ -92,7 +69,7 @@ impl<'a, P: crate::buffer::raw::Policy> Unique<'a, P> {
     }
 
     pub(in crate::buffer) fn policy(&self) -> &P {
-        &self.0.header().policy
+        &self.0.get().policy
     }
 
     pub(in crate::buffer) fn data(&self) -> *const u8 {
@@ -109,7 +86,7 @@ impl<'a, P: crate::buffer::raw::Policy> Unique<'a, P> {
         target: num::NonZero<u32>,
         debit: P::Charge,
     ) -> Result<(), crate::alloc::Exhausted> {
-        let pointer = self.0.owner.as_ptr();
+        let pointer = self.0.as_ptr();
         // SAFETY: Unique retains the sole edge and the caller admitted this
         // target with its exact policy delta. Failure preserves the old owner.
         let pointer = unsafe { crate::buffer::raw::Growth::try_resize(pointer, target, debit)? };
@@ -158,9 +135,7 @@ impl<'a, P: crate::buffer::raw::Policy> Unique<'a, P> {
 // SAFETY: retaining Rc preserves its allocation and the policy's owner lifetime.
 unsafe impl<P: crate::buffer::raw::Policy> buffer::raw::Retain for Rc<P> {
     fn try_retain(&self) -> Result<Self, rc::Error> {
-        Ok(Self {
-            owner: self.owner.try_clone()?,
-        })
+        self.try_clone()
     }
 }
 
@@ -188,7 +163,7 @@ impl<P: buffer::raw::Policy> Rc<P> {
         start: u32,
         len: u32,
     ) -> storage::Shared<Self> {
-        let pointer = crate::buffer::raw::Header::data(self.owner.as_ptr());
+        let pointer = crate::buffer::raw::Header::data(self.as_ptr());
         // SAFETY: the owned data pointer is nonnull and the offset stays inside its allocation.
         let pointer = unsafe { pointer.add(start as usize) };
         unsafe { storage::Shared::from_raw(pointer, len as usize, self) }
@@ -200,6 +175,6 @@ impl<'d> backing::Owner<'d> for Rc<resident::Lease<'d>> {
     where
         'd: 'a,
     {
-        Some(backing::Root::Resident(self.header()))
+        Some(backing::Root::Resident(self.get()))
     }
 }

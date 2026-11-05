@@ -52,12 +52,10 @@ impl<'a, T, Tag, const LANES: usize, const N: usize, const MAX: u32, C: crate::d
         let (core, slots) = self.reserved.into_parts();
         for ((index, key), value) in slots.into_iter().zip(keys).zip(values) {
             insert(
-                slab::Vacant {
-                    entry: slab::Slot {
-                        core,
-                        index,
-                        phase: phase::Vacant,
-                    },
+                slab::Slot {
+                    core,
+                    index,
+                    phase: phase::Vacant,
                 },
                 key,
                 value,
@@ -75,12 +73,10 @@ impl<'a, T, Tag, const LANES: usize, const MAX: u32, C: crate::depot::raw::Count
         lane: Index<LANES>,
     ) -> slab::Vacant<'a, T, Tag, MAX, tagged::Hook, LANES, C, phase::Target<LANES>> {
         let (core, [index]) = self.reserved.into_parts();
-        slab::Vacant {
-            entry: slab::Slot {
-                core,
-                index,
-                phase: phase::Vacant,
-            },
+        slab::Slot {
+            core,
+            index,
+            phase: phase::Vacant,
         }
         .select(lane)
     }

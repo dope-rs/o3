@@ -72,12 +72,12 @@ unsafe impl depot::raw::Key for Id {
 }
 
 /// Exact owned planes for bitmap ownership and hierarchy contracts.
-pub struct Bitmap<N: bitmap::Size = u32, W: bitmap::Width = usize> {
+pub struct Bitmap<N: Copy + Into<u32> = u32, W: bitmap::Width = usize> {
     shape: bitmap::Shape<N, W>,
     words: Vec<bitmap::Word<W>>,
 }
 
-impl<N: bitmap::Size, W: bitmap::Width> Bitmap<N, W> {
+impl<N: Copy + Into<u32>, W: bitmap::Width> Bitmap<N, W> {
     pub fn try_new(
         shape: bitmap::Shape<N, W>,
         fill: bitmap::Fill,
@@ -90,7 +90,7 @@ impl<N: bitmap::Size, W: bitmap::Width> Bitmap<N, W> {
 }
 
 // SAFETY: initialization and every mutation preserve the immutable exact shape.
-unsafe impl<N: bitmap::Size, W: bitmap::Width> depot::raw::Words<W> for Bitmap<N, W> {
+unsafe impl<N: Copy + Into<u32>, W: bitmap::Width> depot::raw::Words<W> for Bitmap<N, W> {
     type Plane = ();
     type Size = N;
 
@@ -104,7 +104,7 @@ unsafe impl<N: bitmap::Size, W: bitmap::Width> depot::raw::Words<W> for Bitmap<N
 }
 
 // SAFETY: this owner uniquely owns its words and exposes no independent mutation handle.
-unsafe impl<N: bitmap::Size, W: bitmap::Width> depot::raw::Bitmap<W> for Bitmap<N, W> {}
+unsafe impl<N: Copy + Into<u32>, W: bitmap::Width> depot::raw::Bitmap<W> for Bitmap<N, W> {}
 
 pub struct Borrowed<'a> {
     shape: bitmap::Shape,

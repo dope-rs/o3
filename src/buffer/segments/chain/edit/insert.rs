@@ -73,7 +73,7 @@ impl<'a, T: buffer::raw::Segment, E: Edge> Insert<'a, T, E> {
         growth: Growth,
         edge: E,
     ) -> Result<Self, (Cause, segments::Item<T>, Growth)> {
-        let nodes = handles::nodes(&sequence.sequence.handle);
+        let nodes = handles::nodes(&sequence.handle);
         let Some(node) = nodes.vacant() else {
             return Err((
                 Cause::Nodes(capacity::Shortage {
@@ -84,10 +84,10 @@ impl<'a, T: buffer::raw::Segment, E: Edge> Insert<'a, T, E> {
                 growth,
             ));
         };
-        let state = match sequence.sequence.key.state() {
+        let state = match sequence.key.state() {
             handles::State::Empty => State::Empty,
             handles::State::Single(previous) => {
-                let Some(desc) = handles::descriptors(&sequence.sequence.handle).vacant() else {
+                let Some(desc) = handles::descriptors(&sequence.handle).vacant() else {
                     return Err((
                         Cause::Descriptors(capacity::Shortage {
                             requested: NonZero::<usize>::MIN,
@@ -106,14 +106,12 @@ impl<'a, T: buffer::raw::Segment, E: Edge> Insert<'a, T, E> {
             handles::State::Multi(index) => {
                 // SAFETY: the multi key names this live descriptor in the exact
                 // store borrowed exclusively through the sequence parameter.
-                let desc = unsafe {
-                    &mut *handles::descriptors(&sequence.sequence.handle).value_ptr(index)
-                };
+                let desc = unsafe { &mut *handles::descriptors(&sequence.handle).value_ptr(index) };
                 State::Multi { desc, growth }
             }
         };
         Ok(Self {
-            key: &mut sequence.sequence.key,
+            key: &mut sequence.key,
             node,
             item,
             state,

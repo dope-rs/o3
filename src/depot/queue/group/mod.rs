@@ -136,7 +136,7 @@ pub struct Vacancy<'a, V, const LANES: usize> {
 impl<V, const LANES: usize> Vacancy<'_, V, LANES> {
     pub fn restore(self, value: V) {
         let (mut bound, (length, owner)) = self.owner.into_parts();
-        let next = bound.restore(self.slot.key());
+        let next = bound.restore(self.slot.handle());
         *length += 1;
         self.slot.restore(Entry {
             owner,

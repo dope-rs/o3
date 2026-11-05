@@ -150,8 +150,7 @@ impl<'a, T> Writer<'a, T> {
 impl<T> Drop for Writer<'_, T> {
     fn drop(&mut self) {
         // SAFETY: this writer owns its exact initialized node-store partition.
-        let mut links = unsafe { ends::Bound::new(self.nodes, &mut self.links) };
-        links.clear();
+        unsafe { self.links.clear(self.nodes) };
     }
 }
 

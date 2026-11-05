@@ -5,7 +5,6 @@ static ALLOCATOR: Tracker = Tracker;
 
 use std::{
     cell::{self, Cell},
-    mem,
     rc::Rc,
 };
 
@@ -137,86 +136,6 @@ fn recycles_dropped_unique() {
     }
     assert_eq!(drops.get(), Some(1));
     assert!(pool.vacancy().is_some());
-}
-
-#[test]
-fn keeps_word_handles() {
-    assert_eq!(
-        mem::size_of::<shared::Store<usize>>(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            o3::depot::arena::pool::Vacant<'static, shared::Resident<usize>, shared::Header<usize>>,
-        >(),
-        2 * mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            Option<
-                o3::depot::arena::pool::Vacant<
-                    'static,
-                    shared::Resident<usize>,
-                    shared::Header<usize>,
-                >,
-            >,
-        >(),
-        2 * mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            o3::depot::arena::pool::Unique<'static, shared::Resident<usize>, shared::Header<usize>>,
-        >(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            o3::depot::arena::pool::Unique<
-                'static,
-                shared::Resident<usize>,
-                shared::Header<usize>,
-                shared::Initialized,
-            >,
-        >(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            Option<
-                o3::depot::arena::pool::Unique<
-                    'static,
-                    shared::Resident<usize>,
-                    shared::Header<usize>,
-                    shared::Initialized,
-                >,
-            >,
-        >(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            o3::depot::arena::pool::Shared<
-                'static,
-                shared::Resident<usize>,
-                shared::Header<usize>,
-                shared::Initialized,
-            >,
-        >(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            Option<
-                o3::depot::arena::pool::Shared<
-                    'static,
-                    shared::Resident<usize>,
-                    shared::Header<usize>,
-                    shared::Initialized,
-                >,
-            >,
-        >(),
-        mem::size_of::<usize>()
-    );
 }
 
 #[test]

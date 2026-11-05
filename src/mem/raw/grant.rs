@@ -1,6 +1,6 @@
 use std::mem;
 
-use crate::mem::credit::fair;
+use crate::mem::{credit::fair, raw::Bound};
 
 /// One affine acquisition retaining both its issuing pool and state borrows.
 #[must_use = "a detached grant must be stored or returned"]
@@ -50,7 +50,7 @@ impl<S: crate::mem::raw::Source<N>, const N: usize, A: crate::mem::raw::Amount<N
         })
     }
 
-    pub(super) unsafe fn merge_bound(&mut self, other: Self)
+    unsafe fn merge_bound(&mut self, other: Self)
     where
         A: crate::mem::raw::Sum<N, S::Word>,
     {
@@ -101,26 +101,10 @@ impl<S: crate::mem::raw::Source<N>, const N: usize, A: crate::mem::raw::Amount<N
         self.charge.amount = change.rebind(self.charge.amount);
     }
 
-    pub(super) unsafe fn into_parts<P>(
-        self,
-        proof: P,
-        input: P::Input,
-    ) -> crate::mem::raw::Partition<S, N, A, P>
-    where
-        P: crate::mem::raw::Exact<N, S::Word, A>,
-    {
-        let (left, right) = proof.parts(self.charge.amount, input);
-        let source = self.charge.source;
-        (
-            Grant::from(crate::mem::raw::Charge::new(source, left)),
-            Grant::from(crate::mem::raw::Charge::new(source, right)),
-        )
-    }
-
     /// Changes representation after a caller proves the exact source value.
     /// # Safety
     /// `proof` must preserve this grant's complete component vector.
-    pub(super) unsafe fn map_exact<P>(self, proof: P) -> Grant<S, N, P::Output>
+    unsafe fn map_exact<P>(self, proof: P) -> Grant<S, N, P::Output>
     where
         P: crate::mem::raw::ExactRebind<N, S::Word, A>,
     {
@@ -129,21 +113,74 @@ impl<S: crate::mem::raw::Source<N>, const N: usize, A: crate::mem::raw::Amount<N
             proof.rebind(self.charge.amount),
         ))
     }
+}
 
-    /// Removes one exact part after a semantic owner has checked the split.
-    /// # Safety
-    /// The marker must hold the exact source-bound partition proof.
-    pub(super) unsafe fn split_exact<P>(
-        &mut self,
-        proof: P,
-        input: P::Input,
-    ) -> Grant<S, N, P::Right>
+impl<S, const N: usize, A, P> Bound<Grant<S, N, A>, P>
+where
+    S: crate::mem::raw::Source<N>,
+    A: crate::mem::raw::Amount<N, S::Word>,
+{
+    pub fn map(self) -> Grant<S, N, P::Output>
     where
-        P: crate::mem::raw::Exact<N, S::Word, A, Left = A>,
+        P: crate::mem::raw::ExactRebind<N, S::Word, A>,
     {
-        let (rest, part) = proof.parts(self.charge.amount, input);
-        self.charge.amount = rest;
-        Grant::from(crate::mem::raw::Charge::new(self.charge.source, part))
+        // SAFETY: the affine bound marker owns its unchanged exact source.
+        unsafe { self.source.map_exact(self.proof) }
+    }
+
+    pub fn split(self, input: P::Input) -> crate::mem::raw::Partition<S, N, A, P>
+    where
+        P: crate::mem::raw::Exact<N, S::Word, A>,
+    {
+        // Binding proves this partition for the retained exact source.
+        let (left, right) = self.proof.parts(self.source.charge.amount, input);
+        let source = self.source.charge.source;
+        (
+            Grant::from(crate::mem::raw::Charge::new(source, left)),
+            Grant::from(crate::mem::raw::Charge::new(source, right)),
+        )
+    }
+}
+
+impl<S, const N: usize, A, P> Bound<&mut Grant<S, N, A>, P>
+where
+    S: crate::mem::raw::Source<N>,
+    A: crate::mem::raw::Amount<N, S::Word>,
+    P: crate::mem::raw::Exact<N, S::Word, A, Left = A>,
+{
+    pub fn split(self, input: P::Input) -> Grant<S, N, P::Right> {
+        // The exclusive bound borrow prevents replacement or mutation
+        // of the checked source until this exact partition is consumed.
+        let (rest, part) = self.proof.parts(self.source.charge.amount, input);
+        self.source.charge.amount = rest;
+        Grant::from(crate::mem::raw::Charge::new(
+            self.source.charge.source,
+            part,
+        ))
+    }
+}
+
+impl<S, const N: usize, A> Bound<&mut Grant<S, N, A>, Grant<S, N, A>>
+where
+    A: crate::mem::raw::Sum<N, S::Word>,
+    S: crate::mem::raw::Source<N>,
+{
+    /// Consumes the source-bound addition without checking the origin again.
+    pub fn merge(self) {
+        // SAFETY: binding retains both exact same-source affine acquisitions.
+        unsafe { self.source.merge_bound(self.proof) };
+    }
+}
+
+impl<S, const N: usize, A> Bound<&mut Grant<S, N, A>, crate::mem::raw::Charge<S, N, A>>
+where
+    A: crate::mem::raw::Sum<N, S::Word>,
+    S: crate::mem::raw::Source<N>,
+{
+    /// Commits the addition; dropping the unconsumed bound refunds its charge.
+    pub fn merge(self) {
+        // SAFETY: try_extend issued this charge from the retained target itself.
+        unsafe { self.source.merge_bound(Grant::from(self.proof)) };
     }
 }
 

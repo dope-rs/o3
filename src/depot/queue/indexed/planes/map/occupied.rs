@@ -1,4 +1,4 @@
-use std::{marker, ops, ptr};
+use std::{marker, ops};
 
 use planes::map::{State, Table};
 
@@ -61,9 +61,8 @@ impl<K, V, const N: usize> Occupied<'_, K, V, N> {
     }
 
     pub fn remove(self) -> (K, V) {
-        let record = self.record();
+        let bucket = self.record().bucket;
         // SAFETY: removal consumes the sole record loan and its still-live reverse bucket.
-        let bucket = unsafe { ptr::read(&record.bucket) };
         unsafe { map::raw::Hole::retire(&mut *self.owner, bucket) };
         let core = &self.owner.core;
         let node = unsafe { core.node(self.index) };

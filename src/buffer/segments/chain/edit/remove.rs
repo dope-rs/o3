@@ -117,16 +117,16 @@ impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
     }
 
     fn detach(self) -> Removed<'a, T, H> {
-        let nodes = handles::nodes(&self.sequence.sequence.handle);
-        let descs = handles::descriptors(&self.sequence.sequence.handle);
+        let nodes = handles::nodes(&self.sequence.handle);
+        let descs = handles::descriptors(&self.sequence.handle);
         // SAFETY: this head exclusively borrows the sequence owning this descriptor.
         let desc = unsafe { &mut *descs.value_ptr(self.index) };
         let head = desc.links.head_raw();
         let owner = unsafe { crate::depot::raw::SlotOwner::detach(&mut desc.links, nodes, head) };
         Removed {
             owner,
-            handle: &self.sequence.sequence.handle,
-            key: &mut self.sequence.sequence.key,
+            handle: &self.sequence.handle,
+            key: &mut self.sequence.key,
             index: self.index,
         }
     }

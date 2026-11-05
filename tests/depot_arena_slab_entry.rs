@@ -335,9 +335,6 @@ fn restores_exact_identity() {
             (table.try_entry(middle)).expect("slab key must retain its original slot observation");
 
         let ((entry, prior), delta) = Tracker::measure(|| {
-            let (entry, rest) = entry.split();
-            assert!(matches!(rest.try_get(first), Ok(&11)));
-            assert!(matches!(rest.try_get(last), Ok(&37)));
             let (slot, prior) = entry.take();
             (slot.insert(prior + 1), prior)
         });

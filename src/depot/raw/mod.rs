@@ -101,7 +101,7 @@ pub unsafe trait Word: Copy + Eq {
 }
 
 pub(in crate::depot) use hooks::{
-    Detach, EndpointHook, EndpointWord, Insert, Membership, Neighbor, Pop, Removal, Splice,
+    Detach, EndpointHook, EndpointWord, Insert, Neighbor, Pop, Removal, Splice,
 };
 pub(crate) use proof::{Present, Slot};
 mod arena;
@@ -304,7 +304,7 @@ pub unsafe trait RingEdit: crate::depot::raw::RingStore {
 }
 mod ringcell;
 pub use ringcell::RingCell;
-pub(crate) use ringcell::{RingDestroy, RingRead, drop_ring};
+pub(crate) use ringcell::drop_ring;
 
 /// Detaches one exact external head slot.
 /// # Safety
@@ -316,7 +316,7 @@ pub unsafe trait HeadPop<L: Link, I = ()>: Sized {
     unsafe fn pop(self, item: L::Item, input: I) -> (L, Self::Output);
     /// # Safety
     /// This transition owns this exact current front and cannot reenter its head.
-    unsafe fn apply<O: head::Owner<L>>(self, front: head::Front<O, L>, input: I) -> Self::Output {
+    unsafe fn apply(self, front: head::Front<'_, L>, input: I) -> Self::Output {
         unsafe { front.pop(self, input) }
     }
 }
@@ -330,9 +330,9 @@ pub unsafe trait HeadPush<L: Link, I = ()>: Sized {
     unsafe fn push(self, input: I, head: L) -> L::Item;
     /// # Safety
     /// This transition owns a detached slot in this exact head's storage and cannot reenter it.
-    unsafe fn apply<O: head::Owner<L>>(self, head: O, input: I) {
+    unsafe fn apply(self, head: &head::Cell<L>, input: I) {
         let item = unsafe { self.push(input, head.raw()) };
-        head.store(unsafe { L::some(item) });
+        head.0.set(unsafe { L::some(item) });
     }
 }
 
@@ -478,8 +478,8 @@ pub unsafe trait Reserve<'fifo, 'pool: 'fifo, const TRACK: bool = true>: Sized {
 pub(crate) use arena::{EndsPop, SlotOwner};
 pub(in crate::depot) use arena::{
     IndexedBlock, IndexedHook, IndexedMeta, IndexedState, PoolMutable, PoolOwner, PoolPolicy,
-    PoolSharing, QueueBlock, QueueSlot, Retired, SlabCapacity, SlabLinks, SlabSlot, StagedMove,
-    StagedNode, StagedPhase, StagedState,
+    QueueBlock, QueueSlot, Retired, SlabCapacity, SlabLinks, SlabSlot, StagedMove, StagedNode,
+    StagedPhase, StagedState,
 };
 pub(in crate::depot) use hooks::{LaneInit, LaneStore};
 

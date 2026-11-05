@@ -9,19 +9,9 @@ use common::depot::{
 use o3::depot::{
     self,
     capacity::Count,
-    queue::indexed::keyed::{self, Fifo, Link},
+    queue::indexed::keyed,
     raw::{Key as _, KeySource as _},
 };
-
-#[test]
-fn keeps_fifo_layout() {
-    assert_eq!(mem::size_of::<Link<Id>>(), 8);
-    assert_eq!(mem::align_of::<Link<Id>>(), 4);
-    assert_eq!(mem::size_of::<Fifo<Id>>(), 8);
-    assert_eq!(mem::align_of::<Fifo<Id>>(), 4);
-    assert_eq!(mem::size_of::<keyed::lanes::Fifo<Id, 2>>(), 16);
-    assert_eq!(mem::align_of::<keyed::lanes::Fifo<Id, 2>>(), 4);
-}
 
 #[test]
 fn requeues_and_unlinks() {

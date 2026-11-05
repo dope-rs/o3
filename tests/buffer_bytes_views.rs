@@ -70,7 +70,7 @@ fn cancels_drain() {
     let drain = prepared.expect("required fixture outcome");
     drain.commit();
     assert_eq!(queue.len(), 3);
-    assert_eq!(queue.cursor().contiguous(0..3), Some(b"def".as_slice()));
+    assert_eq!(queue.prefix(3).contiguous(), Some(b"def".as_slice()));
 }
 
 #[test]

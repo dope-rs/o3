@@ -221,9 +221,17 @@ fn rotate_front() {
 
 #[test]
 fn growth_preserves_state() {
+    use o3::depot::{capacity::Limit, heap::indexed};
+
     let seed = Sequence::try_new(1).expect("factor");
-    let result = planes::Set::<usize, 3>::try_seed(4, seed);
-    let mut planes = result.expect("the four-entry growth set must allocate");
+    let mut planes: planes::Set<usize, 3, groups::Index<u64, Limit<8>, (), 1, 1>> =
+        planes::Set::<usize, 3, indexed::Min<u64, Limit<8>>>::try_seed_in::<2>(
+            Limit::fixed::<4>(),
+            seed,
+        )
+        .expect("the four-entry growth set must allocate")
+        .try_into()
+        .expect("companion rows");
     assert_eq!(planes.resolve(4), None);
     assert_eq!(planes.resolve(usize::MAX), None);
     let resolved = planes.resolve(1);
@@ -238,10 +246,12 @@ fn growth_preserves_state() {
     entry.plane::<0>().link_back();
     entry.plane::<1>().link_back();
 
-    let result = planes.try_grow_to(8, Sequence::try_new(1).expect("factor"));
-    let grown = result.expect("growth from four to eight entries must allocate");
-    assert_eq!(grown, 4..8);
-    assert_eq!(planes.len(), 8);
+    let records = groups::Index::<u64, Limit<8>, (), 1, 1>::reserve(Limit::fixed::<8>())
+        .expect("replacement rows");
+    planes
+        .try_replace::<2>(records, Sequence::try_new(1).expect("factor"))
+        .expect("growth from four to eight entries must allocate")();
+    assert_eq!((planes.len(), planes.limit().get()), (8, 8));
     let front = planes.front_entry::<0>();
     let front = front.expect("plane zero must have a front");
     assert_eq!(front.position(), position);
@@ -256,7 +266,7 @@ fn growth_preserves_state() {
     assert!(entry.is_linked::<1>());
     let entry = planes.entry(7);
     let mut entry = entry.expect("grown entry seven must exist");
-    entry.plane::<2>().link_back();
+    entry.plane::<1>().link_back();
     assert_eq!(planes.get(7), Some(&7));
     assert_eq!(planes.resolve(8), None);
 }
@@ -282,10 +292,18 @@ fn borrowed_lifetime() {
 
 #[test]
 fn topology_keeps_payloads() {
+    use o3::depot::{capacity::Limit, heap::indexed};
+
     let drops = Rc::new(cell::Cell::new(Some(0)));
     {
-        let result = planes::Set::<DropValue, 3>::try_seed(3, Drops(Rc::clone(&drops)));
-        let mut planes = result.expect("the three-payload topology must allocate");
+        let mut planes: planes::Set<DropValue, 3, groups::Index<u64, Limit<5>, (), 1, 1>> =
+            planes::Set::<DropValue, 3, indexed::Min<u64, Limit<5>>>::try_seed_in::<2>(
+                Limit::fixed::<3>(),
+                Drops(Rc::clone(&drops)),
+            )
+            .expect("the three-payload topology must allocate")
+            .try_into()
+            .expect("companion rows");
 
         let entry = planes.entry(0);
         let mut entry = entry.expect("entry zero must exist");
@@ -300,10 +318,12 @@ fn topology_keeps_payloads() {
         planes.clear::<2>();
         assert_eq!(drops.get(), Some(0));
 
-        let result = planes.try_grow_to(5, Drops(Rc::clone(&drops)));
-        let grown = result.expect("growth from three to five payloads must allocate");
-        assert_eq!(grown, 3..5);
-        assert_eq!(planes.len(), 5);
+        let records = groups::Index::<u64, Limit<5>, (), 1, 1>::reserve(Limit::fixed::<5>())
+            .expect("replacement rows");
+        planes
+            .try_replace::<2>(records, Drops(Rc::clone(&drops)))
+            .expect("growth from three to five payloads must allocate")();
+        assert_eq!((planes.len(), planes.limit().get()), (5, 5));
         assert_eq!(drops.get(), Some(0));
     }
     assert_eq!(drops.get(), Some(5));

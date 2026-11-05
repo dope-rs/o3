@@ -5,7 +5,7 @@ use cycle::Policy;
 use crate::{
     depot::{
         arena::slab::{
-            self, Rest, entries,
+            self, entries,
             key::{self, cycle},
         },
         index::Initialized,
@@ -95,24 +95,6 @@ impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, P
 where
     cycle::Mode<RECYCLE>: Policy,
 {
-    /// Splits this slot from read access to every other slot in its original owner.
-    pub fn split(self) -> Split<'a, T, Tag, P, MAX, RECYCLE, PARTITIONS> {
-        let rest = Rest::new(&self.entry);
-        (
-            slab::Occupied {
-                entry: self.entry,
-                tag: self.tag,
-            },
-            rest,
-        )
-    }
-
-    /// Borrows a live neighbor through the original storage owner's exclusive loan.
-    pub fn read<Q>(live: crate::depot::raw::Proof<(&Self, links::Index), Initialized<Q>>) -> &T {
-        // SAFETY: the occupied guard retains the complete native owner and slot proof.
-        entries::Busy::read(unsafe { live.map(|(entry, index)| (&entry.entry, index)) })
-    }
-
     /// Projects a live neighbor while retaining the whole storage owner's exclusive loan.
     pub fn project<Q>(
         live: crate::depot::raw::Proof<(&Self, links::Index), Initialized<Q>>,
@@ -153,13 +135,4 @@ type Withdrawn<
         ROOT,
     >,
     T,
-);
-
-type Split<'a, T, Tag, P, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize> = (
-    slab::Occupied<
-        entries::Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, P>,
-        Tag,
-        false,
-    >,
-    Rest<'a, T, Tag, MAX, RECYCLE, PARTITIONS, P>,
 );

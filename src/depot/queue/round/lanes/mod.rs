@@ -70,17 +70,6 @@ impl<T, const G: usize, const N: usize> Lanes<T, G, N> {
         })
     }
 
-    /// Admits both positions once and retains the exclusive allocation loan.
-    pub fn try_entry(
-        &mut self,
-        index: usize,
-        lane: usize,
-    ) -> Result<round::Location<&mut Self>, round::Bounds> {
-        let index = self.try_slot(index)?.index;
-        let lane = Lane::try_new(&*self, lane)?.index;
-        Ok(round::Location::new(self, round::Position { lane, index }))
-    }
-
     pub fn try_slot(&self, index: usize) -> Result<round::Slot<'_, T, G, N>, round::Bounds> {
         let capacity = self.block.as_ref().len();
         if index >= capacity {

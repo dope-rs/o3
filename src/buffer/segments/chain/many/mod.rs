@@ -1,14 +1,13 @@
 pub(in crate::buffer::segments) mod flatten;
 use std::{iter, mem, num};
 
-use chain::Assemble;
 use segments::{Chain, Single, assembly};
 
 use crate::{
     buffer,
     buffer::{
         hold, segments,
-        segments::{Exact, chain, chain::edit, handles},
+        segments::{Exact, chain::edit, handles},
         storage,
     },
     depot::arena::linked::slots,
@@ -18,7 +17,7 @@ use crate::{
 /// A chain proved to contain at least two owners.
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct Many<T: buffer::raw::Segment>(Chain<T>);
+pub struct Many<T: buffer::raw::Segment>(pub(in crate::buffer::segments::chain) Chain<T>);
 
 struct View<'a, T: buffer::raw::Segment>(&'a Many<T>);
 
@@ -46,12 +45,6 @@ unsafe impl<'a, T: buffer::raw::Segment + 'a> buffer::raw::Linked<'a> for View<'
 
     fn head(metadata: &Self::Metadata) -> slots::Index {
         metadata.links.head_raw()
-    }
-}
-
-impl<T: buffer::raw::Segment> Assemble<T> for Many<T> {
-    fn sequence(&mut self) -> &mut segments::Chain<T, segments::Pool<T>> {
-        &mut self.0
     }
 }
 
@@ -170,21 +163,14 @@ impl<T: buffer::raw::Segment> TryFrom<(segments::Item<T>, segments::Item<T>)> fo
 impl<T: buffer::raw::Segment> TryFrom<(Many<T>, segments::Item<T>)> for Many<T> {
     type Error = crate::mem::Rejected<(Many<T>, segments::Item<T>), assembly::Error>;
     fn try_from(source: (Many<T>, segments::Item<T>)) -> Result<Self, Self::Error> {
-        Assemble::try_append(source.0, source.1)
+        Self::try_append(source.0, source.1)
     }
 }
 
 impl<T: buffer::raw::Segment> TryFrom<(segments::Item<T>, Many<T>)> for Many<T> {
     type Error = crate::mem::Rejected<(segments::Item<T>, Many<T>), assembly::Error>;
     fn try_from(source: (segments::Item<T>, Many<T>)) -> Result<Self, Self::Error> {
-        Assemble::try_prepend(source.1, source.0)
-    }
-}
-
-impl<T: buffer::raw::Segment> TryFrom<(Many<T>, Many<T>)> for Many<T> {
-    type Error = crate::mem::Rejected<(Many<T>, Many<T>), assembly::Error>;
-    fn try_from(source: (Many<T>, Many<T>)) -> Result<Self, Self::Error> {
-        edit::Join::new(source.0, source.1).try_commit()
+        Self::try_prepend(source.1, source.0)
     }
 }
 

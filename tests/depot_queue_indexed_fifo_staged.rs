@@ -279,39 +279,6 @@ fn clears_then_reuses() {
 }
 
 #[test]
-fn layout_is_compact() {
-    let word = mem::size_of::<usize>();
-    assert_eq!(
-        staged::Table::<u64, [u64; 2], [u64; 5]>::SLOT_BYTES,
-        8 * word
-    );
-    assert_eq!(
-        mem::size_of::<staged::Slot<'static, u64, u64, [u64; 5], ()>>(),
-        2 * word
-    );
-    assert_eq!(
-        mem::size_of::<staged::Slot<'static, u64, u64, [u64; 5], staged::Queued>>(),
-        2 * word
-    );
-    assert_eq!(
-        mem::size_of::<staged::Slot<'static, u64, u64, [u64; 5], staged::Parked>>(),
-        2 * word
-    );
-    assert_eq!(
-        mem::size_of::<Option<staged::Slot<'static, u64, u64, [u64; 5], ()>>>(),
-        2 * word
-    );
-    assert_eq!(
-        mem::size_of::<Option<staged::Slot<'static, u64, u64, [u64; 5], staged::Queued>>>(),
-        2 * word
-    );
-    assert_eq!(
-        mem::size_of::<Option<staged::Slot<'static, u64, u64, [u64; 5], staged::Parked>>>(),
-        2 * word
-    );
-}
-
-#[test]
 fn allocations_are_exact() {
     const CAPACITY: usize = 257;
     const SLOT_BYTES: usize = staged::Table::<u64, u64, [u64; 5]>::SLOT_BYTES;

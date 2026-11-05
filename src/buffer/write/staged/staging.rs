@@ -68,7 +68,9 @@ impl<'a, 'source, 'target, const N: usize, const S: usize>
 }
 
 // SAFETY: Staging retains this cursor's admitted suffix and every source.
-unsafe impl<const N: usize> buffer::raw::Copy for Staging<'_, '_, write::Cursor<'_, '_>, N> {
+unsafe impl<const N: usize, const EXACT: bool> buffer::raw::Copy
+    for Staging<'_, '_, write::spans::Writer<'_, '_, EXACT>, N>
+{
     type Output = ();
 
     fn parts(&mut self) -> (impl buffer::raw::SliceExt, *mut u8, usize) {

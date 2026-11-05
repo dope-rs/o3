@@ -250,9 +250,7 @@ fn returns_inputs() {
 
             let retained = input.bind(hold::Policy::compact()).try_retain();
             let result = retained;
-            let (bound, error) = result
-                .err()
-                .expect("zero budget must reject materialization");
+            let (bound, error) = result.expect_err("zero budget must reject materialization");
             let error = match error {
                 hold::Error::Resident(resident::AllocError::Budget(error)) => Some(error),
                 _ => None,
@@ -299,9 +297,8 @@ fn retries_staging() {
                     denied
                 };
                 let result = denied;
-                let (bound, error) = result
-                    .err()
-                    .expect("retention must fail while the budget is occupied");
+                let (bound, error) =
+                    result.expect_err("retention must fail while the budget is occupied");
                 let error = match error {
                     hold::Error::Resident(resident::AllocError::Budget(error)) => Some(error),
                     _ => None,

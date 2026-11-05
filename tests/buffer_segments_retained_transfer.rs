@@ -199,7 +199,7 @@ fn extension_returns_many() {
         let (result, activity) = Tracker::measure(|| target.try_extend(source));
         assert_eq!(activity, [0; 4]);
 
-        let error = result.err().expect("target capacity rejection");
+        let error = result.expect_err("target capacity rejection");
         let (source, error) = error.into_parts();
         match plan.segments {
             1 => assert!(
@@ -313,7 +313,7 @@ fn join_returns_owners() {
         Tracker::measure(|| Tracker::fail_after(0, || segments::Many::try_from((left, right))));
     assert_eq!(activity, [0; 4]);
 
-    let error = result.err().expect("exact metadata rejection");
+    let error = result.expect_err("exact metadata rejection");
     let ((left, right), error) = error.into_parts();
     assert!(
         matches!(error, segments::assembly::Error::Nodes { shortage, .. }

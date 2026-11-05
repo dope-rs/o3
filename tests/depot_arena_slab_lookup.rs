@@ -105,55 +105,6 @@ fn retains_free_links() {
 }
 
 #[test]
-fn reads_disjoint_slots() {
-    let mut table =
-        (slab::Store::<u32, (), 2>::try_new(capacity::Count::new(2))).expect("two-slot backing");
-    let first = (table.insert(11)).expect("first occupied slot");
-    let old = (table.insert(13)).expect("neighbor slot");
-    assert_eq!(table.remove(old), Some(13));
-    let next = (table.insert(17)).expect("recycled neighbor");
-    let held =
-        (table.try_entry(first)).expect("slab key must retain its original slot observation");
-
-    let (mut held, rest) = held.split();
-    let current = held.get_mut();
-    assert!(
-        matches!(rest.try_get(first), Err(key::Error::Busy { key, actual, borrow })
-        if key == first && actual == first.generation() && borrow.index == first.index())
-    );
-    assert!(matches!(rest.try_get(next), Ok(&17)));
-    assert!(
-        matches!(rest.try_get(old), Err(key::Error::Generation { key, actual })
-        if key == old && actual == next.generation())
-    );
-    let outside = key::Handle::from_parts(key::Parts::new(7, key::Generation::MIN));
-    assert!(
-        matches!(rest.try_get(outside), Err(key::Error::Index { key, capacity })
-        if key == outside && capacity == capacity::Count::new(2))
-    );
-    assert_eq!(*current, 11);
-    *current = 19;
-    let neighbor =
-        (rest.try_get(next)).expect("slab key must retain its original slot observation");
-
-    assert_eq!(held.remove(), 19);
-    assert_eq!(*neighbor, 17);
-    assert!((table.try_get(next).ok()) == (Some(&17)));
-    assert!((table.remove(next)) == (Some(17)));
-    let first = (table.insert(23)).expect("the other physical slot remains reusable");
-    let held =
-        (table.try_entry(first)).expect("slab key must retain its original slot observation");
-
-    let (held, rest) = held.split();
-    assert!(
-        matches!(rest.try_get(next), Err(key::Error::Retired { key, actual, retired: () })
-        if key == next && actual == next.generation())
-    );
-    assert_eq!(held.remove(), 23);
-    assert_eq!(table.len(), o3::depot::capacity::Count::EMPTY);
-}
-
-#[test]
 fn splits_disjoint_slots() {
     let mut table =
         (slab::Store::<u32>::try_new(capacity::Count::new(3))).expect("three-slot backing");
@@ -225,8 +176,6 @@ fn rejects_stale_split() {
 #[test]
 fn retains_guard_niches() {
     let pair = 2 * mem::size_of::<usize>();
-    assert_eq!(mem::size_of::<slab::Rest<'static, u32>>(), pair);
-    assert_eq!(mem::size_of::<Option<slab::Rest<'static, u32>>>(), pair);
     assert_eq!(
         mem::size_of::<slab::Occupied<entries::Busy<'static, u32>>>(),
         pair

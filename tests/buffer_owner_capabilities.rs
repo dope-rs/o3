@@ -15,7 +15,7 @@ fn leases_keep_their_pool() {
                 .try_append(b"right")
                 .expect("right bytes fit")
                 .commit();
-            mem::swap(&mut *left, &mut *right);
+            mem::swap(&mut left, &mut right);
             assert_eq!((left.as_slice(), left.capacity().get()), (&b"right"[..], 8));
             assert_eq!(
                 (right.as_slice(), right.capacity().get()),
@@ -82,7 +82,7 @@ fn keeps_metadata_store() {
         right
             .try_push(resident::Shared::from(&b"def"[..]))
             .expect("second node");
-        mem::swap(&mut *left, &mut *right);
+        mem::swap(&mut left, &mut right);
         assert_eq!((left.len(), right.len()), (5, 1));
         left.clear();
         assert!(second.is_idle());

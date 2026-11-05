@@ -258,7 +258,7 @@ impl<'a, L> Output<'a, L> {
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        let (data, start) = buffer::raw::Prefix::prefix(&**self.target);
+        let (data, start) = buffer::raw::Prefix::prefix(self.target);
         // SAFETY: Initialized retains every byte of this exact exclusive suffix.
         unsafe { range_mut(data.cast(), start as usize, self.len()) }
     }

@@ -375,19 +375,12 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
         use buffer::raw::Retain as _;
         use storage::regions::NonEmpty;
 
-        let source = match &plan.source().backing {
-            State::Empty | State::Cold(_) => return Ok(resident::Shared::new()),
-            State::Live(source) => source,
-        };
-        let plan = buffer::View {
-            source,
-            bytes: plan.as_slice(),
-        };
-        let Some(view) = NonEmpty::new(&plan) else {
+        let Some(view) = NonEmpty::new(plan) else {
             return Ok(resident::Shared::new());
         };
-        let owner = match view.source() {
-            Backing::Warm(cursor) | Backing::Accounted(cursor) => {
+        let owner = match &view.source().backing {
+            State::Empty | State::Cold(_) => return Ok(resident::Shared::new()),
+            State::Live(Backing::Warm(cursor) | Backing::Accounted(cursor)) => {
                 let Some(owner) = owners::Account::try_bind(cursor, budget)? else {
                     return resident::Exact::try_copy(budget, view.as_slice())
                         .map(resident::Exact::into_shared)
@@ -395,7 +388,7 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
                 };
                 resident::State::Accounted(owner)
             }
-            Backing::Local(state) => {
+            State::Live(Backing::Local(state)) => {
                 let owner = state
                     .buf
                     .try_retain()

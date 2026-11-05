@@ -8,7 +8,7 @@ use crate::{
 /// Mutation preserves this; projections return normally without mutation or reentry.
 pub unsafe trait Words<W: bitmap::Width = usize> {
     type Plane: Copy;
-    type Size: bitmap::Size;
+    type Size: Copy + Into<u32>;
 
     fn shape(&self) -> bitmap::Shape<Self::Size, W>;
     fn words(&self, plane: Self::Plane) -> &[bitmap::Word<W>];

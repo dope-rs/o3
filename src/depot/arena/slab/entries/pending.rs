@@ -22,13 +22,11 @@ pub struct Pending<
     const PARTITIONS: usize = 1,
     P = (),
     S = storage::Heap,
-    I = storage::Eager,
 > where
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot::arena::slab::entries) plane: marker::PhantomData<fn(P) -> P>,
-    pub(in crate::depot::arena::slab) core: &'a entries::Core<T, MAX, M, PARTITIONS, S, I>,
+    pub(in crate::depot::arena::slab) core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
     pub(in crate::depot::arena::slab::entries) slot: &'a crate::depot::raw::SlabSlot<
         T,
         key::Generation<MAX>,
@@ -37,11 +35,10 @@ pub struct Pending<
     >,
 }
 
-impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S, I>
-    Pending<'a, T, MAX, M, PARTITIONS, P, S, I>
+impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S>
+    Pending<'a, T, MAX, M, PARTITIONS, P, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot::arena::slab) fn index(&self) -> links::Index {
         // SAFETY: the retained slot belongs to this allocation, whose capacity excludes END.
@@ -57,7 +54,7 @@ where
     pub(in crate::depot::arena::slab) fn install(
         self,
         value: T,
-    ) -> entries::Busy<'a, T, MAX, M, PARTITIONS, P, S, I> {
+    ) -> entries::Busy<'a, T, MAX, M, PARTITIONS, P, S> {
         let hold = mem::ManuallyDrop::new(self);
         let index = hold.index();
         let pos = hold.core.len.get();
@@ -96,11 +93,10 @@ where
     }
 }
 
-impl<T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S, I> Drop
-    for Pending<'_, T, MAX, M, PARTITIONS, P, S, I>
+impl<T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S> Drop
+    for Pending<'_, T, MAX, M, PARTITIONS, P, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     fn drop(&mut self) {
         let index = entries::SlotIndex(self.index().raw());
@@ -126,11 +122,10 @@ where
     }
 }
 
-impl<T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S, I> crate::mem::Return
-    for Pending<'_, T, MAX, M, PARTITIONS, P, S, I>
+impl<T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S> crate::mem::Return
+    for Pending<'_, T, MAX, M, PARTITIONS, P, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     type Item = ();
 

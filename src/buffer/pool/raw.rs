@@ -4,32 +4,27 @@ use crate::buffer::{
 };
 
 /// # Safety
-/// The transferred span must retain the exact initialized immutable range.
-pub(in crate::buffer) unsafe trait Init: Sized {
-    type Backing: crate::buffer::raw::Backing;
-    type Root;
-    type State;
+/// `start..start + len` is initialized within the consumed span's retained
+/// capacity, with no conflicting live loans. The span owns the range's slot edge.
+pub(in crate::buffer::pool) unsafe fn into_shared<K: crate::buffer::raw::Backing, M, S>(
+    span: Span<K, M, S>,
+    start: usize,
+    len: usize,
+) -> storage::Shared<owners::Edge<K, M>> {
+    use std::ptr;
 
-    fn into_parts(self) -> Initialized<Self::Backing, Self::Root, Self::State>;
-    fn into_shared(self) -> storage::Shared<owners::Edge<Self::Backing, Self::Root>> {
-        use std::ptr;
-
-        let (span, start, len) = self.into_parts();
-        if len == 0 {
-            return storage::Shared::empty(owners::Edge::NONE);
-        }
-        // SAFETY: Initialized retains this exact nonempty in-bounds range.
-        let data = unsafe { span.entry().data().add(start) };
-        // SAFETY: pool allocation data is non-null.
-        let data = unsafe { ptr::NonNull::new_unchecked(data) };
-        let edge = span.into_edge();
-        // SAFETY: edge retains the exact live slot containing this initialized
-        // range and is installed atomically with its extent.
-        unsafe { storage::Shared::from_raw(data, len, edge) }
+    if len == 0 {
+        return storage::Shared::empty(owners::Edge::NONE);
     }
+    // SAFETY: the consumed span retains this exact nonempty in-bounds range.
+    let data = unsafe { span.entry().data().add(start) };
+    // SAFETY: pool allocation data is non-null.
+    let data = unsafe { ptr::NonNull::new_unchecked(data) };
+    let edge = span.into_edge();
+    // SAFETY: edge retains the exact live slot containing this initialized
+    // range and is installed atomically with its extent.
+    unsafe { storage::Shared::from_raw(data, len, edge) }
 }
-
-type Initialized<B, R, S> = (Span<B, R, S>, usize, usize);
 
 /// # Safety
 /// Projection retains the exact writer and extent that admitted the append.

@@ -165,7 +165,7 @@ unsafe impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Co
         Initialized<tagged::Hook>,
     >;
     unsafe fn project(self, (previous, _): &Typed<Tag, MAX>) -> Self::Output {
-        let lane = self.entry.phase.0;
+        let lane = self.phase.0;
         unsafe {
             crate::depot::raw::Proof::new((self.into_phase(phase::Vacant), (lane, *previous)))
         }

@@ -102,7 +102,7 @@ impl<'a, 'd> Claim<'a, 'd> {
         let slot = mem::ManuallyDrop::new(slot);
         unsafe { account.prefix.activate(slot.key) };
         // SAFETY: activation created the first external account edge.
-        unsafe { Registered::new(ptr) }
+        unsafe { Registered::from_raw(ptr) }
     }
 }
 
@@ -122,7 +122,9 @@ impl<'a, 'd> Active<'a, 'd> {
         // SAFETY: this active account can issue one additional external edge.
         unsafe { self.0.prefix.0.try_retain() }.map_err(resident::AllocError::Retain)?;
         // SAFETY: the retained edge is branded by the checked budget domain.
-        Ok(Some(unsafe { Registered::new(ptr::NonNull::from(self.0)) }))
+        Ok(Some(unsafe {
+            Registered::from_raw(ptr::NonNull::from(self.0))
+        }))
     }
 }
 
@@ -371,29 +373,12 @@ unsafe impl crate::mem::raw::Target for Account<'_> {
 }
 
 /// One registered pool edge carrying its resident-domain lifetime.
-#[derive(Debug)]
-#[repr(transparent)]
-pub(in crate::buffer) struct Registered<'d> {
-    owner: crate::mem::raw::Owner<Account<'d>>,
-}
-
-impl<'d> Registered<'d> {
-    /// # Safety
-    /// `ptr` transfers one live edge charged to the domain branded by `'d`.
-    pub(in crate::buffer) unsafe fn new(ptr: ptr::NonNull<Account<'d>>) -> Self {
-        Self {
-            // SAFETY: the caller transfers one live edge from this exact account.
-            owner: unsafe { crate::mem::raw::Owner::from_raw(ptr) },
-        }
-    }
-}
+pub(in crate::buffer) type Registered<'d> = crate::mem::raw::Owner<Account<'d>>;
 
 // SAFETY: the concrete edge retains its original allocation, ownership, and lifetime.
 unsafe impl<'d> buffer::raw::Retain for Registered<'d> {
     fn try_retain(&self) -> Result<Self, rc::Error> {
-        Ok(Self {
-            owner: self.owner.try_clone()?,
-        })
+        self.try_clone()
     }
 }
 
@@ -402,7 +387,7 @@ impl<'d> backing::Owner<'d> for Registered<'d> {
     where
         'd: 'a,
     {
-        Some(backing::Root::Accounted(self.owner.get()))
+        Some(backing::Root::Accounted(self.get()))
     }
 }
 

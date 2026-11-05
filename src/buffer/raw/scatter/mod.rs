@@ -77,5 +77,4 @@ unsafe impl<'data> Scatter<'data> for &'data [u8] {
     }
 }
 
-mod cursors;
 mod queues;

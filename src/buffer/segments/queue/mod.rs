@@ -19,7 +19,7 @@ mod bounds;
 mod cursor;
 mod error;
 mod slice;
-pub(in crate::buffer::segments) use slice::Build;
+pub(in crate::buffer::segments) use slice::Projected;
 
 mod fifo;
 

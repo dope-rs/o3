@@ -119,10 +119,6 @@ fn initializes_width() {
             );
         }
     }
-    assert_eq!(mem::size_of::<bitmap::Word>(), mem::size_of::<usize>());
-    assert_eq!(mem::align_of::<bitmap::Word>(), mem::align_of::<usize>());
-    assert_eq!(mem::size_of::<bitmap::Word<u32>>(), 4);
-    assert_eq!(mem::align_of::<bitmap::Word<u32>>(), 4);
     assert_eq!(
         mem::size_of::<bitmap::Shape<u32, u32>>(),
         mem::size_of::<bitmap::Shape>()

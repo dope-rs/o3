@@ -88,20 +88,6 @@ impl<'a, T> Slice<'a, T> {
         queue::Iter::new(self)
     }
 
-    /// Tries to retain this range in `pool` without copying payload bytes.
-    ///
-    /// Failure leaves every segment slot available for subsequent operations.
-    pub fn try_retain(
-        &self,
-        pool: &segments::Pool<T>,
-    ) -> Result<segments::Chain<T>, segments::Error>
-    where
-        T: buffer::raw::Segment,
-    {
-        let plan = Retain::try_new(self)?;
-        pool.try_build(&plan)
-    }
-
     /// Retains each projected owner within `policy`, copying through `retain`
     /// when its complete allocation would exceed that owner's bound.
     /// Failure releases every copied owner and reserved metadata slot.
@@ -176,18 +162,6 @@ impl<'a, T> Slice<'a, T> {
 
 const _: () = assert!(mem::size_of::<Slice<'static, u64>>() == 2 * mem::size_of::<u64>());
 
-/// Inputs whose terminal proof contains the exact owners written to the pool.
-pub(in crate::buffer::segments) trait Build<T, E>:
-    depot::raw::Start<
-        segments::Item<T>,
-        Item = Result<segments::Item<T>, E>,
-        Error = E,
-        Context = (),
-        Output = Finished,
-    >
-{
-}
-
 /// Totals published only after every projected owner completed successfully.
 pub(in crate::buffer::segments) struct Finished {
     len: usize,
@@ -204,13 +178,6 @@ impl Finished {
     }
 }
 
-/// One measured queue slice whose shared owners match its exact totals.
-pub(in crate::buffer::segments) struct Retain<'source, T> {
-    source: &'source queue::Slice<'source, T>,
-    count: segments::Count,
-    resident: usize,
-}
-
 pub(in crate::buffer::segments) struct Projected<'source, T: buffer::raw::Segment> {
     source: &'source queue::Slice<'source, T>,
     count: segments::Count,
@@ -219,82 +186,11 @@ pub(in crate::buffer::segments) struct Projected<'source, T: buffer::raw::Segmen
     policy: hold::Policy,
 }
 
-struct Projecting<'plan, 'source, T: buffer::raw::Segment> {
-    plan: &'plan Projected<'source, T>,
-    resident: usize,
-}
-
-trait Projection {
-    type View;
-    type Item;
-
-    fn project(&mut self, view: Self::View) -> Self::Item;
-    fn finish(self) -> Finished;
-}
-
-struct Views<I, S> {
+struct Views<'plan, 'source, T: buffer::raw::Segment, I> {
     inner: I,
     remaining: capacity::Count,
-    source: S,
-}
-
-impl<'source, T: buffer::raw::Segment> Retain<'source, T> {
-    /// Retaining the immutable source preserves this u32-bounded measurement.
-    pub(in crate::buffer::segments) fn try_new(
-        source: &'source queue::Slice<'source, T>,
-    ) -> Result<Self, segments::Error> {
-        let mut count = segments::Count::EMPTY;
-        let mut resident = 0usize;
-        for view in source.views(0, 0) {
-            count = segments::Count::new(count.into_raw().wrapping_add(1));
-            resident = total::Error::resident(resident, view.source().resident())
-                .map_err(segments::Error::component)?;
-        }
-        Ok(Self {
-            source,
-            count,
-            resident,
-        })
-    }
-}
-
-impl<T: buffer::raw::Segment> Build<T, segments::Error> for &Retain<'_, T> {}
-
-impl<T: buffer::raw::Segment> Build<T, queue::RetainError> for &Projected<'_, T> {}
-
-// SAFETY: the original immutable slice cannot change after its exact measurement.
-unsafe impl<T: buffer::raw::Segment> depot::raw::Input<segments::Item<T>> for &Retain<'_, T> {
-    type Item = Result<segments::Item<T>, segments::Error>;
-    type Error = segments::Error;
-    type Context = ();
-    type Output = Finished;
-
-    fn count(&self) -> capacity::Count {
-        capacity::Count::new(self.count.into_raw())
-    }
-
-    fn reject(self, error: capacity::Shortage) -> Self::Error {
-        segments::Error::SegmentCapacity(error)
-    }
-}
-
-// SAFETY: creating the traversal preserves the measured immutable source borrow.
-unsafe impl<T: buffer::raw::Segment> depot::raw::Start<segments::Item<T>> for &Retain<'_, T> {
-    fn start(
-        self,
-    ) -> (
-        impl depot::raw::Exact<Item = Self::Item, Output = Self::Output>,
-        (),
-    ) {
-        (
-            Views {
-                inner: self.source.views(0, 0),
-                remaining: capacity::Count::new(self.count.into_raw()),
-                source: self,
-            },
-            (),
-        )
-    }
+    plan: &'plan Projected<'source, T>,
+    resident: usize,
 }
 
 // SAFETY: projection preserves one output or failure for each unchanged source owner.
@@ -332,37 +228,19 @@ unsafe impl<T: buffer::raw::Segment> depot::raw::Start<segments::Item<T>> for &P
             Views {
                 inner: self.source.views(first, self.logical),
                 remaining: capacity::Count::new(self.count.into_raw()),
-                source: Projecting {
-                    plan: self,
-                    resident: 0,
-                },
+                plan: self,
+                resident: 0,
             },
             (),
         )
     }
 }
 
-impl<'source, T: buffer::raw::Segment> Projection for &Retain<'source, T> {
-    type View = segments::Item<buffer::View<'source, T>>;
-    type Item = Result<segments::Item<T>, segments::Error>;
-
-    fn project(&mut self, view: Self::View) -> Self::Item {
-        view.try_retain().map_err(segments::Error::Retain)
-    }
-
-    fn finish(self) -> Finished {
-        Finished {
-            len: self.source.len(),
-            resident: self.resident,
-        }
-    }
-}
-
-impl<'source, T: buffer::raw::Segment> Projection for Projecting<'_, 'source, T> {
-    type View = segments::Item<buffer::View<'source, T>>;
-    type Item = Result<segments::Item<T>, queue::RetainError>;
-
-    fn project(&mut self, view: Self::View) -> Self::Item {
+impl<'source, T: buffer::raw::Segment, I> Views<'_, 'source, T, I> {
+    fn project(
+        &mut self,
+        view: segments::Item<buffer::View<'source, T>>,
+    ) -> Result<segments::Item<T>, queue::RetainError> {
         let logical = view.len();
         let owner = if self
             .plan
@@ -388,35 +266,26 @@ impl<'source, T: buffer::raw::Segment> Projection for Projecting<'_, 'source, T>
             .map_err(segments::Error::component)?;
         Ok(owner)
     }
-
-    fn finish(self) -> Finished {
-        Finished {
-            len: self.plan.source.len(),
-            resident: self.resident,
-        }
-    }
 }
 
-impl<I, S> Iterator for Views<I, S>
+impl<'source, T: buffer::raw::Segment, I> Iterator for Views<'_, 'source, T, I>
 where
-    I: Iterator<Item = S::View>,
-    S: Projection,
+    I: Iterator<Item = segments::Item<buffer::View<'source, T>>>,
 {
-    type Item = S::Item;
+    type Item = Result<segments::Item<T>, queue::RetainError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let view = self.inner.next()?;
         self.remaining = capacity::Count::new(self.remaining.raw().wrapping_sub(1));
-        Some(self.source.project(view))
+        Some(self.project(view))
     }
 }
 
 // SAFETY: constructors pair the measured immutable slice with its unchanged
 // iterator. Every emitted item, including an error, consumes one reservation.
-unsafe impl<I, S> depot::raw::Exact for Views<I, S>
+unsafe impl<'source, T: buffer::raw::Segment, I> depot::raw::Exact for Views<'_, 'source, T, I>
 where
-    I: Iterator<Item = S::View>,
-    S: Projection,
+    I: Iterator<Item = segments::Item<buffer::View<'source, T>>>,
 {
     type Output = Finished;
 
@@ -425,11 +294,12 @@ where
     }
 
     unsafe fn finish(self) -> Finished {
-        self.source.finish()
+        Finished {
+            len: self.plan.source.len(),
+            resident: self.resident,
+        }
     }
 }
 
-const _: () = {
-    assert!(mem::size_of::<Retain<'static, storage::Shared>>() == 3 * mem::size_of::<usize>());
+const _: () =
     assert!(mem::size_of::<Projected<'static, storage::Shared>>() == 5 * mem::size_of::<usize>());
-};

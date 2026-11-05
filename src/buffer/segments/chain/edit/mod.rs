@@ -1,7 +1,7 @@
-use std::{iter, num::NonZero};
+use std::iter;
 
 pub(in crate::buffer::segments::chain) use insert::{Back, Edge, Front, Insert};
-pub(in crate::buffer::segments) use join::{Join, Relation};
+pub(in crate::buffer::segments) use join::Relation;
 pub(in crate::buffer::segments) use prepend::Prepend;
 pub(in crate::buffer::segments) use remove::{Multi, Remaining};
 use segments::{assembly, assembly::total};
@@ -10,7 +10,7 @@ use crate::{
     buffer,
     buffer::{
         segments,
-        segments::{Chain, Handle, Key, chain::Assemble, handles},
+        segments::{Chain, Handle, Key, handles},
     },
     depot::{arena::linked::slots, capacity},
 };
@@ -21,59 +21,6 @@ mod insert;
 mod join;
 mod prepend;
 mod remove;
-
-pub(in crate::buffer::segments) struct Consume<'a, T> {
-    head: segments::Front<'a, T>,
-    amount: NonZero<usize>,
-}
-
-impl<'a, T: buffer::raw::Segment> Consume<'a, T> {
-    pub(in crate::buffer::segments) fn new(
-        prefix: segments::Drain<'a, segments::Chain<T>>,
-    ) -> Option<Self> {
-        let amount = NonZero::new(prefix.amount)?;
-        Some(Self {
-            head: segments::Front {
-                sequence: prefix.target,
-            },
-            amount,
-        })
-    }
-
-    pub(in crate::buffer::segments) fn commit(mut self) {
-        use segments::Tail;
-
-        loop {
-            match self.head.position() {
-                handles::Occupied::Single(index) => {
-                    let mut single = Single {
-                        sequence: self.head.sequence,
-                        index,
-                    };
-                    let owner = buffer::raw::IndexedMut::get_mut(&mut single);
-                    match Tail::positive(owner, self.amount) {
-                        Some(tail) => {
-                            tail.commit();
-                        }
-                        None => single.discard(),
-                    }
-                    return;
-                }
-                handles::Occupied::Multi(index) => {
-                    let left = Multi {
-                        sequence: &mut *self.head.sequence,
-                        index,
-                    }
-                    .consume(self.amount);
-                    let Some(amount) = left else {
-                        return;
-                    };
-                    self.amount = amount;
-                }
-            }
-        }
-    }
-}
 
 pub(in crate::buffer::segments) struct Single<'a, T, H: Handle<T>> {
     pub(in crate::buffer::segments) sequence: &'a mut Chain<T, H>,
@@ -227,11 +174,6 @@ impl buffer::raw::Total for Growth {
     }
 }
 
-const _: () = {
-    assert!(size_of::<Consume<'static, ()>>() == 2 * size_of::<usize>());
-    assert!(size_of::<Option<Consume<'static, ()>>>() == 2 * size_of::<usize>());
-};
-
 impl<A, B> buffer::raw::Total for (A, B, Growth) {
     fn count(&self) -> segments::Count {
         self.2.count
@@ -275,15 +217,15 @@ unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
     }
 }
 
-unsafe impl<T: buffer::raw::Segment, C: Assemble<T>> buffer::raw::Sequence<T>
-    for (C, segments::Item<T>, Growth, Cause)
+unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
+    for (segments::Many<T>, segments::Item<T>, Growth, Cause)
 {
-    type Output = C;
+    type Output = segments::Many<T>;
     type Item = segments::Item<T>;
-    type Error = crate::mem::Rejected<(C, segments::Item<T>), assembly::Error>;
+    type Error = crate::mem::Rejected<(segments::Many<T>, segments::Item<T>), assembly::Error>;
 
     fn owners(self) -> impl Iterator<Item = segments::Item<T>> + buffer::raw::Total {
-        let mut chain = self.0.into();
+        let mut chain: Chain<T> = self.0.into();
         buffer::raw::Batch {
             owners: iter::from_fn(move || chain.pop_item()).chain(iter::once(self.1)),
             total: self.2,

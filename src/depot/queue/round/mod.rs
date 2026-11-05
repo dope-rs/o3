@@ -3,7 +3,7 @@
 use std::{marker, mem};
 
 pub use lanes::{Lanes, group::Group, lane::Lane};
-pub use location::{Location, conflict::Conflict, error::Error, idle::Idle, linked::Linked};
+pub use location::{Location, idle::Idle, linked::Linked};
 pub use slot::Slot;
 pub use snapshot::{Snapshot, front::Front, place::Place, turn::Turn};
 

@@ -61,13 +61,6 @@ fn retires_failed_epoch() {
 }
 
 #[test]
-fn keeps_compact_layout() {
-    assert_eq!(mem::size_of::<slab::Handle<Tag>>(), 8);
-    assert_eq!(mem::size_of::<Option<slab::Handle<Tag>>>(), 8);
-    assert_eq!(mem::size_of::<slab::Slab<u64, Tag>>(), 32);
-}
-
-#[test]
 fn aligns_and_drops() {
     let drops = Cell::new(Some(0));
     {

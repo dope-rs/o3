@@ -217,9 +217,7 @@ fn rejects_reuse() {
         region::Token::scope_pinned(Pin::new(&mut domain), |token, domain| {
             let domain = domain.get_mut();
             let result = domain.try_budget(capacity, token.proof());
-            let cause = result
-                .err()
-                .expect("a forgotten charge must prevent domain reuse");
+            let cause = result.expect_err("a forgotten charge must prevent domain reuse");
             assert_eq!(
                 cause,
                 resident::Reuse {
@@ -245,9 +243,7 @@ fn rejects_growth() {
                 let second = (budget.try_charge(3)).expect("the remaining three bytes must fit");
                 assert_eq!(second.capacity(), 3);
                 let result = first.try_resize(8);
-                let error = result
-                    .err()
-                    .expect("an additional byte must exceed the full budget");
+                let error = result.expect_err("an additional byte must exceed the full budget");
                 assert_eq!(error.into_parts(), (num::NonZero::<usize>::MIN, 0));
                 assert_eq!((first.capacity(), budget.resident()), (7, 10));
             }

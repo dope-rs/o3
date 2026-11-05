@@ -317,7 +317,7 @@ fn returns_rejected_owner() {
     let owner = storage::Shared::try_copy(b"abc").expect("rejected owner");
     let address = owner.as_slice().as_ptr();
     let result = source.try_push(owner);
-    let rejected = result.err().expect("zero segment capacity");
+    let rejected = result.expect_err("zero segment capacity");
     let (owner, error) = rejected.into_parts();
     assert_eq!(error, queue::Error::Segments { capacity: 0 });
     assert_eq!(owner.as_slice(), b"abc");

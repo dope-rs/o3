@@ -2,21 +2,17 @@ use crate::{
     buffer,
     buffer::{
         segments,
-        segments::{Chain, Exact, assembly, chain::edit},
+        segments::{Exact, Many, assembly, chain::edit},
     },
 };
 
-pub(in crate::buffer::segments) trait Assemble<T: buffer::raw::Segment>:
-    buffer::raw::Assemble<T> + Into<Chain<T>>
-{
-    fn sequence(&mut self) -> &mut segments::Chain<T, segments::Pool<T>>;
-
-    fn try_append(
+impl<T: buffer::raw::Segment> Many<T> {
+    pub(in crate::buffer::segments::chain) fn try_append(
         self,
         item: segments::Item<T>,
     ) -> Result<Self, crate::mem::Rejected<(Self, segments::Item<T>), assembly::Error>> {
         let mut chain = self;
-        let growth = match edit::Growth::try_new(chain.sequence(), &item) {
+        let growth = match edit::Growth::try_new(&chain.0, &item) {
             Ok(state) => state,
             Err(error) => {
                 return Err(crate::mem::Rejected::new(
@@ -25,25 +21,25 @@ pub(in crate::buffer::segments) trait Assemble<T: buffer::raw::Segment>:
                 ));
             }
         };
-        match growth.assemble(chain.sequence(), item, edit::Back) {
+        match growth.assemble(&mut chain.0, item, edit::Back) {
             edit::Assembly::Local => Ok(chain),
             edit::Assembly::Exact {
                 item,
                 growth,
                 cause,
             } => {
-                let current = chain.sequence().count();
+                let current = chain.0.count();
                 Ok(Exact::try_reserve((chain, item, growth, cause), current)?.collect())
             }
         }
     }
 
-    fn try_prepend(
+    pub(in crate::buffer::segments::chain) fn try_prepend(
         self,
         item: segments::Item<T>,
     ) -> Result<Self, crate::mem::Rejected<(segments::Item<T>, Self), assembly::Error>> {
         let mut chain = self;
-        let growth = match edit::Growth::try_new(chain.sequence(), &item) {
+        let growth = match edit::Growth::try_new(&chain.0, &item) {
             Ok(state) => state,
             Err(error) => {
                 return Err(crate::mem::Rejected::new(
@@ -52,14 +48,14 @@ pub(in crate::buffer::segments) trait Assemble<T: buffer::raw::Segment>:
                 ));
             }
         };
-        match growth.assemble(chain.sequence(), item, edit::Front) {
+        match growth.assemble(&mut chain.0, item, edit::Front) {
             edit::Assembly::Local => Ok(chain),
             edit::Assembly::Exact {
                 item,
                 growth,
                 cause,
             } => {
-                let current = chain.sequence().count();
+                let current = chain.0.count();
                 Ok(
                     Exact::try_reserve(edit::Prepend::new((item, chain), growth, cause), current)?
                         .collect(),

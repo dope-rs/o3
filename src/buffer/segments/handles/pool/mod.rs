@@ -13,7 +13,7 @@ use crate::{
             queue,
         },
     },
-    depot::capacity,
+    depot::{capacity, raw::Input as _},
     mem::rc,
 };
 
@@ -119,10 +119,10 @@ impl<T> Pool<T> {
     }
 
     /// Retains owners transactionally within the available metadata capacity.
-    pub(in crate::buffer::segments) fn try_build<E: From<segments::Error>>(
+    pub(in crate::buffer::segments) fn try_build(
         &self,
-        plan: impl queue::Build<T, E>,
-    ) -> Result<segments::Chain<T>, E>
+        plan: &queue::Projected<'_, T>,
+    ) -> Result<segments::Chain<T>, queue::RetainError>
     where
         T: buffer::raw::Segment,
     {

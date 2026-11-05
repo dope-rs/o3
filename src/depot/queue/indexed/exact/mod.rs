@@ -89,8 +89,8 @@ impl<'a, T: Copy + Eq, I: crate::depot::raw::Compact> Entry<'a, T, I> {
         self.slot().replace::<true>(value);
     }
 
-    fn slot(&mut self) -> fifo::NodeEntry<'_, T, links::Chain<u32>> {
-        let store = &self.owner.store.nodes;
+    fn slot(&mut self) -> fifo::NodeEntry<'_, T> {
+        let store = &self.owner.store;
         // SAFETY: admission retained this exact owner and represented identity.
         let index = unsafe { links::Index::new_usize(self.index.into_raw() as usize) };
         unsafe { store.at(index) }
