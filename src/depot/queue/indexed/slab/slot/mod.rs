@@ -171,7 +171,7 @@ impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
     /// Appends this initialized slot to the destination without retiring its key.
     pub fn move_back(self, lane: Index<N>) {
         // SAFETY: the occupied slot retains this owner's exact live membership.
-        unsafe { tagged::Linked::new(self) }
+        unsafe { tagged::Linked::new(self.into_phase(phase::Metadata)) }
             .unlink()
             .select(lane)
             .push::<false>();
@@ -184,7 +184,7 @@ impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
         T,
         Vacant<'a, T, Tag, MAX, tagged::Hook, N, C, phase::Restore<N>>,
     ) {
-        let detached = unsafe { tagged::Linked::new(self) }
+        let detached = unsafe { tagged::Linked::new(self.into_phase(phase::Metadata)) }
             .unlink()
             .into_inner()
             .into_phase(phase::Detached);
@@ -192,7 +192,7 @@ impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
         (value, slot.into_phase(phase::Restore(lane)))
     }
     pub fn remove(self) -> T {
-        unsafe { tagged::Linked::new(self) }
+        unsafe { tagged::Linked::new(self.into_phase(phase::Metadata)) }
             .unlink()
             .into_inner()
             .into_phase(phase::Detached)

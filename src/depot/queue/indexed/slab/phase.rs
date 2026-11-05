@@ -44,7 +44,3 @@ impl<const N: usize> State for Restore<N> {
     const RELEASE: bool = false;
     const RETIRE: bool = true;
 }
-
-pub(in crate::depot) trait Initialized: State {}
-impl Initialized for Metadata {}
-impl Initialized for Occupied {}

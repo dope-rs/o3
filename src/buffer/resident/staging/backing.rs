@@ -21,7 +21,7 @@ impl<'d> Backing<'d> {
         match reserve.buf.mode() {
             Mode::Local => {
                 let (pool, target, source) = reserve.into_parts();
-                let state = window::Fresh::try_staged(Reserve {
+                let state = window::try_staged(Reserve {
                     buf: pool.budget(),
                     target,
                     source,

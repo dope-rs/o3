@@ -224,14 +224,16 @@ pub unsafe trait TagTarget: TagEntry {
     fn lane(&self) -> tagged::Endpoint<&Self::Store>;
 }
 /// # Safety
-/// Storage owns the exact entry and completes its phase once on drop; projections preserve it.
+/// Storage owns the exact linked entry and completes its phase once on drop; projections preserve it.
 /// into_inner disarms completion and transfers that entry with its owner and membership unchanged.
 pub unsafe trait TagFinish<E: TagEntry> {
     type Storage;
 
-    fn new(entry: E) -> Self::Storage;
+    fn new(entry: tagged::Linked<E>) -> Self::Storage;
     fn entry(storage: &Self::Storage) -> &E;
-    fn entry_mut(storage: &mut Self::Storage) -> &mut E;
+    /// # Safety
+    /// Mutation preserves the exact entry, owner, payload initialization, and linked membership.
+    unsafe fn entry_mut(storage: &mut Self::Storage) -> &mut E;
     fn into_inner(storage: Self::Storage) -> E;
 }
 mod tagentry;

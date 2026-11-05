@@ -32,11 +32,12 @@ impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
     }
 
     /// Copies the input into one allocation, growing from the initial capacity as needed.
+    #[inline]
     pub fn try_copy(
         src: &[u8],
         capacity: num::NonZero<usize>,
     ) -> Result<Self, storage::AllocError> {
-        let state = window::Fresh::try_copy(src, capacity)?;
+        let state = window::try_copy(src, capacity)?;
         Ok(Self {
             state: Some(state),
             tail: 0,
@@ -159,7 +160,7 @@ impl<const MAX_CAPACITY: usize> Sink for Snapshot<MAX_CAPACITY> {
             Some(state) => state,
             slot @ None => {
                 let capacity = num::NonZero::<usize>::MIN.saturating_add(bytes.len() - 1);
-                *slot = Some(window::Fresh::try_copy(bytes, capacity)?);
+                *slot = Some(window::try_copy(bytes, capacity)?);
                 return Ok(());
             }
         };
@@ -172,7 +173,7 @@ impl<const MAX_CAPACITY: usize> Sink for Snapshot<MAX_CAPACITY> {
         match &mut self.state {
             Some(state) => window::Edit::new(state, &mut self.tail).try_slices(source),
             slot @ None => {
-                *slot = window::Fresh::try_slices(source)?;
+                *slot = window::try_slices(source)?;
                 Ok(())
             }
         }

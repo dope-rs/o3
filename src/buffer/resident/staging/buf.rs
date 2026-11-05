@@ -207,7 +207,7 @@ impl<I: buffer::raw::SliceExt> Reserve<&mut Buf<'_>, owners::Measured<I>> {
                 Ok(())
             }
             State::Cold(seed) => {
-                let next = window::Fresh::try_staged(Reserve {
+                let next = window::try_staged(Reserve {
                     buf: *seed,
                     target,
                     source: (&[][..], src),

@@ -106,9 +106,7 @@ impl<T: buffer::raw::Segment, H: Handle<T>> Single<'_, T, H> {
         self.sequence.key = Key::EMPTY;
         // SAFETY: the nonempty key names this live node exclusively, so the
         // detached slot owns its initialized value and its vacant entitlement.
-        unsafe { handles::nodes(&self.sequence.handle).detached(self.index) }
-            .clear()
-            .release();
+        drop(unsafe { handles::nodes(&self.sequence.handle).detached(self.index) });
     }
 }
 

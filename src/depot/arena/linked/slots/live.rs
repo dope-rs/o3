@@ -42,18 +42,6 @@ impl<T, H: linked::Source<T>, Tag> Live<T, H, Tag> {
         (value, unsafe { ptr::read(&this.vacant) })
     }
 
-    /// Destroys the detached value and retains its exact slot reservation.
-    pub(crate) fn clear(self) -> slots::Vacant<T, H, Tag> {
-        let this = mem::ManuallyDrop::new(self);
-        let index = this.vacant.index.raw();
-        let node = unsafe { this.vacant.owner.store().region.slot(index) };
-        // SAFETY: this consumed Live owns this node's initialized value.
-        unsafe { node.clear(index) };
-        // SAFETY: destruction consumed the initialized value; the sole vacant
-        // entitlement transfers unchanged without running Live::drop again.
-        unsafe { ptr::read(&this.vacant) }
-    }
-
     pub(crate) const fn index(&self) -> slots::Index<Tag> {
         self.vacant.index
     }

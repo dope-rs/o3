@@ -8,10 +8,9 @@ impl<E: crate::depot::raw::TagEntry> crate::mem::Return for LaneUndo<E>
 where
     E::Store: crate::depot::raw::LaneStore,
 {
-    type Item = E;
+    type Item = tagged::Linked<E>;
 
-    fn return_item(self, entry: E) {
-        let entry: tagged::Linked<E> = unsafe { tagged::Linked::new(entry) };
+    fn return_item(self, entry: Self::Item) {
         entry.remove();
     }
 }

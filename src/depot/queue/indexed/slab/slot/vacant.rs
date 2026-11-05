@@ -159,8 +159,10 @@ impl<T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
     Vacant<'_, T, Tag, MAX, tagged::Hook, N, C, phase::Metadata>
 {
     fn link<const FRONT: bool>(&mut self, lane: Index<N>) {
+        let index = self.entry.index;
+        let endpoint = tagged::Endpoint::indexed(&mut *self.entry.core, lane);
         // SAFETY: the initialized reservation retains its exact detached slot.
-        let vacant = unsafe { tagged::Vacant::new(&mut self.entry) }.select(lane);
+        let vacant = unsafe { tagged::Vacant::new(endpoint.at::<true>(index)) };
         vacant.push::<FRONT>();
     }
 }

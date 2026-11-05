@@ -259,9 +259,7 @@ impl<'a, T, Tag, O: crate::depot::raw::SlotOwner<Tag>> Front<'a, T, Tag, O> {
     }
 
     pub fn discard(self) {
-        unsafe { self.owner.detach(self.store, self.index) }
-            .clear()
-            .release();
+        drop(unsafe { self.owner.detach(self.store, self.index) });
     }
 }
 

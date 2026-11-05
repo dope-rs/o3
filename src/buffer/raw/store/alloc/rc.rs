@@ -2,10 +2,7 @@ use std::{num, ops, ptr};
 
 use crate::{
     buffer,
-    buffer::{
-        resident, storage,
-        storage::{alloc, backing},
-    },
+    buffer::{resident, storage, storage::backing},
     mem::rc,
 };
 
@@ -173,11 +170,11 @@ const _: () = assert!(size_of::<Unique<'static, ()>>() == size_of::<ptr::NonNull
 
 impl<P: crate::buffer::raw::Policy> Rc<P> {
     /// Selects the exact access this allocation currently admits.
-    pub(in crate::buffer) fn access(&mut self) -> alloc::Access<'_, P> {
+    pub(in crate::buffer) fn access(&mut self) -> Option<Unique<'_, P>> {
         if self.is_unique() {
-            alloc::Access::Unique(Unique(self))
+            Some(Unique(self))
         } else {
-            alloc::Access::Shared
+            None
         }
     }
 }

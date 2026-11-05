@@ -1,4 +1,4 @@
-use std::{mem, num, ops, ptr};
+use std::{num, ops, ptr};
 
 use storage::alloc;
 
@@ -112,7 +112,7 @@ impl<'a, P: buffer::raw::Policy, const MAX_CAPACITY: usize> Edit<'a, P, MAX_CAPA
     ) -> Result<(), alloc::Error<P::Failure>> {
         let window::State { buf, cap, head } = self.state;
         match buf.access() {
-            alloc::Access::Unique(source) => {
+            Some(source) => {
                 let target =
                     if ideal.amount().get() as usize <= P::available(source.policy().seed()) {
                         ideal
@@ -132,7 +132,7 @@ impl<'a, P: buffer::raw::Policy, const MAX_CAPACITY: usize> Edit<'a, P, MAX_CAPA
                 *self.tail = 0;
                 Ok(())
             }
-            alloc::Access::Shared => self.fresh(ideal.capacity(), required.capacity(), src, end),
+            None => self.fresh(ideal.capacity(), required.capacity(), src, end),
         }
     }
 
@@ -152,14 +152,7 @@ impl<'a, P: buffer::raw::Policy, const MAX_CAPACITY: usize> Edit<'a, P, MAX_CAPA
                 (state.head - *self.tail) as usize,
             )
         };
-        let next = Fresh {
-            ideal,
-            need: required,
-            first,
-            second: src,
-            len,
-        }
-        .try_allocate(state.seed())?;
+        let next = try_allocate(state.seed(), ideal, required, (first, src), len)?;
         *state = next;
         *self.tail = 0;
         Ok(())
@@ -349,7 +342,7 @@ struct Init<P: crate::buffer::raw::Policy, const MAX: usize, I> {
     len: u32,
 }
 
-// SAFETY: Fresh retains the checked total and allocation covering both sources.
+// SAFETY: Init retains the checked total and allocation covering its sources.
 unsafe impl<P: crate::buffer::raw::Policy, const MAX: usize, I: buffer::raw::SliceExt>
     buffer::raw::Copy for Init<P, MAX, I>
 {
@@ -368,111 +361,82 @@ unsafe impl<P: crate::buffer::raw::Policy, const MAX: usize, I: buffer::raw::Sli
     }
 }
 
-pub(in crate::buffer) struct Fresh<'a, const MAX: usize, I = &'a [u8]> {
-    ideal: window::Capacity<MAX>,
-    need: window::Capacity<MAX>,
-    first: &'a [u8],
-    second: I,
-    len: u32,
+pub(in crate::buffer::bytes::window) fn try_slices<const MAX: usize, const N: usize>(
+    source: owners::Measured<[&[u8]; N]>,
+) -> Result<Option<window::State<(), MAX>>, storage::AllocError> {
+    let len = source.len();
+    let mut sources = source.into_input().into_iter();
+    let Some(first) = sources.find(|source| !source.is_empty()) else {
+        return Ok(None);
+    };
+    let capacity = num::NonZero::<usize>::MIN.saturating_add(len - 1);
+    let mut state = try_copy(first, capacity)?;
+    append_slices(&mut state, sources);
+    Ok(Some(state))
 }
 
-impl<const MAX: usize> Fresh<'_, MAX> {
-    pub(in crate::buffer::bytes::window) fn try_slices<const N: usize>(
-        source: owners::Measured<[&[u8]; N]>,
-    ) -> Result<Option<window::State<(), MAX>>, storage::AllocError> {
-        let len = source.len();
-        let mut sources = source.into_input().into_iter();
-        let Some(first) = sources.find(|source| !source.is_empty()) else {
-            return Ok(None);
-        };
-        let capacity = num::NonZero::<usize>::MIN.saturating_add(len - 1);
-        let mut state = Self::try_copy(first, capacity)?;
-        append_slices(&mut state, sources);
-        Ok(Some(state))
-    }
-
-    pub(in crate::buffer::bytes::window) fn try_copy(
-        src: &[u8],
-        capacity: num::NonZero<usize>,
-    ) -> Result<window::State<(), MAX>, storage::AllocError> {
-        let initial = window::Capacity::try_new(capacity).map_err(storage::AllocError::Capacity)?;
-        let need = if src.len() > initial.get() as usize {
-            let capacity = num::NonZero::<usize>::MIN.saturating_add(src.len() - 1);
-            window::Capacity::try_new(capacity).map_err(storage::AllocError::Capacity)?
-        } else {
-            initial
-        };
-        Fresh {
-            ideal: initial.grow(need),
-            need,
-            first: src,
-            second: [] as [&[u8]; 0],
-            len: src.len() as u32,
-        }
-        .try_allocate(())
+#[inline]
+pub(in crate::buffer::bytes::window) fn try_copy<const MAX: usize>(
+    src: &[u8],
+    capacity: num::NonZero<usize>,
+) -> Result<window::State<(), MAX>, storage::AllocError> {
+    let initial = window::Capacity::try_new(capacity).map_err(storage::AllocError::Capacity)?;
+    let need = if src.len() > initial.get() as usize {
+        let capacity = num::NonZero::<usize>::MIN.saturating_add(src.len() - 1);
+        window::Capacity::try_new(capacity).map_err(storage::AllocError::Capacity)?
+    } else {
+        initial
+    };
+    try_allocate((), initial.grow(need), need, src, src.len() as u32)
         .map_err(alloc::Error::into_alloc)
         .map_err(storage::AllocError::Exhausted)
-    }
 }
 
-impl<const MAX: usize, I: buffer::raw::SliceExt> Fresh<'_, MAX, I> {
-    fn try_allocate<P: buffer::raw::Policy>(
-        self,
-        seed: P::Seed,
-    ) -> Result<window::State<P, MAX>, alloc::Error<P::Failure>> {
-        let Self {
-            ideal,
+fn try_allocate<P: buffer::raw::Policy, const MAX: usize, I: buffer::raw::SliceExt>(
+    seed: P::Seed,
+    ideal: window::Capacity<MAX>,
+    need: window::Capacity<MAX>,
+    sources: I,
+    len: u32,
+) -> Result<window::State<P, MAX>, alloc::Error<P::Failure>> {
+    let target = if ideal.get() as usize <= P::available(seed) {
+        ideal
+    } else {
+        need
+    };
+    let (heap, cap) = match crate::buffer::raw::Heap::try_new(seed, target.nonzero()) {
+        Ok(heap) => (heap, target),
+        Err(alloc::Error::Allocation(crate::alloc::Exhausted)) if target != need => (
+            crate::buffer::raw::Heap::try_new(seed, need.nonzero())?,
             need,
-            first,
-            second,
-            len,
-        } = self;
-        let target = if ideal.get() as usize <= P::available(seed) {
-            ideal
-        } else {
-            need
-        };
-        let (heap, cap) = match crate::buffer::raw::Heap::try_new(seed, target.nonzero()) {
-            Ok(heap) => (heap, target),
-            Err(alloc::Error::Allocation(crate::alloc::Exhausted)) if target != need => (
-                crate::buffer::raw::Heap::try_new(seed, need.nonzero())?,
-                need,
-            ),
-            Err(error) => return Err(error),
-        };
-        Ok(buffer::raw::Copy::copy(Init {
-            heap,
-            cap,
-            sources: (first, second),
-            len,
-        }))
-    }
+        ),
+        Err(error) => return Err(error),
+    };
+    Ok(buffer::raw::Copy::copy(Init {
+        heap,
+        cap,
+        sources,
+        len,
+    }))
 }
 
 const _: () = {
-    assert!(size_of::<Fresh<'static, 1>>() == 6 * size_of::<usize>());
-    assert!(!mem::needs_drop::<Fresh<'static, 1>>());
     assert!(size_of::<Resize<'static, (), 1>>() == 6 * size_of::<usize>());
     assert!(size_of::<Option<Resize<'static, (), 1>>>() == 6 * size_of::<usize>());
 };
 
-impl Fresh<'_, { u32::MAX as usize }> {
-    pub(in crate::buffer) fn try_staged<'d, I: buffer::raw::SliceExt>(
-        reserve: staging::Reserve<resident::Budget<'d>, (&[u8], owners::Measured<I>)>,
-    ) -> Result<
-        window::State<resident::Lease<'d>, { u32::MAX as usize }>,
-        alloc::Error<credit::Error>,
-    > {
-        let (budget, target, (first, second)) = reserve.into_parts();
-        let capacity = window::Capacity::from(target);
-        let len = (first.len() + second.len()) as u32;
-        let fresh = Fresh {
-            ideal: capacity,
-            need: capacity,
-            first,
-            second: second.into_input(),
-            len,
-        };
-        fresh.try_allocate(budget)
-    }
+pub(in crate::buffer) fn try_staged<'d, I: buffer::raw::SliceExt>(
+    reserve: staging::Reserve<resident::Budget<'d>, (&[u8], owners::Measured<I>)>,
+) -> Result<window::State<resident::Lease<'d>, { u32::MAX as usize }>, alloc::Error<credit::Error>>
+{
+    let (budget, target, (first, second)) = reserve.into_parts();
+    let capacity = window::Capacity::from(target);
+    let len = (first.len() + second.len()) as u32;
+    try_allocate(
+        budget,
+        capacity,
+        capacity,
+        (first, second.into_input()),
+        len,
+    )
 }

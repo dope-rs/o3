@@ -15,20 +15,21 @@ where
 {
     type Storage = Lease<LaneUndo<E>, lease::Open>;
 
-    fn new(entry: E) -> Self::Storage {
+    fn new(entry: tagged::Linked<E>) -> Self::Storage {
         Lease::open(LaneUndo(marker::PhantomData), entry)
     }
 
     fn entry(storage: &Self::Storage) -> &E {
-        storage.item()
+        storage.item().entry()
     }
 
-    fn entry_mut(storage: &mut Self::Storage) -> &mut E {
-        storage.item_mut()
+    unsafe fn entry_mut(storage: &mut Self::Storage) -> &mut E {
+        // SAFETY: the caller preserves this exact initialized linked entry.
+        unsafe { storage.item_mut().entry_mut() }
     }
 
     fn into_inner(storage: Self::Storage) -> E {
-        storage.into_parts().1
+        storage.into_parts().1.into_inner()
     }
 }
 

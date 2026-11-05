@@ -22,29 +22,6 @@ pub(in crate::buffer) struct Tally {
     count: u32,
 }
 
-struct Bounds {
-    bytes: u128,
-    offset: u128,
-}
-
-impl Bounds {
-    const fn new(slots: u32, capacity: num::NonZero<u32>) -> Self {
-        let count = slots as u128;
-        let cells = count * mem::size_of::<owners::Slot>() as u128;
-        Self {
-            bytes: count * capacity.get() as u128,
-            offset: mem::size_of::<owners::Header>() as u128 + cells,
-        }
-    }
-
-    const fn fits_bytes(&self) -> bool {
-        self.bytes <= isize::MAX as u128
-    }
-    const fn fits_data(&self) -> bool {
-        self.offset + self.bytes <= alloc::raw::Layout::<owners::Header>::MAX
-    }
-}
-
 impl Layout {
     const fn fits_count(count: usize) -> bool {
         count <= u32::MAX as usize
@@ -69,14 +46,16 @@ impl Layout {
         slots: u32,
         capacity: num::NonZero<u32>,
     ) -> Result<Self, pool::LayoutError> {
-        let bounds = Bounds::new(slots, capacity);
-        if !bounds.fits_bytes() {
+        let bytes = slots as u128 * capacity.get() as u128;
+        if bytes > isize::MAX as u128 {
             return Err(pool::LayoutError::PlainDataArray {
                 slots,
                 capacity: capacity.get(),
             });
         }
-        if !bounds.fits_data() {
+        let offset = mem::size_of::<owners::Header>() as u128
+            + slots as u128 * mem::size_of::<owners::Slot>() as u128;
+        if offset + bytes > alloc::raw::Layout::<owners::Header>::MAX {
             return Err(pool::LayoutError::PlainData {
                 slots,
                 capacity: capacity.get(),

@@ -77,7 +77,7 @@ impl<T, H: Handle<T>> Sequence<T, H> {
             handles::State::Empty => return,
             handles::State::Single(index) => {
                 // SAFETY: this detached key retains its exact initialized node.
-                unsafe { nodes.detached(index) }.clear().release();
+                drop(unsafe { nodes.detached(index) });
                 return;
             }
             handles::State::Multi(index) => index,

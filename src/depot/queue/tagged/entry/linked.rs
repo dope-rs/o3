@@ -20,6 +20,13 @@ impl<E: crate::depot::raw::TagEntry> Linked<E> {
             policy: marker::PhantomData,
         }
     }
+
+    pub(in crate::depot) fn into_policy<Q: crate::depot::raw::TagFinish<E>>(self) -> Linked<E, Q> {
+        Linked {
+            entry: Q::new(self),
+            policy: marker::PhantomData,
+        }
+    }
 }
 
 impl<'a, S: crate::depot::raw::LaneStore>
@@ -40,14 +47,6 @@ impl<'a, S: crate::depot::raw::LaneStore>
 }
 
 impl<E: crate::depot::raw::TagEntry, P: crate::depot::raw::TagFinish<E>> Linked<E, P> {
-    pub(in crate::depot) fn into_policy<Q: crate::depot::raw::TagFinish<E>>(self) -> Linked<E, Q> {
-        // SAFETY: the consuming transition preserves this same live entry.
-        Linked {
-            entry: Q::new(self.into_inner()),
-            policy: marker::PhantomData,
-        }
-    }
-
     pub fn entry(&self) -> &E {
         P::entry(&self.entry)
     }
@@ -59,7 +58,8 @@ impl<E: crate::depot::raw::TagEntry, P: crate::depot::raw::TagFinish<E>> Linked<
     /// # Safety
     /// The caller may change only the payload, preserving the exact entry and its hook.
     pub(in crate::depot) unsafe fn entry_mut(&mut self) -> &mut E {
-        P::entry_mut(&mut self.entry)
+        // SAFETY: the caller preserves this entry and its live membership.
+        unsafe { P::entry_mut(&mut self.entry) }
     }
 
     pub fn unlink(self) -> tagged::Vacant<E> {

@@ -70,10 +70,6 @@ impl<W: bitmap::Width, S: crate::depot::raw::Words<W>, P, M> Row<S, P, M, W> {
         }
     }
 
-    pub const fn source(&self) -> &S {
-        &self.source
-    }
-
     pub const fn index(&self) -> usize {
         self.index.get() as usize - 1
     }
@@ -88,6 +84,10 @@ impl<W: bitmap::Width, S: crate::depot::raw::Words<W>, P, M> Row<S, P, M, W> {
 }
 
 impl<W: bitmap::Width, S: crate::depot::raw::Words<W>, P> Row<S, P, (), W> {
+    pub const fn source(&self) -> &S {
+        &self.source
+    }
+
     /// # Safety
     /// The projection must retain the exact source, immutable domain, and owner lifetime.
     pub(in crate::depot) unsafe fn map<T: crate::depot::raw::Words<W>>(
