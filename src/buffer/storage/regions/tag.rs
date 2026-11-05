@@ -1,7 +1,7 @@
 use std::{
     alloc::Layout,
     marker,
-    mem::{ManuallyDrop, offset_of, take},
+    mem::{ManuallyDrop, MaybeUninit, offset_of, take},
     num, ptr, vec,
 };
 
@@ -166,7 +166,7 @@ impl buffer::Residency for Option<regions::Tag> {
 #[repr(C, align(8))]
 pub(in crate::buffer) struct Header {
     refs: mem::raw::Count,
-    buf: vec::Vec<u8>,
+    buf: Box<[MaybeUninit<u8>]>,
 }
 
 impl Header {
@@ -179,15 +179,19 @@ impl Header {
         }
         let pointer =
             crate::alloc::raw::LayoutExt::try_allocate::<Header>(Layout::new::<Header>())?;
-        let buf = take(source).into();
-        let extent = regions::Extent::from_bytes(buf.as_slice());
-        // SAFETY: this control block owns the exact Header layout.
+        let (bytes, len, capacity) = take(source).into().into_raw_parts();
+        // SAFETY: this control block owns the exact Header layout. The full
+        // vector capacity has the same allocation layout as these uninitialized bytes.
         unsafe {
             pointer.write(Header {
                 refs: mem::raw::Count::one(),
-                buf,
+                buf: Box::from_raw(ptr::slice_from_raw_parts_mut(bytes.cast(), capacity)),
             })
         };
+        // SAFETY: derive coordinates after the Box reaches its final address;
+        // the original initialized prefix remains within its complete allocation.
+        let extent =
+            unsafe { regions::Extent::new(ptr::NonNull::from(&*pointer.as_ref().buf).cast(), len) };
         // SAFETY: the initialized header transfers its initial counted edge.
         let owner = Some(regions::Tag::vec(unsafe {
             mem::raw::Owner::from_raw(pointer)
@@ -197,7 +201,7 @@ impl Header {
     }
 
     pub(in crate::buffer) fn capacity(&self) -> usize {
-        self.buf.capacity()
+        self.buf.len()
     }
 }
 
@@ -217,7 +221,7 @@ unsafe impl mem::raw::Target for Header {
 }
 
 const _: () = {
-    assert!(size_of::<Header>() == 4 * size_of::<usize>());
+    assert!(size_of::<Header>() == 3 * size_of::<usize>());
     assert!(align_of::<Header>() >= 8);
     assert!(offset_of!(Header, refs) == 0);
 };

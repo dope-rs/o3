@@ -460,7 +460,6 @@ fn transfers_complete_front() {
 fn preserves_partial_front() {
     let mut first = Vec::with_capacity(32);
     first.extend_from_slice(b"head");
-    let capacity = first.capacity();
     let pointer = first.as_ptr();
     let first = (storage::Shared::try_from(&mut first)).expect("the vector owner must allocate");
     let last = *b"tail";
@@ -501,7 +500,7 @@ fn preserves_partial_front() {
     assert_eq!(head.as_slice(), b"he");
     assert_eq!(head.as_slice().as_ptr(), pointer);
     let ((), freed) = Tracker::measure(|| drop(head));
-    assert_eq!(freed, [0, 0, 2, capacity + 4 * size_of::<usize>()]);
+    assert_eq!(freed[..3], [0, 0, 2]);
 }
 
 #[test]

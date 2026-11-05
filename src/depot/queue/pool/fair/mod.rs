@@ -154,11 +154,25 @@ impl<'a, 'd, T, S> Binding<'a, 'd, T, S> {
         self,
         token: &mut region::Token<region::Identity<'d>>,
     ) -> Option<(T, Permit<'a, 'd, T, S>)> {
-        let lane = self.lane_mut(token);
-        let index = lane.slot.queue.front_index()?;
-        // SAFETY: the original Binding owns this lane's unchanged live front.
-        let (value, vacant) = unsafe { lane.slot.queue.take(self, index) };
-        Some((value, Permit::new(vacant.release())))
+        self.front_entry(token).map(|take| take())
+    }
+
+    /// Retains this exact head until consumed; dropping it leaves the lane unchanged.
+    pub fn front_entry<'t>(
+        self,
+        token: &'t mut region::Token<region::Identity<'d>>,
+    ) -> Option<impl FnOnce() -> (T, Permit<'a, 'd, T, S>) + 't>
+    where
+        'a: 't,
+    {
+        let index = self.lane_mut(token).slot.queue.front_index()?;
+        Some(move || {
+            let lane = self.lane_mut(token);
+            // SAFETY: the exclusive token retained this unchanged head. No lane
+            // reference survived admission, so independent ledger changes remain valid.
+            let (value, vacant) = unsafe { lane.slot.queue.take(self, index) };
+            (value, Permit::new(vacant.release()))
+        })
     }
 }
 

@@ -29,7 +29,7 @@ fn keeps_vec_owner() {
     let pointer = data.as_ptr();
     let (result, created) = Tracker::measure(|| storage::Shared::try_from(&mut data));
     let shared = (result).expect("the vector control block must allocate");
-    assert_eq!(created, [1, 4 * size_of::<usize>(), 0, 0]);
+    assert_eq!(created, [1, 3 * size_of::<usize>(), 0, 0]);
     assert_eq!(shared.resident(), capacity);
     let (result, activity) = Tracker::measure(|| shared.try_clone());
     let plain = (result).expect("the plain edge must retain its vector");

@@ -80,13 +80,14 @@ fn settles_permits() {
         };
         second.push_back(&mut token, 7);
         {
+            let _front = lane.front_entry(&mut token).expect("retained head");
             let unused = lane.reserve();
             assert!(unused.is_ok(), "credit demand must fit its original lane");
         }
         assert_eq!(lane.view(&token).front(), Some(&7));
 
-        let (value, permit) =
-            (lane.take_front(&mut token)).expect("the published value must retain its permit");
+        let take = lane.front_entry(&mut token).expect("retained head");
+        let (value, permit) = take();
         assert_eq!(value, 7);
         assert_eq!(lane.view(&token).len(), 0);
         permit.push_back(&mut token, 9);
@@ -106,7 +107,7 @@ fn settles_permits() {
                 (lane.take_front(&mut token)).expect("both reused slots must remain in FIFO order");
             assert_eq!(retired.0, expected);
         }
-        assert_eq!(lane.view(&token).len(), 0);
+        assert!(lane.front_entry(&mut token).is_none());
     });
 }
 
