@@ -31,7 +31,7 @@ impl<'d> View<'_, 'd> {
     }
 
     pub(in crate::buffer) fn new<'a, O: Owner<'d>>(
-        value: &'a super::regions::Value<O>,
+        value: &'a super::regions::Shared<O>,
     ) -> Option<View<'a, 'd>>
     where
         'd: 'a,

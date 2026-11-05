@@ -25,7 +25,7 @@ use crate::{
 #[repr(C)]
 pub struct Shared<'d> {
     /// Leading owner niche remains available to enclosing payload enums.
-    pub(in crate::buffer) region: regions::Value<resident::State<'d>>,
+    pub(in crate::buffer) region: regions::Shared<resident::State<'d>>,
 }
 impl<'d> Default for Shared<'d> {
     fn default() -> Self {
@@ -36,7 +36,7 @@ impl<'d> Default for Shared<'d> {
 impl<'d> Shared<'d> {
     pub const fn new() -> Self {
         Self {
-            region: regions::Value::empty(resident::State::Slice),
+            region: regions::Shared::empty(resident::State::Slice),
         }
     }
     /// Copies an admitted source while retaining its borrow through initialization.
@@ -73,19 +73,13 @@ impl<'d> Shared<'d> {
         buffer::raw::Slice::try_project(self, visible)
     }
     pub fn try_detach(self) -> Result<storage::Shared, Self> {
-        match self.region.try_detach() {
-            Ok(region) => Ok(storage::Shared { region }),
-            Err(region) => Err(Self { region }),
-        }
+        self.region.try_detach().map_err(|region| Self { region })
     }
     /// Transfers independent backing or a uniquely owned resident allocation.
     /// Resident transfers refund their domain charge without changing the range.
     /// A backing that cannot become independent is returned unchanged.
     pub fn try_owned(self) -> Result<storage::Shared, Self> {
-        match self.region.try_own() {
-            Ok(region) => Ok(storage::Shared { region }),
-            Err(region) => Err(Self { region }),
-        }
+        self.region.try_own().map_err(|region| Self { region })
     }
     pub fn scope(&self) -> resident::Scope<'_, 'd> {
         use resident::{Scope, State};
@@ -130,14 +124,14 @@ impl<'a: 'd, 'd> From<&'a [u8]> for Shared<'d> {
 impl<'d> From<storage::Shared> for Shared<'d> {
     fn from(shared: storage::Shared) -> Self {
         Self {
-            region: shared.region.into(),
+            region: shared.into(),
         }
     }
 }
 impl<'d> From<storage::Shared<crate::buffer::raw::Rc<resident::Lease<'d>>>> for Shared<'d> {
     fn from(shared: storage::Shared<crate::buffer::raw::Rc<resident::Lease<'d>>>) -> Self {
         Self {
-            region: shared.region.into(),
+            region: shared.into(),
         }
     }
 }
@@ -146,7 +140,7 @@ impl<'d, L> From<storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'
 {
     fn from(shared: storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>) -> Self {
         Self {
-            region: shared.region.into(),
+            region: shared.into(),
         }
     }
 }
@@ -175,14 +169,14 @@ impl ops::Deref for Shared<'_> {
 impl<'d> From<storage::Shared<Option<provided::Account<'d>>>> for Shared<'d> {
     fn from(shared: storage::Shared<Option<provided::Account<'d>>>) -> Self {
         Self {
-            region: shared.region.into(),
+            region: shared.into(),
         }
     }
 }
 impl<'d> From<bounded::Value<storage::Shared<Option<provided::Account<'d>>>>> for Shared<'d> {
     fn from(bytes: bounded::Value<storage::Shared<Option<provided::Account<'d>>>>) -> Self {
         Self {
-            region: bytes.0.region.into(),
+            region: bytes.0.into(),
         }
     }
 }

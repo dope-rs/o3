@@ -50,7 +50,7 @@ fn keeps_retained_backing() {
         let retained = left.try_clone().expect("retained region");
         let first = left.as_slice().as_ptr();
         let second = right.as_slice().as_ptr();
-        mem::swap(&mut *left, &mut *right);
+        mem::swap(&mut left, &mut right);
         assert_eq!(left.as_slice().as_ptr(), second);
         assert_eq!(right.as_slice().as_ptr(), first);
         retained

@@ -407,7 +407,7 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
         Ok(resident::Shared {
             // SAFETY: the selected backing retains this exact initialized view.
             region: unsafe {
-                regions::Value::new(owner, regions::Extent::from_bytes(view.as_slice()))
+                regions::Shared::from_extent(owner, regions::Extent::from_bytes(view.as_slice()))
             },
         })
     }

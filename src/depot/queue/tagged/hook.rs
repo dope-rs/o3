@@ -73,13 +73,6 @@ impl Hook {
         }
     }
 
-    pub(in crate::depot) fn free(index: links::Index, next: Option<links::Index>) -> Self {
-        Self {
-            previous: cell::Cell::new(Link::node(index)),
-            next: cell::Cell::new(next.map_or(Link::EMPTY, Link::node)),
-        }
-    }
-
     /// # Safety
     /// This hook is detached and belongs to the storage owner's free chain.
     pub(in crate::depot) unsafe fn next(&self) -> u32 {
@@ -88,6 +81,25 @@ impl Hook {
 
     pub(in crate::depot) fn is_linked(&self, index: links::Index) -> bool {
         self.previous.get() != Link::node(index)
+    }
+}
+
+// SAFETY: tagged hooks distinguish detached indices from admitted lane endpoints.
+unsafe impl depot::raw::IndexedHook for Hook {
+    type Head = links::Chain;
+    type Chain = ();
+    #[inline]
+    fn new(index: links::Index, next: Option<links::Index>) -> Self {
+        Self {
+            previous: cell::Cell::new(Link::node(index)),
+            next: cell::Cell::new(next.map_or(Link::EMPTY, Link::node)),
+        }
+    }
+    fn is_linked(&self, index: links::Index) -> bool {
+        self.is_linked(index)
+    }
+    unsafe fn next(&self) -> u32 {
+        unsafe { Self::next(self) }
     }
 }
 

@@ -110,15 +110,12 @@ impl<T: buffer::raw::Segment> Chain<T> {
     /// Moves every incoming owner into this pool, preserving the source on rejection.
     pub fn try_extend(
         &mut self,
-        source: Many<T>,
+        mut source: Many<T>,
     ) -> Result<(), crate::mem::Rejected<Many<T>, segments::Error>> {
-        let mut source: Chain<T> = source.into();
-        let error = match edit::Relation::new((self, &mut source)).try_commit() {
+        let error = match edit::Relation::new((self, source.sequence())).try_commit() {
             Ok(()) => return Ok(()),
             Err(error) => error.into_error(),
         };
-        // SAFETY: rejected preflight preserves this operation's original Many source.
-        let source = unsafe { Many::new(source) };
         Err(crate::mem::Rejected::new(source, error))
     }
 

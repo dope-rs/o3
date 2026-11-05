@@ -31,9 +31,7 @@ impl TryFrom<&mut String> for Str {
 
     /// Transfers the text on success; allocation failure leaves it unchanged.
     fn try_from(value: &mut String) -> Result<Self, Self::Error> {
-        let owner = storage::Shared {
-            region: regions::Header::try_new(value)?,
-        };
+        let owner = regions::Header::try_new(value)?;
         // SAFETY: String transfers its complete validated UTF-8 bytes unchanged.
         Ok(Self {
             text: unsafe { buffer::raw::Utf8::new(owner) },

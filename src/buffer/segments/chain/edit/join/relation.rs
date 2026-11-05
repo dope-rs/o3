@@ -1,4 +1,4 @@
-use std::{iter, marker::PhantomData, mem, num::NonZero};
+use std::{iter, mem, num::NonZero};
 
 use segments::{assembly, assembly::total};
 
@@ -10,10 +10,7 @@ use crate::{
             Key,
             chain::{
                 Assemble,
-                edit::{
-                    Cause,
-                    join::{Pair, incoming::Incoming},
-                },
+                edit::{Cause, join::incoming::Incoming},
             },
             handles,
             handles::Descriptor,
@@ -25,18 +22,17 @@ use crate::{
     },
 };
 
-pub(in crate::buffer::segments) struct Join<T: buffer::raw::Segment, C: Assemble<T>> {
-    pub(super) first: segments::Chain<T>,
-    pub(super) second: segments::Chain<T>,
-    owner: PhantomData<C>,
+pub(in crate::buffer::segments) struct Join<C> {
+    first: C,
+    second: C,
 }
 
-pub(in crate::buffer::segments) struct Committed<P>(P);
+type Exclusive<'a, T> = (&'a mut segments::Chain<T>, &'a mut segments::Chain<T>);
 
-pub(in crate::buffer::segments) enum Relation<P> {
+pub(in crate::buffer::segments) enum Relation<'a, T> {
     /// Disjoint sequences bounded by one metadata pool.
-    Same(P),
-    Other(P),
+    Same(Exclusive<'a, T>),
+    Other(Exclusive<'a, T>),
 }
 
 pub(in crate::buffer::segments) struct Total<P> {
@@ -97,9 +93,9 @@ pub(in crate::buffer::segments) struct Capacity<P> {
     pub(in crate::buffer::segments::chain::edit::join) cause: Cause,
 }
 
-impl<P: Pair> Relation<P> {
-    pub(in crate::buffer::segments) fn new(pair: P) -> Self {
-        let (target, source) = pair.as_ref();
+impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
+    pub(in crate::buffer::segments) fn new(pair: Exclusive<'a, T>) -> Self {
+        let (target, source) = &pair;
         if target.is_same(source) {
             Self::Same(pair)
         } else {
@@ -107,14 +103,14 @@ impl<P: Pair> Relation<P> {
         }
     }
 
-    pub(in crate::buffer::segments) fn try_commit(self) -> Result<(), Rejected<P>> {
+    pub(in crate::buffer::segments) fn try_commit(self) -> Result<(), Rejected<Exclusive<'a, T>>> {
         let (pair, state) = match self {
             Relation::Same(mut pair) => {
-                let (target, source) = pair.as_ref();
+                let (target, source) = &pair;
                 let links = match (target.sequence.key.state(), source.sequence.key.state()) {
                     (_, handles::State::Empty) => return Ok(()),
                     (handles::State::Empty, _) => {
-                        let (target, source) = pair.as_mut();
+                        let (target, source) = &mut pair;
                         mem::swap(&mut target.sequence.key, &mut source.sequence.key);
                         return Ok(());
                     }
@@ -134,7 +130,7 @@ impl<P: Pair> Relation<P> {
                 (pair, Placement::Same(links))
             }
             Relation::Other(pair) => {
-                let (_, source) = pair.as_ref();
+                let (_, source) = &pair;
                 let from = match source.sequence.key.state() {
                     handles::State::Empty => return Ok(()),
                     handles::State::Single(index) => Input::Single(index),
@@ -149,7 +145,7 @@ impl<P: Pair> Relation<P> {
                 (pair, Placement::Other(from))
             }
         };
-        let (target, source) = pair.as_ref();
+        let (target, source) = &pair;
         let (current, len, resident) = target.totals();
         let (added, bytes, retained) = source.totals();
         let count = match &state {
@@ -172,7 +168,7 @@ impl<P: Pair> Relation<P> {
         let result = (|| {
             match state {
                 Placement::Same(links) => {
-                    let (target, source) = total.pair.as_mut();
+                    let (target, source) = &mut total.pair;
                     let nodes = handles::nodes(&target.sequence.handle);
                     let descs = handles::descriptors(&target.sequence.handle);
                     let desc = match links {
@@ -240,7 +236,7 @@ impl<P: Pair> Relation<P> {
                     Ok(())
                 }
                 Placement::Other(from) => {
-                    let (target, source) = total.pair.as_mut();
+                    let (target, source) = &mut total.pair;
                     let store = handles::nodes(&target.sequence.handle);
                     let table = handles::descriptors(&target.sequence.handle);
                     let nodes = slots::Input::try_new(
@@ -310,33 +306,28 @@ impl<P: Pair> Relation<P> {
     }
 }
 
-impl<T: buffer::raw::Segment, C: Assemble<T>> Join<T, C> {
+impl<C> Join<C> {
     pub(in crate::buffer::segments) fn new(first: C, second: C) -> Self {
-        Self {
-            first: first.into(),
-            second: second.into(),
-            owner: PhantomData,
-        }
+        Self { first, second }
     }
 
-    pub(in crate::buffer::segments) fn try_commit(
+    pub(in crate::buffer::segments) fn try_commit<T: buffer::raw::Segment>(
         mut self,
     ) -> Result<C, crate::mem::Rejected<(C, C), assembly::Error>>
     where
-        Self: Into<(C, C)>,
-        Committed<Self>: Into<C>,
+        C: Assemble<T>,
     {
-        match Relation::new(&mut self).try_commit() {
-            Ok(()) => Ok(Committed(self).into()),
+        match Relation::new((self.first.sequence(), self.second.sequence())).try_commit() {
+            Ok(()) => Ok(self.first),
             Err(Rejected::Total(cause)) => Err(crate::mem::Rejected::new(
-                self.into(),
+                (self.first, self.second),
                 assembly::Error::Total(cause),
             )),
             Err(Rejected::Capacity(Capacity {
                 total: Total { sum, .. },
                 cause,
             })) => {
-                let current = self.first.count();
+                let current = self.first.sequence().count();
                 let capacity = Capacity {
                     total: Total { pair: self, sum },
                     cause,
@@ -358,20 +349,16 @@ impl<T> Rejected<(&mut segments::Chain<T>, &mut segments::Chain<T>)> {
 
 // SAFETY: this total owns both unchanged chains and their checked cardinality.
 unsafe impl<T: buffer::raw::Segment, C: Assemble<T>> buffer::raw::Sequence<T>
-    for Capacity<Join<T, C>>
-where
-    Join<T, C>: Into<(C, C)>,
+    for Capacity<Join<C>>
 {
     type Output = C;
     type Item = segments::Item<T>;
     type Error = crate::mem::Rejected<(C, C), assembly::Error>;
 
     fn owners(self) -> impl Iterator<Item = segments::Item<T>> + buffer::raw::Total {
-        let Join {
-            mut first,
-            mut second,
-            ..
-        } = self.total.pair;
+        let Join { first, second } = self.total.pair;
+        let mut first: segments::Chain<T> = first.into();
+        let mut second: segments::Chain<T> = second.into();
         let owners =
             iter::from_fn(move || first.pop_item()).chain(iter::from_fn(move || second.pop_item()));
         buffer::raw::Batch {
@@ -381,11 +368,12 @@ where
     }
 
     fn reject(self, error: crate::alloc::Error) -> Self::Error {
-        crate::mem::Rejected::new(self.total.pair.into(), self.cause.allocation(error))
+        let Join { first, second } = self.total.pair;
+        crate::mem::Rejected::new((first, second), self.cause.allocation(error))
     }
 }
 
-impl<T: buffer::raw::Segment, C: Assemble<T>> buffer::raw::Total for Capacity<Join<T, C>> {
+impl<C> buffer::raw::Total for Capacity<Join<C>> {
     fn count(&self) -> segments::Count {
         segments::Count::new(self.total.sum.count.get())
     }
@@ -408,48 +396,3 @@ impl buffer::raw::Total for Sum {
         self.resident
     }
 }
-
-impl<T: buffer::raw::Segment> From<Committed<Join<T, segments::Chain<T>>>> for segments::Chain<T> {
-    fn from(val: Committed<Join<T, segments::Chain<T>>>) -> Self {
-        val.0.first
-    }
-}
-
-impl<T: buffer::raw::Segment> From<Committed<Join<T, segments::Many<T>>>> for segments::Many<T> {
-    fn from(val: Committed<Join<T, segments::Many<T>>>) -> Self {
-        // SAFETY: successful join preserved both original Many inputs in the destination.
-        unsafe { segments::Many::new(val.0.first) }
-    }
-}
-
-impl<T: buffer::raw::Segment> From<Join<T, segments::Chain<T>>>
-    for (segments::Chain<T>, segments::Chain<T>)
-{
-    fn from(val: Join<T, segments::Chain<T>>) -> Self {
-        (val.first, val.second)
-    }
-}
-
-impl<T: buffer::raw::Segment> From<Join<T, segments::Many<T>>>
-    for (segments::Many<T>, segments::Many<T>)
-{
-    fn from(val: Join<T, segments::Many<T>>) -> Self {
-        // SAFETY: rejected preflight leaves both original Many inputs unchanged.
-        let first = unsafe { segments::Many::new(val.first) };
-        // SAFETY: this is the other unchanged input of the same rejected operation.
-        let second = unsafe { segments::Many::new(val.second) };
-        (first, second)
-    }
-}
-
-const _: () = {
-    use crate::buffer::storage::Shared;
-    assert!(
-        size_of::<Join<Shared, segments::Many<Shared>>>()
-            == 2 * size_of::<segments::Many<Shared>>()
-    );
-    assert!(
-        size_of::<Committed<Join<Shared, segments::Many<Shared>>>>()
-            == size_of::<Join<Shared, segments::Many<Shared>>>()
-    );
-};

@@ -63,7 +63,7 @@ pub unsafe trait Segment: Seal + AsRef<[u8]> + consume::Consume + buffer::Reside
 unsafe impl Segment for storage::Shared {
     unsafe fn extent(&mut self) -> &mut regions::Extent {
         // SAFETY: the caller preserves this exact owner and initialized subrange.
-        unsafe { self.region.extent_mut() }
+        unsafe { self.extent_mut() }
     }
 }
 

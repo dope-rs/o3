@@ -172,10 +172,10 @@ pub(in crate::buffer) struct Header {
 impl Header {
     pub(in crate::buffer) fn try_new<T: AsRef<[u8]> + Default + Into<vec::Vec<u8>>>(
         source: &mut T,
-    ) -> Result<regions::Value<Option<regions::Tag>>, crate::alloc::Exhausted> {
+    ) -> Result<regions::Shared<Option<regions::Tag>>, crate::alloc::Exhausted> {
         if source.as_ref().is_empty() {
             *source = T::default();
-            return Ok(regions::Value::empty(None));
+            return Ok(regions::Shared::empty(None));
         }
         let pointer =
             crate::alloc::raw::LayoutExt::try_allocate::<Header>(Layout::new::<Header>())?;
@@ -193,7 +193,7 @@ impl Header {
             mem::raw::Owner::from_raw(pointer)
         }));
         // SAFETY: the vector owner retains this exact initialized extent.
-        Ok(unsafe { regions::Value::new(owner, extent) })
+        Ok(unsafe { regions::Shared::from_extent(owner, extent) })
     }
 
     pub(in crate::buffer) fn capacity(&self) -> usize {

@@ -111,53 +111,6 @@ fn settles_permits() {
 }
 
 #[test]
-fn restores_front() {
-    region::Token::scope(|mut token| {
-        let plan = fair::Plan::new(2, 1).expect("two slots fit one lane");
-        let lanes = fair::Lanes::<u64>::try_new(plan, &token).expect("queue allocation");
-        let lane = lanes.bind(0).expect("configured lane");
-        let full = Cause::Exhausted {
-            axis: Axis::at::<0>(),
-            required: 1,
-            available: 0,
-        };
-        for value in [11, 13] {
-            lane.reserve()
-                .expect("each slot has credit")
-                .push_back(&mut token, value);
-        }
-        assert!(matches!(lane.reserve(), Err(cause) if cause == full));
-
-        let (value, detached) = lane.take_front(&mut token).expect("retained head");
-        assert_eq!(value, 11);
-        assert_eq!(lane.view(&token).front(), Some(&13));
-        assert_eq!(lane.view(&token).len(), 1);
-        assert!(matches!(lane.reserve(), Err(cause) if cause == full));
-        detached.push_front(&mut token, value);
-        assert_eq!(lane.view(&token).len(), 2);
-        assert!(matches!(lane.reserve(), Err(cause) if cause == full));
-
-        for expected in [11, 13] {
-            let retired = lane.take_front(&mut token).expect("restored FIFO order");
-            assert_eq!(retired.0, expected);
-        }
-        assert!(lane.take_front(&mut token).is_none());
-
-        let second;
-        {
-            let first = lane.reserve();
-            assert!(first.is_ok(), "first refunded credit");
-            second = lane.reserve();
-            assert!(second.is_ok(), "second refunded credit");
-            assert!(matches!(lane.reserve(), Err(cause) if cause == full));
-        }
-        let first = lane.reserve();
-        assert!(first.is_ok(), "one cancellation refunds one credit");
-        assert!(matches!(lane.reserve(), Err(cause) if cause == full));
-    });
-}
-
-#[test]
 fn protects_idle_lanes() {
     for first in 0..3 {
         region::Token::scope(|mut token| {

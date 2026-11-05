@@ -294,7 +294,7 @@ impl<O: Unpin> Source for storage::Shared<O> {
     where
         Self: 'input;
     fn remaining(&self) -> usize {
-        self.region.len()
+        self.len()
     }
 }
 impl<O: Unpin> Cursor for storage::Shared<O> {

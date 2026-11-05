@@ -1,4 +1,4 @@
-use crate::depot::{array::Index, queue::links};
+use crate::depot::array::Index;
 pub(in crate::depot) mod reserved;
 use std::{mem, num::NonZero};
 
@@ -10,7 +10,7 @@ use crate::depot::{
     },
 };
 
-/// Actual distinct vacancies retained under their allocation's exclusive borrow.
+/// N vacancies admitted under one exclusive allocation borrow.
 pub struct Batch<
     'a,
     T,
@@ -87,12 +87,7 @@ impl<'a, T, Tag, const LANES: usize, const MAX: u32, C: crate::depot::raw::Count
 }
 
 const _: () = {
-    assert!(mem::size_of::<Batch<'static, u64, (), 1, 1>>() == 2 * mem::size_of::<usize>());
-    assert!(
-        mem::size_of::<Batch<'static, u64, (), 1, 3>>()
-            == (mem::size_of::<usize>() + 3 * mem::size_of::<links::Index>())
-                .next_multiple_of(mem::align_of::<usize>())
-    );
+    assert!(mem::size_of::<Batch<'static, u64, (), 1, 3>>() == mem::size_of::<usize>());
     assert!(
         mem::size_of::<Option<Batch<'static, u64, (), 1, 3>>>()
             == mem::size_of::<Batch<'static, u64, (), 1, 3>>()

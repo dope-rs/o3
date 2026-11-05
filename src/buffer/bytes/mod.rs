@@ -66,7 +66,7 @@ impl<'a, 'pool> Cursor<'a, 'pool> {
         let len = self.target.len();
         let target = &mut *self.target;
         // SAFETY: the transaction tracks a consumed prefix of this unchanged owner.
-        unsafe { target.region.restrict(self.consumed..len) };
+        unsafe { target.restrict(self.consumed..len) };
         if target.is_empty() {
             *self.target = storage::Shared::empty(owners::Edge::NONE);
         }

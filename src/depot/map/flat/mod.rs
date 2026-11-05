@@ -1,11 +1,11 @@
 use std::{marker, mem};
 
-pub use entry::Entry;
-
 use crate::{alloc, base::marker::ThreadBound, depot::map};
 
-mod entry;
 pub mod errors;
+
+pub type Entry<'a, V> =
+    map::Entry<map::Found<&'a mut Table<V>>, map::Vacancy<&'a mut Table<V>, u64>>;
 
 pub struct Table<V> {
     pub(in crate::depot::map::flat) table: map::raw::Table<V>,
@@ -35,10 +35,7 @@ impl<V> Table<V> {
     ) -> (Entry<'_, V>, C) {
         let (table, context) = source.into_inner();
         // SAFETY: the consumed admission retains logical and directory capacity.
-        let entry = match unsafe { map::raw::Probe::spare(table, hash, matches) } {
-            map::Entry::Occupied(entry) => Entry::Occupied(entry),
-            map::Entry::Vacant(entry) => Entry::Vacant(entry),
-        };
+        let entry = unsafe { map::raw::Probe::spare(table, hash, matches) };
         (entry, context)
     }
 

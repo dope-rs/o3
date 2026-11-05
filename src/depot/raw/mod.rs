@@ -101,7 +101,7 @@ pub unsafe trait Word: Copy + Eq {
 }
 
 pub(in crate::depot) use hooks::{
-    Detach, EndpointHook, EndpointWord, Insert, Membership, Neighbor, Pop, Relink, Removal, Splice,
+    Detach, EndpointHook, EndpointWord, Insert, Membership, Neighbor, Pop, Removal, Splice,
 };
 pub(crate) use proof::{Present, Slot};
 mod arena;
