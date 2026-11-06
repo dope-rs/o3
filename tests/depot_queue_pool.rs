@@ -179,10 +179,16 @@ fn reuses_bound_lane() {
     let mut lanes = pool::Lanes::<u64, u64>::try_new(plan).expect("allocated lanes");
     let ((), delta) = Tracker::measure(|| {
         let mut lane = lanes.try_bind_mut(1).expect("last lane");
-        for value in [3, 5, 7] {
+        let (vacant, state) = lane.borrow_mut().reserve();
+        *state = 10;
+        vacant.expect("free node").append(3);
+        for value in [5, 7] {
             lane.push_back(value).expect("free node");
         }
-        *lane.state_mut() = 11;
+        let (vacant, state) = lane.borrow_mut().reserve();
+        assert!(vacant.is_none());
+        *state += 1;
+        drop(vacant);
         let mut front = lane.borrow_mut().front_entry().expect("nonempty lane");
         let (value, state) = front.parts_mut();
         *value += *state;

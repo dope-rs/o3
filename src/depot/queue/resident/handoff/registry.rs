@@ -35,7 +35,8 @@ impl<W, G, L> Registry<W, G, L> {
     }
 
     /// Takes the next value in drain order and ends draining at quiescence.
-    pub fn drain_next(&self) -> resident::Drain<W> {
+    #[must_use = "a drained item remains caller-owned"]
+    pub fn drain_next(&self) -> Option<W> {
         self.draining
             .drain(|| Some(self.lanes.take::<false>()?.take_value()))
     }

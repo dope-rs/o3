@@ -79,7 +79,7 @@ impl<L, B> Limit<pool::Cursor<L>, B> {
     }
 }
 
-impl<'pool, L, B> Limit<pool::Cursor<L, pool::Borrowed<'pool>>, B> {
+impl<'pool, L, B> Limit<pool::Span<owners::Plain<L>, pool::Borrowed<'pool>>, B> {
     pub fn try_borrow(
         pool: &'pool pool::Pool<state::Uninit, owners::Plain<L>>,
         bytes: usize,
@@ -88,7 +88,7 @@ impl<'pool, L, B> Limit<pool::Cursor<L, pool::Borrowed<'pool>>, B> {
         if let Err(error) = Error::check(bytes, pool.capacity().get() as usize) {
             return Err((brand, pool::Error::Capacity(error)));
         }
-        let Some(target) = pool.view() else {
+        let Some(target) = pool.borrow() else {
             return Err((brand, pool::Error::Empty));
         };
         Ok(Self {
@@ -96,6 +96,18 @@ impl<'pool, L, B> Limit<pool::Cursor<L, pool::Borrowed<'pool>>, B> {
             remaining: bytes as u32,
             brand,
         })
+    }
+
+    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), Error> {
+        let input = owners::Measured::slice(src);
+        Error::check(input.len(), self.remaining as usize)?;
+        self.remaining -= input.len() as u32;
+        pool::Append {
+            target: &mut self.target,
+            input,
+        }
+        .commit();
+        Ok(())
     }
 }
 

@@ -1,6 +1,6 @@
 use std::{mem, num, ptr};
 
-use crate::depot::array;
+use crate::{base::num::bounded, depot::array};
 
 /// One position in a fixed array domain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,6 +103,13 @@ impl<const N: usize> Index<N> {
 
     pub const fn index(self) -> usize {
         self.0.get() as usize - 1
+    }
+
+    /// Converts this position without checking its retained bound again.
+    pub const fn into_u32<const MAX: u32>(self) -> bounded::U32<0, MAX> {
+        const { assert!(N <= u8::MAX as usize && N <= MAX as usize + 1) };
+        // SAFETY: Index retains a value below N, and const admission bounds it by MAX.
+        unsafe { bounded::raw::u32(self.index() as u32) }
     }
 
     pub fn get<T>(self, values: &[T; N]) -> &T {

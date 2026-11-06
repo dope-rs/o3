@@ -20,7 +20,7 @@ mod input;
 pub struct Store<T> {
     pub(crate) region: Region<T>,
     pub(super) free: cell::Cell<u32>,
-    pub(super) available: cell::Cell<u32>,
+    pub(in crate::depot) available: cell::Cell<u32>,
     ownership: marker::PhantomData<T>,
 }
 

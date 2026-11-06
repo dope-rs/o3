@@ -2,7 +2,7 @@ pub(in crate::buffer::segments) mod sequence;
 use std::{marker, mem, num, ops};
 
 use many::Many;
-use segments::{Front, Handle, Pool, Push};
+use segments::{Front, Handle, Pool};
 use storage::alloc;
 
 use crate::{
@@ -19,16 +19,6 @@ use crate::{
 pub(in crate::buffer::segments) mod front;
 pub(in crate::buffer::segments) mod many;
 pub(in crate::buffer::segments) mod single;
-
-impl<T: buffer::raw::Segment, H: Handle<T>> Chain<T, H> {
-    pub fn try_insert(
-        &mut self,
-        item: segments::Item<T>,
-    ) -> Result<Front<'_, T, H>, crate::mem::Rejected<segments::Item<T>, segments::Error>> {
-        edit::Insert::try_new(self, item, edit::Back)?.commit();
-        Ok(Front { sequence: self })
-    }
-}
 
 impl<T: buffer::raw::Segment> buffer::raw::Assemble<T> for Chain<T> {
     fn finish<S: buffer::raw::Sequence<T, Output = Self>>(input: segments::Built<T, S>) -> Self {
@@ -212,16 +202,16 @@ impl<T: buffer::raw::Segment, H: Handle<T>> Chain<T, H> {
         segments::Front::new(self)
     }
 
+    /// Returns an empty owner unchanged, or None after insertion.
     pub fn try_push(
         &mut self,
         value: T,
-    ) -> Result<Push<T>, crate::mem::Rejected<T, segments::Error>> {
+    ) -> Result<Option<T>, crate::mem::Rejected<segments::Item<T>, segments::Error>> {
         let item = match segments::Item::new(value) {
             ops::ControlFlow::Continue(item) => item,
-            ops::ControlFlow::Break(value) => return Ok(Push::Discarded(value)),
+            ops::ControlFlow::Break(value) => return Ok(Some(value)),
         };
-        self.try_insert(item)?;
-        Ok(Push::Loaded)
+        self.try_insert(item).map(|_| None)
     }
 
     pub(in crate::buffer::segments) fn pop_item(&mut self) -> Option<segments::Item<T>> {

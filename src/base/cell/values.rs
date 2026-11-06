@@ -5,14 +5,7 @@ use crate::base::cell::{Sealed, brand, region};
 /// Exclusive access issued only by a generative scope.
 #[repr(transparent)]
 pub(in crate::base::cell) struct Token<B: Sealed> {
-    proof: Proof<B>,
-}
-
-/// Invariant identity without access permission.
-#[derive(Clone, Copy, Debug)]
-#[repr(transparent)]
-pub(in crate::base::cell) struct Proof<B: Sealed> {
-    brand: marker::PhantomData<B>,
+    proof: marker::PhantomData<B>,
 }
 
 /// One cell whose access permission belongs to exactly one brand.
@@ -26,14 +19,8 @@ pub(in crate::base::cell) struct Value<B: Sealed, T> {
 impl<B: Sealed> Token<B> {
     pub(in crate::base::cell) const fn new() -> Self {
         Self {
-            proof: Proof {
-                brand: marker::PhantomData,
-            },
+            proof: marker::PhantomData,
         }
-    }
-
-    pub(in crate::base::cell) const fn proof(&self) -> Proof<B> {
-        self.proof
     }
 
     pub(in crate::base::cell) fn borrow<'a, T>(&'a self, value: &'a Value<B, T>) -> &'a T {
@@ -69,11 +56,11 @@ impl<B: brand::Brand> brand::Token<B> {
     }
 }
 
-impl<B: Sealed> Proof<B> {
-    pub(in crate::base::cell) const fn bind<T>(self, value: T) -> Value<B, T> {
-        Value {
+impl<B: Sealed, T> Value<B, T> {
+    pub(in crate::base::cell) const fn new(value: T) -> Self {
+        Self {
             value: cell::UnsafeCell::new(value),
-            brand: self.brand,
+            brand: marker::PhantomData,
         }
     }
 }

@@ -117,7 +117,17 @@ impl<const EXACT: bool> write::Sink for Writer<'_, '_, EXACT> {
     type Error = Error;
 
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
-        write::Staging::try_new(self, slices).map(buffer::raw::Copy::copy)
+        use buffer::raw::SliceExt as _;
+
+        let len = Error::checked_end(0, buffer::raw::Space::remaining(self), &slices)?;
+        let (target, start) = self.suffix();
+        // SAFETY: admission retains every source and its exclusive suffix;
+        // copying them initializes exactly the bytes published to this writer.
+        unsafe {
+            slices.copy_to(target.add(start));
+            self.extend(len);
+        }
+        Ok(())
     }
 }
 

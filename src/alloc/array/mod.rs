@@ -83,7 +83,7 @@ impl<T, E: alloc::raw::Extent, S> array::Block<mem::MaybeUninit<T>, E, S> {
     ) -> Result<array::Block<T, E, S>, F> {
         let source = iter::repeat_n((), self.plan.extent().len());
         // SAFETY: this source yields exactly the retained allocation's extent.
-        unsafe { alloc::raw::AssumeInit::try_map(self, source, move |slot, ()| make(slot)) }
+        unsafe { alloc::raw::try_map(self, source, move |slot, ()| make(slot)) }
     }
 
     /// Initializes every element without requiring its storage index.
@@ -141,7 +141,7 @@ impl<T> Block<T, usize, ()> {
         // SAFETY: the retained slice supplies exactly the same element type,
         // count and order as the allocation planned from this source.
         unsafe {
-            alloc::raw::AssumeInit::try_map(block, source.iter(), move |slot, item| {
+            alloc::raw::try_map(block, source.iter(), move |slot, item| {
                 Ok(slot.insert(make(item)?))
             })
         }
@@ -149,7 +149,12 @@ impl<T> Block<T, usize, ()> {
 
     /// Transfers the initialized allocation without copying its elements.
     pub fn into_vec(self) -> Vec<T> {
-        alloc::raw::into_vec(self)
+        let block = mem::ManuallyDrop::new(self);
+        let len = *block.extent();
+        // SAFETY: the consumed block owns exactly len initialized T values in
+        // the standard allocator's matching array layout. Its unit state has
+        // no drop obligation; empty and zero-sized arrays retain aligned storage.
+        unsafe { Vec::from_raw_parts(block.pointer.as_ptr(), len, len) }
     }
 }
 
@@ -185,7 +190,7 @@ impl<T, E: alloc::raw::Extent, S> Drop for Block<T, E, S> {
 impl<T, E: alloc::raw::Extent, S> array::Block<mem::MaybeUninit<T>, E, S> {
     /// # Safety
     /// Every element is initialized and this owner retains its exact drop obligation.
-    pub(in crate::alloc) unsafe fn assume_init(self) -> array::Block<T, E, S> {
+    pub(crate) unsafe fn assume_init(self) -> array::Block<T, E, S> {
         let block = mem::ManuallyDrop::new(self);
         array::Block {
             plan: block.plan.initialized(),

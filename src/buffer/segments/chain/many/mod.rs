@@ -132,7 +132,9 @@ impl<T: buffer::raw::Segment> Many<T> {
         buffer::raw::Linked::metadata(View(self))
     }
 
-    fn edit(&mut self) -> edit::Multi<'_, T, segments::Pool<T>> {
+    pub(in crate::buffer::segments::chain) fn edit(
+        &mut self,
+    ) -> edit::Multi<'_, T, segments::Pool<T>> {
         let sequence = &mut self.0;
         // SAFETY: Many exclusively retains this multi key and at least two initialized items.
         let index = unsafe { sequence.key.multi_index() };
@@ -156,25 +158,22 @@ impl<T: buffer::raw::Segment> TryFrom<(segments::Item<T>, segments::Item<T>)> fo
                 ));
             }
         };
-        let source = buffer::raw::Batch {
-            owners: [first, second],
-            total: growth,
-        };
-        Ok(Exact::try_new(source)?.collect())
+        Ok(Exact::try_new((first, second, growth))?.collect())
     }
 }
 
 impl<T: buffer::raw::Segment> TryFrom<(Many<T>, segments::Item<T>)> for Many<T> {
     type Error = crate::mem::Rejected<(Many<T>, segments::Item<T>), assembly::Error>;
     fn try_from(source: (Many<T>, segments::Item<T>)) -> Result<Self, Self::Error> {
-        Self::try_append(source.0, source.1)
+        Self::try_insert::<false>(source.0, source.1)
     }
 }
 
 impl<T: buffer::raw::Segment> TryFrom<(segments::Item<T>, Many<T>)> for Many<T> {
     type Error = crate::mem::Rejected<(segments::Item<T>, Many<T>), assembly::Error>;
     fn try_from(source: (segments::Item<T>, Many<T>)) -> Result<Self, Self::Error> {
-        Self::try_prepend(source.1, source.0)
+        Self::try_insert::<true>(source.1, source.0)
+            .map_err(|error| error.map(|(chain, item)| (item, chain)))
     }
 }
 
@@ -194,12 +193,12 @@ unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T> for &Many<T> {
     type Output = Many<T>;
     type Item = Result<segments::Item<T>, rc::Error>;
     type Error = crate::alloc::Error;
-    fn owners(self) -> impl Iterator<Item = Self::Item> + buffer::raw::Total {
+    fn owners(self) -> (impl Iterator<Item = Self::Item>, impl buffer::raw::Total) {
         let mut owners = self.0.segments();
-        buffer::raw::Batch {
-            owners: iter::from_fn(move || owners.next_item()).map(segments::Item::try_clone),
-            total: self,
-        }
+        (
+            iter::from_fn(move || owners.next_item()).map(segments::Item::try_clone),
+            self,
+        )
     }
 
     fn reject(self, error: crate::alloc::Error) -> Self::Error {

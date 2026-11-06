@@ -1,15 +1,6 @@
 use std::pin::Pin;
 
-use o3::base::{
-    cell::{brand, local},
-    marker::ThreadBound,
-};
-
-#[test]
-fn keeps_marker_layout() {
-    assert_eq!(std::mem::size_of::<ThreadBound>(), 0);
-    assert_eq!(std::mem::align_of::<ThreadBound>(), 1);
-}
+use o3::base::cell::{brand, local};
 
 #[test]
 fn borrows_branded_regions() {

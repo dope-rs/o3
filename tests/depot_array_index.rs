@@ -25,6 +25,7 @@ fn retains_fixed_domain() {
     for (offset, index) in array::Index::<255>::iter().rev().enumerate() {
         assert_eq!(index.index(), 254 - offset);
         assert_eq!(index.widen::<255>().index(), index.index());
+        assert_eq!(index.into_u32::<254>().into_usize(), index.index());
     }
     let values = [0, 2, 4];
     for end in array::Index::<4>::iter() {

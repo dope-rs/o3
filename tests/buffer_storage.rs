@@ -340,48 +340,13 @@ fn compact_retries() {
             assert_eq!(resized[3] - resized[1], 9);
             assert_eq!((owner.capacity(), budget.resident()), (7, 7));
             let pointer = owner.as_ptr();
-            let (result, activity) = Tracker::measure(|| owner.try_freeze());
-            let exact = result.expect("the compacted owner is fully initialized");
-            assert_eq!(exact.bytes(), 7);
+            let (shared, activity) = Tracker::measure(|| owner.freeze());
             assert_eq!(activity, [0; 4]);
             let ((), freed) = Tracker::measure(move || {
-                assert_eq!(exact.as_slice(), b"payload");
-                assert_eq!(exact.as_slice().as_ptr(), pointer);
+                assert_eq!(shared.as_slice(), b"payload");
+                assert_eq!(shared.as_slice().as_ptr(), pointer);
             });
             assert_eq!((freed[0], freed[2], freed[3]), (0, 1, resized[1]));
-            assert_eq!(budget.resident(), 0);
-        })
-        .expect("resident test domain must admit its budget");
-}
-
-#[test]
-fn preserves_partial_owner() {
-    Capacity(8)
-        .try_scope(|budget| {
-            let mut owner =
-                (storage::Owned::try_allocate(&budget, 8)).expect("the owner must fit the budget");
-            let mut spare = owner.spare();
-            assert_eq!(spare.write(b"abc"), 3);
-            spare.commit();
-            let pointer = owner.as_ptr();
-            let (result, activity) = Tracker::measure(|| owner.try_freeze());
-
-            let mut owner = result.expect_err("partial initialization returns its owner");
-            assert_eq!(activity, [0; 4]);
-            assert_eq!(owner.as_ptr(), pointer);
-            assert_eq!(&owner[..], b"abc");
-            assert_eq!((owner.capacity(), budget.resident()), (8, 8));
-            let mut spare = owner.spare();
-            assert_eq!(spare.write(b"defgh"), 5);
-            spare.commit();
-            let (result, activity) = Tracker::measure(|| owner.try_freeze());
-            {
-                let exact = result.expect("the completed owner is fully initialized");
-                assert_eq!(activity, [0; 4]);
-                assert_eq!(exact.as_slice(), b"abcdefgh");
-                assert_eq!(exact.as_slice().as_ptr(), pointer);
-                assert_eq!(budget.resident(), 8);
-            }
             assert_eq!(budget.resident(), 0);
         })
         .expect("resident test domain must admit its budget");

@@ -40,7 +40,6 @@ unsafe impl<'data> buffer::raw::Scatter<'data> for Cursor<'data> {
     unsafe fn advance<const MAX: usize>(
         &mut self,
         cap: NonZero<usize>,
-        _left: NonZero<usize>,
     ) -> buffer::raw::Chunk<'data, MAX> {
         let len = self.current.len().min(cap.get());
         let (bytes, suffix) = self.current.split_at(len);

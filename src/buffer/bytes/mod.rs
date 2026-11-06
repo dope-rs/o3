@@ -61,16 +61,6 @@ impl<'a, 'pool> Cursor<'a, 'pool> {
             consumed: 0,
         }
     }
-
-    pub fn commit(self) {
-        let len = self.target.len();
-        let target = &mut *self.target;
-        // SAFETY: the transaction tracks a consumed prefix of this unchanged owner.
-        unsafe { target.restrict(self.consumed..len) };
-        if target.is_empty() {
-            *self.target = storage::Shared::empty(owners::Edge::NONE);
-        }
-    }
 }
 
 impl<'pool> buffer::Source for Cursor<'_, 'pool> {

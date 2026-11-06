@@ -33,11 +33,17 @@ impl<'a, T, const G: usize, const N: usize> Slot<'a, T, G, N> {
         self.index.is_linked(&node.hook)
     }
 
+    pub(in crate::depot::queue::round) fn linked_lane(&self) -> Option<links::Index> {
+        self.is_linked().then(|| {
+            // SAFETY: this admitted slot retains its original ownership cell;
+            // linked membership records a lane admitted against this same owner.
+            unsafe { self.owner.block.values().get_unchecked(self.index.get()) }.get()
+        })
+    }
+
     /// Removes the resident from its current lane, if any.
     pub fn clear(&self) -> &'a T {
-        let node = unsafe { self.owner.block.as_ref().get_unchecked(self.index.get()) };
-        if self.index.is_linked(&node.hook) {
-            let lane = unsafe { self.owner.block.values().get_unchecked(self.index.get()) }.get();
+        if let Some(lane) = self.linked_lane() {
             return round::Location::<_, round::Linked>::new(
                 self.owner,
                 round::Position {

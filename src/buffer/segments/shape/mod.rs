@@ -28,7 +28,7 @@ impl<T: buffer::raw::Segment> Shape<T> {
     pub fn count(&self) -> Count {
         match self {
             Self::Empty => Count::EMPTY,
-            Self::One(owner) => owner.count(),
+            Self::One(_) => Count::ONE,
             Self::Many(owners) => buffer::raw::Total::count(&owners),
         }
     }

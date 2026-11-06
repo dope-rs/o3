@@ -80,7 +80,6 @@ unsafe impl<'a, T: buffer::raw::Segment> buffer::raw::Scatter<'a> for Cursor<'a,
     unsafe fn advance<const MAX: usize>(
         &mut self,
         cap: NonZero<usize>,
-        _left: NonZero<usize>,
     ) -> buffer::raw::Chunk<'a, MAX> {
         if self.current.is_empty() {
             // SAFETY: positive remaining bytes and an exhausted current span
@@ -93,8 +92,8 @@ unsafe impl<'a, T: buffer::raw::Segment> buffer::raw::Scatter<'a> for Cursor<'a,
         let (bytes, suffix) = self.current.split_at(len.get());
         self.current = suffix;
         self.remaining -= len.get();
-        // SAFETY: the retained item proves nonemptiness; cap and left preserve
-        // the caller's byte bound and the source's exact progress.
+        // SAFETY: the retained item proves nonemptiness; the admitted cap
+        // preserves the caller's byte bound and the source's exact progress.
         unsafe { buffer::raw::Chunk::new(bytes) }
     }
 }

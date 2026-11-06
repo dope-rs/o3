@@ -1,4 +1,4 @@
-use std::marker;
+use std::{marker, mem};
 
 /// Public zero-sized proof of constructing-thread confinement.
 #[repr(transparent)]
@@ -12,3 +12,8 @@ impl ThreadBound {
         marker: marker::PhantomData,
     };
 }
+
+const _: () = {
+    assert!(mem::size_of::<ThreadBound>() == 0);
+    assert!(mem::align_of::<ThreadBound>() == 1);
+};

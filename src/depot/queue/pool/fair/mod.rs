@@ -130,10 +130,10 @@ impl<'a, 'd, T, S> Binding<'a, 'd, T, S> {
     pub fn reserve(self) -> Result<Permit<'a, 'd, T, S>, fair::Cause<usize>> {
         let state = self.state();
         let held = state.held.get();
-        let shared = self.owner.shared.get();
-        let balance = crate::mem::raw::Balance::new([held.raw()], [shared.raw()]);
+        let shared = self.owner.inner.store.available.get();
+        let balance = crate::mem::raw::Balance::new([held.raw()], [shared]);
         let [required] = balance.demand([1], [1]);
-        if required > shared.raw() {
+        if required > shared {
             return Err(fair::Cause::Exhausted {
                 axis: fair::Axis::at::<0>(),
                 required: 1,
@@ -146,7 +146,7 @@ impl<'a, 'd, T, S> Binding<'a, 'd, T, S> {
         let balance = unsafe { balance.acquire_raw([1], [1]) };
         let ([held], [shared]) = balance.into_parts();
         state.held.set(capacity::Count::new(held));
-        self.owner.shared.set(capacity::Count::new(shared));
+        self.owner.inner.store.available.set(shared);
         Ok(Permit::new(self))
     }
 
@@ -258,15 +258,14 @@ impl<T, S> Return for Refund<'_, '_, T, S> {
         let binding = self.binding;
         let state = binding.state();
         let held = state.held.get();
-        let shared = binding.owner.shared.get();
+        let shared = binding.owner.inner.store.available.get();
         // SAFETY: this affine refund owns exactly one held unit in the original
         // lane. Returning it cannot exceed the allocation's shared capacity.
-        let balance = unsafe {
-            crate::mem::raw::Balance::new([held.raw()], [shared.raw()]).release_raw([1], [1])
-        };
+        let balance =
+            unsafe { crate::mem::raw::Balance::new([held.raw()], [shared]).release_raw([1], [1]) };
         let ([held], [shared]) = balance.into_parts();
         state.held.set(capacity::Count::new(held));
-        binding.owner.shared.set(capacity::Count::new(shared));
+        binding.owner.inner.store.available.set(shared);
     }
 }
 

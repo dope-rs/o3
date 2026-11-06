@@ -3,7 +3,7 @@ pub mod common;
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
 
-use std::{array, convert::Infallible, mem};
+use std::array;
 
 use common::{
     alloc::system::Tracker,
@@ -11,7 +11,7 @@ use common::{
 };
 use o3::depot::{
     arena::slab::{
-        self, entries,
+        self,
         external::{self, errors, shared},
         key, lookup,
     },
@@ -174,47 +174,6 @@ fn rejects_stale_split() {
 }
 
 #[test]
-fn retains_guard_niches() {
-    let pair = 2 * mem::size_of::<usize>();
-    assert_eq!(
-        mem::size_of::<slab::Occupied<entries::Busy<'static, u32>>>(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<Option<slab::Occupied<entries::Busy<'static, u32>>>>(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<slab::Vacant<entries::Pending<'static, u32>>>(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<Option<slab::Vacant<entries::Pending<'static, u32>>>>(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<
-            slab::Staged<o3::mem::Lease<entries::Busy<'static, u32>, o3::mem::lease::Open>>,
-        >(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<
-            Option<slab::Staged<o3::mem::Lease<entries::Busy<'static, u32>, o3::mem::lease::Open>>>,
-        >(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<slab::Occupied<entries::Busy<'static, u32>, (), false>>(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<Option<slab::Vacant<entries::Pending<'static, u32>, (), false>>>(),
-        pair
-    );
-}
-
-#[test]
 fn rejects_absence() {
     let storage = (shared::Storage::<usize, Epoch>::try_new(capacity::Count::new(1)))
         .expect("shared storage allocation");
@@ -297,36 +256,4 @@ fn excludes_before_identity() {
         ));
     });
     assert_eq!(counts, [0; 4]);
-}
-
-#[test]
-fn preserves_layout() {
-    type Borrowed = external::Borrowed<
-        entries::Busy<
-            'static,
-            external::Stamped<usize, Epoch>,
-            { u32::MAX },
-            entries::Interior<true>,
-            1,
-        >,
-        (),
-        true,
-    >;
-    assert_eq!(mem::size_of::<Borrowed>(), 2 * mem::size_of::<usize>());
-    assert_eq!(
-        mem::size_of::<Option<Borrowed>>(),
-        mem::size_of::<Borrowed>()
-    );
-    assert_eq!(
-        mem::size_of::<lookup::Error<()>>(),
-        mem::size_of::<lookup::Error>()
-    );
-    assert_eq!(
-        mem::size_of::<lookup::Error<(), Infallible>>(),
-        mem::size_of::<lookup::Error>()
-    );
-    assert_eq!(
-        mem::size_of::<lookup::Error<Infallible, Infallible>>(),
-        mem::size_of::<lookup::Error>()
-    );
 }

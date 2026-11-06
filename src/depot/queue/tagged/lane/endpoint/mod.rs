@@ -215,12 +215,9 @@ impl<T, C: crate::depot::raw::Count, L: crate::depot::raw::Count, H: tagged::raw
         }
         // SAFETY: the retained lane owner proved this initialized hook's bound.
         let index = unsafe { links::Index::new_usize(index) };
-        if unsafe { depot::raw::LaneStore::nodes(self.as_ref()).get_unchecked(index.get()) }
-            .hook
-            .is_linked(index)
-        {
-            let node =
-                unsafe { depot::raw::LaneStore::nodes(self.as_ref()).get_unchecked(index.get()) };
+        let node =
+            unsafe { depot::raw::LaneStore::nodes(self.as_ref()).get_unchecked(index.get()) };
+        if node.hook.is_linked(index) {
             return Ok(State::Occupied(unsafe {
                 (*node.value.get()).assume_init_ref()
             }));

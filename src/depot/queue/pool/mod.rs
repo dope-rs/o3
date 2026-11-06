@@ -2,7 +2,7 @@
 
 use std::mem;
 
-pub use lane::{Lane, front::Front, vacancy::Vacancy, view::View};
+pub use lane::{Lane, front::Front, view::View};
 pub use lanes::Lanes;
 pub use missing::Missing;
 

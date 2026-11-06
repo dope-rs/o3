@@ -8,6 +8,14 @@ const _: () = {
     assert!(std::mem::size_of::<Block<usize, usize>>() == std::mem::size_of::<usize>());
     assert!(std::mem::size_of::<Option<Block<usize, usize>>>() == std::mem::size_of::<usize>());
     assert!(std::mem::size_of::<View<'static, usize, usize>>() == std::mem::size_of::<usize>());
+    assert!(std::mem::size_of::<Uninit<usize, usize>>() == 2 * std::mem::size_of::<usize>());
+    assert!(
+        std::mem::size_of::<Option<Uninit<usize, usize>>>() == 2 * std::mem::size_of::<usize>()
+    );
+    assert!(
+        std::mem::size_of::<Result<Plan<usize, usize>, crate::alloc::Overflow>>()
+            == 2 * std::mem::size_of::<usize>()
+    );
 };
 
 mod block;

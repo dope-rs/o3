@@ -127,7 +127,7 @@ fn consume_own_prefix() {
 
 #[test]
 fn commit_or_cancel_pooled() {
-    use buffer::{Cursor as _, bytes, pool};
+    use buffer::{Cursor as _, bytes, pool, write::consume::Consume as _};
 
     let pool = (pool::Pool::try_new(1, 16)).expect("pooled source allocation");
     let mut writer = (pool.view()).expect("one free pooled slot");
@@ -153,9 +153,13 @@ fn commit_or_cancel_pooled() {
                 cursor.commit();
             }
         }
+        assert_eq!(source.as_slice(), b"cdef");
+        let mut cursor = bytes::Cursor::new(&mut source);
+        cursor.consume_max(usize::MAX);
+        cursor.commit();
     });
     assert!(activity == Activity::default());
-    assert_eq!(source.as_slice(), b"cdef");
+    assert!(pool.view().is_some());
 }
 
 #[test]

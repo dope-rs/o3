@@ -51,21 +51,6 @@ impl<const MAX: u32> Limit<MAX> {
     pub(crate) const fn min(self) -> Generation<MAX> {
         Generation(NonZero::<u32>::MIN, self)
     }
-
-    const fn contains(raw: u32) -> bool {
-        raw != 0 && raw <= MAX
-    }
-
-    pub(crate) const fn check(self, raw: u32) -> Option<Generation<MAX>> {
-        if !Self::contains(raw) {
-            return None;
-        }
-        // SAFETY: the exact generation bounds above exclude zero.
-        Some(Generation(
-            unsafe { NonZero::<u32>::new_unchecked(raw) },
-            self,
-        ))
-    }
 }
 
 impl<const MAX: u32> Generation<MAX> {
@@ -82,8 +67,10 @@ impl<const MAX: u32> Generation<MAX> {
 
     #[must_use]
     pub const fn checked_add(self, value: u32) -> Option<Self> {
-        let (raw, overflow) = self.0.get().overflowing_add(value);
-        if overflow { None } else { self.1.check(raw) }
+        match self.0.checked_add(value) {
+            Some(next) if next.get() <= MAX => Some(Self(next, self.1)),
+            _ => None,
+        }
     }
 }
 
@@ -107,12 +94,11 @@ impl<const MAX: u32> Parts<MAX> {
     #[must_use]
     pub const fn from_raw(raw: NonZero<u64>) -> Option<Self> {
         let epoch = (raw.get() >> 32) as u32;
-        if !Limit::<MAX>::contains(epoch) {
+        if epoch == 0 || epoch > MAX {
             return None;
         }
-        // SAFETY: the shared generation predicate above excludes zero.
-        let epoch = Generation(unsafe { NonZero::<u32>::new_unchecked(epoch) }, Limit::NEW);
-        Some(Self::new(raw.get() as u32, epoch))
+        let _ = Limit::<MAX>::NEW;
+        Some(Self { raw })
     }
 
     pub const fn into_raw(self) -> NonZero<u64> {

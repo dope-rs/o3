@@ -26,7 +26,6 @@ use o3::{
     },
 };
 
-type FixedOwned = Owned<(), BLOCK_CAPACITY>;
 const FIXED_CAPACITY: usize = BLOCK_CAPACITY as usize;
 
 #[test]
@@ -67,7 +66,7 @@ fn preserves_nonempty_owner() {
 
 #[test]
 fn copies_and_freezes() {
-    let mut owned = (FixedOwned::try_new()).expect("the fixed test buffer must allocate");
+    let mut owned = Owned::try_with(FIXED_CAPACITY).expect("the fixed test buffer must allocate");
     owned
         .try_extend(b"fixed block")
         .expect("required fixture outcome");
@@ -108,43 +107,9 @@ fn shares_large_vec() {
 }
 
 #[test]
-fn commits_spare() {
-    let mut owned = (FixedOwned::try_new()).expect("the fixed test buffer must allocate");
-    owned.try_extend(b"xyz").expect("existing prefix");
-    let pointer = owned.as_ptr();
-    {
-        let mut spare = owned.spare();
-        spare.spare_capacity_mut()[0].write(b'!');
-        // SAFETY: the first staged byte is initialized and no external access remains.
-        unsafe { spare.set_len(1) };
-    }
-    assert_eq!(owned.as_slice(), b"xyz");
-
-    let mut writer = owned.spare();
-    writer.write_slice(b"r").expect("staged prefix");
-    let output = o3::buffer::bytes::bounded::Value::try_from(writer.spare_capacity_mut())
-        .expect("native read extent")
-        .into_inner();
-    assert_eq!(
-        (output.as_ptr().cast::<u8>(), output.len()),
-        (pointer.wrapping_add(4), FIXED_CAPACITY - 4)
-    );
-    output[0].write(b'a');
-    output[1].write(b'w');
-    // SAFETY: the first three staged bytes are initialized and external access has ended.
-    unsafe {
-        writer.set_len(3);
-        writer.set_len(2);
-    }
-    assert_eq!(writer.len(), 2);
-    writer.commit();
-    assert_eq!(owned.as_slice(), b"xyzra");
-}
-
-#[test]
 fn fills_fixed_capacity() {
     let bytes = vec![b'x'; FIXED_CAPACITY];
-    let mut owned = (FixedOwned::try_new()).expect("the fixed test buffer must allocate");
+    let mut owned = Owned::try_with(FIXED_CAPACITY).expect("the fixed test buffer must allocate");
     owned.try_extend(&bytes).expect("required fixture outcome");
     assert_eq!(owned.len(), FIXED_CAPACITY);
 
@@ -161,7 +126,7 @@ fn fills_fixed_capacity() {
 
 #[test]
 fn rejects_oversized_write() {
-    let mut owned = (FixedOwned::try_new()).expect("the fixed test buffer must allocate");
+    let mut owned = Owned::try_with(FIXED_CAPACITY).expect("the fixed test buffer must allocate");
     owned
         .try_extend(b"prefix")
         .expect("required fixture outcome");
@@ -297,7 +262,7 @@ fn freezes_in_place() {
                 assert_eq!(allocs, 1);
                 let mut owner = (created).expect("the measured resident owner must allocate once");
                 let ptr = owner.as_ptr();
-                let (frozen, allocs) = Tracker::count(|| {
+                let (shared, allocs) = Tracker::count(|| {
                     let mut spare = owner.spare();
                     spare
                         .write_slice(b"resident")
@@ -307,17 +272,22 @@ fn freezes_in_place() {
                         .try_compact()
                         .expect("the full owner must compact in place");
                     assert_eq!(owner.capacity(), 8);
-                    owner.try_freeze()
+                    owner.freeze()
                 });
                 assert_eq!(allocs, 0);
-                let shared = frozen
-                    .map_err(|owner| owner.len())
-                    .expect("full resident owner must freeze");
                 assert_eq!(shared.as_slice().as_ptr(), ptr);
                 assert_eq!(budget.resident(), 8);
                 assert_eq!(shared.as_slice(), b"resident");
             }
             assert_eq!(budget.resident(), 0);
+
+            {
+                let owner =
+                    storage::Owned::try_allocate(&budget, 8).expect("empty resident allocation");
+                let shared = owner.freeze();
+                assert!(shared.is_empty());
+                assert_eq!(budget.resident(), 0);
+            }
 
             let mut owner = (storage::Owned::try_allocate(&budget, 8))
                 .expect("the compact-failure resident owner must allocate");

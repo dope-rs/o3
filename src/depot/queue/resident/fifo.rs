@@ -139,7 +139,8 @@ impl<W, L> Fifo<W, L> {
     }
 
     /// Takes the next value in drain order and ends draining at quiescence.
-    pub fn drain_next(&self) -> resident::Drain<W> {
+    #[must_use = "a drained item remains caller-owned"]
+    pub fn drain_next(&self) -> Option<W> {
         self.draining.drain(|| {
             let entry = self.entries.take::<false>()?;
             // SAFETY: only initialized values are linked; take removes
@@ -234,13 +235,12 @@ impl<'a, W, L> Lane<'a, W, L> {
         Ok(())
     }
 
-    pub fn take_one(self) -> resident::Take<W> {
-        let Some(entry) = self.fifo.entries.pop(self.lane) else {
-            return resident::Take::Empty;
-        };
+    #[must_use = "a taken item remains caller-owned"]
+    pub fn take_one(self) -> Option<W> {
+        let entry = self.fifo.entries.pop(self.lane)?;
         // SAFETY: pop removes one initialized linked value from this exact
         // owner; the registration keeps its now-empty slot reserved.
-        resident::Take::Item(unsafe { entry.take() })
+        Some(unsafe { entry.take() })
     }
 }
 
@@ -271,10 +271,7 @@ impl<W, L> Registration<'_, W, L> {
         if fifo.is_draining() {
             return None;
         }
-        match (Lane { fifo, lane }).take_one() {
-            resident::Take::Empty => None,
-            resident::Take::Item(value) => Some(value),
-        }
+        (Lane { fifo, lane }).take_one()
     }
 }
 

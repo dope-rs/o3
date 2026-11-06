@@ -85,29 +85,3 @@ fn compare<H, T>() {
         }
     }
 }
-
-#[test]
-fn keeps_layout() {
-    use std::mem;
-
-    assert_eq!(
-        mem::size_of::<tail::Plan<Header, u16>>(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<tail::Uninit<Header, u16>>(),
-        2 * mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<Option<tail::Plan<u32, u32>>>(),
-        2 * mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<Option<tail::Uninit<u32, u32>>>(),
-        2 * mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<Result<tail::Plan<u32, u32>, alloc::Overflow>>(),
-        2 * mem::size_of::<usize>()
-    );
-}

@@ -34,7 +34,7 @@ impl Exact {
             .try_commit()
             .map_err(|error| BuildError::Length(error.into()))?;
         spare.commit();
-        let Some(heap) = owned.bytes.allocation else {
+        let Some(heap) = owned.allocation else {
             return Ok(Self::new());
         };
         // SAFETY: the exact span completed this owner's entire uninitialized suffix.

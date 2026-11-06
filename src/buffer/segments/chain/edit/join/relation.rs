@@ -8,7 +8,7 @@ use crate::{
         segments,
         segments::{
             Key,
-            chain::edit::{Cause, join::incoming::Incoming},
+            chain::edit::{Cause, Growth, join::incoming::Incoming},
             handles,
             handles::Descriptor,
         },
@@ -25,17 +25,6 @@ pub(in crate::buffer::segments) enum Relation<'a, T> {
     /// Disjoint sequences bounded by one metadata pool.
     Same(Exclusive<'a, T>),
     Other(Exclusive<'a, T>),
-}
-
-pub(in crate::buffer::segments) struct Total<P> {
-    pub(in crate::buffer::segments::chain::edit::join) pair: P,
-    sum: Sum,
-}
-
-pub(in crate::buffer::segments) struct Sum {
-    count: NonZero<u32>,
-    len: usize,
-    resident: usize,
 }
 
 pub(in crate::buffer::segments) enum Links {
@@ -81,7 +70,8 @@ pub(in crate::buffer::segments) enum Rejected<P> {
 }
 
 pub(in crate::buffer::segments) struct Capacity<P> {
-    pub(in crate::buffer::segments::chain::edit::join) total: Total<P>,
+    pub(in crate::buffer::segments::chain::edit::join) pair: P,
+    sum: Growth,
     pub(in crate::buffer::segments::chain::edit::join) cause: Cause,
 }
 
@@ -96,7 +86,7 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
     }
 
     pub(in crate::buffer::segments) fn try_commit(self) -> Result<(), Rejected<Exclusive<'a, T>>> {
-        let (pair, state) = match self {
+        let (mut pair, state) = match self {
             Relation::Same(mut pair) => {
                 let (target, source) = &pair;
                 let links = match (target.key.state(), source.key.state()) {
@@ -145,20 +135,18 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
         };
         let len = total::Error::logical(len, bytes).map_err(Rejected::Total)?;
         let resident = total::Error::resident(resident, retained).map_err(Rejected::Total)?;
-        // SAFETY: every prepared state retains a nonempty source.
-        let mut total = Total {
-            pair,
-            sum: Sum {
-                count: unsafe { NonZero::new_unchecked(count) },
-                len,
-                resident,
-            },
+        // SAFETY: the source is nonempty. Same-store partitions are disjoint and fit
+        // physical node capacity, so their sum cannot wrap; cross-store sums are checked.
+        let sum = Growth {
+            count: unsafe { NonZero::new_unchecked(count) },
+            len,
+            resident,
         };
         let result =
             (|| {
                 match state {
                     Placement::Same(links) => {
-                        let (target, source) = &mut total.pair;
+                        let (target, source) = &mut pair;
                         let nodes = handles::nodes(&target.handle);
                         let descs = handles::descriptors(&target.handle);
                         let desc = match links {
@@ -179,9 +167,9 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                                 }
                                 let claim = claim.insert(Descriptor::new(
                                     links,
-                                    total.sum.count,
-                                    total.sum.len,
-                                    total.sum.resident,
+                                    sum.count,
+                                    sum.len,
+                                    sum.resident,
                                 ));
                                 target.key = Key::multi(claim.index());
                                 source.key = Key::EMPTY;
@@ -216,14 +204,14 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                                 desc
                             }
                         };
-                        desc.count = total.sum.count;
-                        desc.len = total.sum.len;
-                        desc.resident_bytes = total.sum.resident;
+                        desc.count = sum.count;
+                        desc.len = sum.len;
+                        desc.resident_bytes = sum.resident;
                         source.key = Key::EMPTY;
                         Ok(())
                     }
                     Placement::Other(from) => {
-                        let (target, source) = &mut total.pair;
+                        let (target, source) = &mut pair;
                         let store = handles::nodes(&target.handle);
                         let table = handles::descriptors(&target.handle);
                         let nodes = slots::Input::try_new(
@@ -235,7 +223,7 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                         )?;
                         let (mut links, output) = match target.key.state() {
                             handles::State::Empty => {
-                                let output = if total.sum.count.get() == 1 {
+                                let output = if sum.count.get() == 1 {
                                     Output::Single
                                 } else {
                                     let claim = table.vacant().ok_or(Cause::Descriptors(
@@ -273,9 +261,9 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                             Output::Multi(claim) => {
                                 let claim = claim.insert(Descriptor::new(
                                     links,
-                                    total.sum.count,
-                                    total.sum.len,
-                                    total.sum.resident,
+                                    sum.count,
+                                    sum.len,
+                                    sum.resident,
                                 ));
                                 target.key = Key::multi(claim.index());
                                 unsafe { claim.publish() };
@@ -287,7 +275,7 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
             })();
         match result {
             Ok(()) => Ok(()),
-            Err(cause) => Err(Rejected::Capacity(Capacity { cause, total })),
+            Err(cause) => Err(Rejected::Capacity(Capacity { pair, sum, cause })),
         }
     }
 }
@@ -302,16 +290,11 @@ impl<T: buffer::raw::Segment> TryFrom<(Self, Self)> for segments::Many<T> {
                 (first, second),
                 assembly::Error::Total(cause),
             )),
-            Err(Rejected::Capacity(Capacity {
-                total: Total { sum, .. },
-                cause,
-            })) => {
+            Err(Rejected::Capacity(Capacity { sum, cause, .. })) => {
                 let current = first.0.count();
                 let capacity = Capacity {
-                    total: Total {
-                        pair: (first, second),
-                        sum,
-                    },
+                    pair: (first, second),
+                    sum,
                     cause,
                 };
                 Ok(segments::Exact::try_reserve(capacity, current)?.collect())
@@ -337,20 +320,22 @@ unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
     type Item = segments::Item<T>;
     type Error = crate::mem::Rejected<(segments::Many<T>, segments::Many<T>), assembly::Error>;
 
-    fn owners(self) -> impl Iterator<Item = segments::Item<T>> + buffer::raw::Total {
-        let (first, second) = self.total.pair;
+    fn owners(
+        self,
+    ) -> (
+        impl Iterator<Item = segments::Item<T>>,
+        impl buffer::raw::Total,
+    ) {
+        let (first, second) = self.pair;
         let mut first: segments::Chain<T> = first.into();
         let mut second: segments::Chain<T> = second.into();
         let owners =
             iter::from_fn(move || first.pop_item()).chain(iter::from_fn(move || second.pop_item()));
-        buffer::raw::Batch {
-            owners,
-            total: self.total.sum,
-        }
+        (owners, self.sum)
     }
 
     fn reject(self, error: crate::alloc::Error) -> Self::Error {
-        let (first, second) = self.total.pair;
+        let (first, second) = self.pair;
         crate::mem::Rejected::new((first, second), self.cause.allocation(error))
     }
 }
@@ -359,24 +344,12 @@ impl<T: buffer::raw::Segment> buffer::raw::Total
     for Capacity<(segments::Many<T>, segments::Many<T>)>
 {
     fn count(&self) -> segments::Count {
-        segments::Count::new(self.total.sum.count.get())
+        segments::Count::new(self.sum.count.get())
     }
     fn len(&self) -> usize {
-        self.total.sum.len
+        self.sum.len
     }
     fn resident(&self) -> usize {
-        self.total.sum.resident
-    }
-}
-
-impl buffer::raw::Total for Sum {
-    fn count(&self) -> segments::Count {
-        segments::Count::new(self.count.get())
-    }
-    fn len(&self) -> usize {
-        self.len
-    }
-    fn resident(&self) -> usize {
-        self.resident
+        self.sum.resident
     }
 }

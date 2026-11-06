@@ -169,7 +169,6 @@ fn insertion_returns_item() {
                 available: 0,
             })
     );
-    assert!(second.count() == segments::Count::ONE);
     assert_eq!(second.as_ref().as_slice().as_ptr(), pointer);
     assert_eq!(chain.contiguous(), Some(b"first".as_slice()));
     assert_eq!(pool.available().segments, 1);

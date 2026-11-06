@@ -2,7 +2,7 @@
 
 use std::{mem, ops, ptr, slice};
 
-use crate::depot::array::{self, Len, compact, prefix::Prefix};
+use crate::depot::array::{self, Len, prefix::Prefix};
 
 /// An inline vector without drop glue.
 #[repr(transparent)]
@@ -25,6 +25,12 @@ pub struct IntoIter<T, const N: usize> {
     pub(in crate::depot::array) front: Len<N>,
     pub(in crate::depot::array) back: Len<N>,
 }
+
+const _: () = {
+    assert!(mem::size_of::<IntoIter<u8, 4>>() == 12);
+    assert!(mem::size_of::<IntoIter<u64, 4>>() == 40);
+    assert!(mem::align_of::<IntoIter<u64, 4>>() == 8);
+};
 
 impl<T: Copy, const N: usize> Default for Vec<T, N> {
     fn default() -> Self {
@@ -72,12 +78,19 @@ impl<T: Copy, const N: usize> Vec<T, N> {
         self.raw.len
     }
 
-    pub fn filter_from(&mut self, source: &Self, mut keep: impl FnMut(&T) -> bool) {
-        compact::Compact::from_source(&mut self.raw, &source.raw).filter(&mut keep);
-    }
-
     pub fn retain(&mut self, mut keep: impl FnMut(&T) -> bool) {
-        compact::Compact::retain(&mut self.raw).filter(&mut keep);
+        let values = self.as_mut_slice();
+        let Some(mut written) = values.iter().position(|value| !keep(value)) else {
+            return;
+        };
+        for read in written + 1..values.len() {
+            if keep(&values[read]) {
+                // SAFETY: the first hole and ordered scan keep written < read < values.len().
+                unsafe { *values.get_unchecked_mut(written) = values[read] };
+                written += 1;
+            }
+        }
+        self.raw.len = Len(written as u32);
     }
 
     pub fn vacancy(&mut self) -> Option<array::Vacant<'_, T, N>> {

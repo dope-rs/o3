@@ -81,6 +81,10 @@ const _: () = {
     );
     assert!(mem::size_of::<pool::Shared<'static, ()>>() == mem::size_of::<usize>());
     assert!(mem::size_of::<Option<pool::Shared<'static, ()>>>() == mem::size_of::<usize>());
+    assert!(
+        mem::size_of::<Result<pool::Shared<'static, ()>, crate::mem::rc::Error>>()
+            == mem::size_of::<pool::Shared<'static, ()>>()
+    );
 };
 
 // SAFETY: this policy is installed only after the resident value is initialized.

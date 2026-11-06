@@ -24,7 +24,7 @@ pub use segment::Segment;
 mod scatter;
 pub use scatter::Scatter;
 pub(in crate::buffer) use slices::{
-    Batch, Copy, Exclusive, Indexed, IndexedMut, Linked, LinkedMut, Prefix, SliceExt,
+    Exclusive, Indexed, IndexedMut, Linked, LinkedMut, Prefix, SliceExt,
 };
 
 /// # Safety
@@ -96,13 +96,14 @@ pub trait Unary<T> {
 }
 
 /// # Safety
-/// Source and iterator totals remain equal and unchanged through exhaustion: exact nonoverflowing owner count, visible byte sum and resident charge sum.
+/// Source and returned totals remain equal and unchanged through exhaustion: exact nonoverflowing owner count, visible byte sum and resident charge sum.
 /// Success yields exactly that many nonempty owners, never more on failure; preserve backing, borrows and `Output` cardinality (`Many` requires at least two).
+/// The returned iterator and totals remain valid when either is dropped first.
 pub unsafe trait Sequence<T: buffer::raw::Segment>: Sized + Total {
     type Item;
     type Error;
     type Output: Assemble<T>;
-    fn owners(self) -> impl Iterator<Item = Self::Item> + Total;
+    fn owners(self) -> (impl Iterator<Item = Self::Item>, impl Total);
 
     fn reject(self, error: crate::alloc::Error) -> Self::Error;
 }
@@ -119,18 +120,6 @@ pub trait Total {
 
     fn len(&self) -> usize;
     fn resident(&self) -> usize;
-}
-
-impl<I, M: Total> Total for buffer::raw::Batch<I, M> {
-    fn count(&self) -> segments::Count {
-        self.total.count()
-    }
-    fn len(&self) -> usize {
-        self.total.len()
-    }
-    fn resident(&self) -> usize {
-        self.total.resident()
-    }
 }
 
 /// Immutable scattered bytes with an exact length and borrowed cursor.

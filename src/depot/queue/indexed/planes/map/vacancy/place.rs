@@ -68,6 +68,3 @@ unsafe impl<K: Copy, V, const N: usize> map::raw::Query for Place<'_, K, V, N> {
         }
     }
 }
-
-// SAFETY: admission proves installed < capacity < buckets; the loan prevents insertion.
-unsafe impl<K: Copy, V, const N: usize> map::raw::Spare for Place<'_, K, V, N> {}

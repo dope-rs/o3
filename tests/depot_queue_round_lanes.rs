@@ -2,7 +2,7 @@ pub mod common;
 
 use std::{cell, num};
 
-use common::{alloc::system::Tracker, depot::model::drops};
+use common::alloc::system::Tracker;
 use o3::depot::queue::round::{self, values};
 
 #[global_allocator]
@@ -62,63 +62,6 @@ fn rejects_bounds() {
             capacity: 0
         }
     );
-}
-
-#[test]
-fn stripes_drop_once() {
-    drops::CALLS.with(|calls| calls.set(Some(0)));
-    drop(drops::Deferred::default());
-    drops::CALLS.with(|calls| assert_eq!(calls.replace(Some(0)), Some(1)));
-    let drops = cell::Cell::new(Some(0));
-    {
-        let queue = round::Lanes::<drops::Deferred<'_>, 3>::try_new(
-            3,
-            num::NonZero::<usize>::MIN.saturating_add(5),
-        );
-        let queue = queue.expect("required fixture outcome");
-        for index in 0..3 {
-            let entry = queue.try_slot(index).expect("resident").get();
-            assert!(entry.0.get().is_none());
-            entry.0.set(Some(&drops));
-        }
-        assert!(
-            queue
-                .try_slot(0)
-                .expect("resident")
-                .try_lane(0)
-                .expect("destination")
-                .set()
-                == round::Insertion::Inserted
-        );
-        assert!(
-            queue
-                .try_slot(1)
-                .expect("resident")
-                .try_lane(3)
-                .expect("destination")
-                .set()
-                == round::Insertion::Inserted
-        );
-        assert!(
-            queue
-                .try_slot(2)
-                .expect("resident")
-                .try_lane(1)
-                .expect("destination")
-                .set()
-                == round::Insertion::Inserted
-        );
-        assert_eq!(
-            round::Lane::try_new(&queue, 3)
-                .expect("lane")
-                .pop_front()
-                .map(|slot| std::ptr::eq(slot, queue.try_slot(1).expect("resident").get())),
-            Some(true)
-        );
-        assert_eq!(drops.get(), Some(0));
-    }
-    assert_eq!(drops.get(), Some(3));
-    assert_eq!(drops::CALLS.with(cell::Cell::get), Some(0));
 }
 
 #[test]

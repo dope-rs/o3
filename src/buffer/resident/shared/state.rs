@@ -8,7 +8,7 @@ use crate::{
 
 /// Provenance of one immutable extent; constructors remain inside buffer.
 #[derive(Debug)]
-#[repr(u8)]
+#[repr(usize)]
 pub(in crate::buffer) enum State<'d> {
     Slice,
     Owned(Option<regions::Tag>),
@@ -20,6 +20,7 @@ pub(in crate::buffer) enum State<'d> {
 
 // SAFETY: every variant retains the same backing identity and original domain.
 unsafe impl buffer::raw::Retain for State<'_> {
+    #[inline]
     fn try_retain(&self) -> Result<Self, rc::Error> {
         Ok(match self {
             Self::Slice => Self::Slice,
@@ -41,12 +42,9 @@ impl<'d> State<'d> {
             Self::Slice | Self::Resident(_) | Self::Accounted(_) | Self::Provided(_) => Err(self),
         }
     }
-    pub(in crate::buffer) fn resident(&self) -> usize {
-        use backing::Owner as _;
-        self.root().map_or(0, backing::Root::bytes)
-    }
 }
 impl<'d> backing::Owner<'d> for State<'d> {
+    #[inline]
     fn root<'a>(&'a self) -> Option<backing::Root<'a, 'd>>
     where
         'd: 'a,

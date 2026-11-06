@@ -206,6 +206,10 @@ fn shared_transactions() {
     ));
     {
         let free = (slab.vacancy()).expect("the third generation must remain available");
+        assert!(matches!(
+            slab.vacancy(),
+            Err(slab::Vacancy::IdentityExhausted)
+        ));
         let mut staged = free.stage(6);
         assert_eq!(staged.key().generation().get(), 3);
         *staged.get_mut() = 7;

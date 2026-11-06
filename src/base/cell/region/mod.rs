@@ -45,7 +45,7 @@ impl<B: Brand> Token<B> {
     /// Copies the opaque identity proof for capabilities owned by this region.
     pub const fn proof(&self) -> region::Proof<B> {
         region::Proof {
-            proof: self.token.proof(),
+            proof: marker::PhantomData,
         }
     }
 }

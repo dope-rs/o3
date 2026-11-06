@@ -6,7 +6,7 @@ use common::{
     Counted,
     alloc::{AlignedUnit, system::Tracker},
 };
-use o3::depot::queue::resident::{Drain, Fixed, Take, handoff};
+use o3::depot::queue::resident::{Fixed, handoff};
 
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
@@ -60,7 +60,7 @@ fn retains_affine_grants() {
         .lane::<0>()
         .try_keep(&mut slot, 12)
         .expect("move after grant");
-    assert!(other.lane::<0>().take_one() == Take::Item(12));
+    assert!(other.lane::<0>().take_one() == Some(12));
     other.lane::<0>().try_keep(&mut slot, 13).expect("rearm");
     assert!(matches!(slot.cancel(), handoff::Cancel::Wake));
     assert!(other.lane::<0>().is_empty());
@@ -140,11 +140,11 @@ fn drains_and_reuses() {
             Err(handoff::Reject::Draining { index: 0 })
         );
         assert!(registry.lane::<2>().offer_one(4) == handoff::Offer::Draining(4));
-        assert!(registry.drain_next() == Drain::Item(1));
+        assert!(registry.drain_next() == Some(1));
         assert!(registry.has_waiters());
-        assert!(registry.drain_next() == Drain::Item(2));
+        assert!(registry.drain_next() == Some(2));
         assert!(!registry.has_waiters());
-        assert!(registry.drain_next() == Drain::Done);
+        assert!(registry.drain_next().is_none());
         assert!(!registry.is_draining());
         registry
             .lane::<0>()

@@ -58,11 +58,10 @@ impl<'a, W, G, L> Lane<'a, W, G, L> {
         handoff::Offer::Value(value)
     }
 
-    pub fn take_one(self) -> resident::Take<W> {
-        let Some(entry) = self.registry.lanes.pop(self.lane) else {
-            return resident::Take::Empty;
-        };
-        resident::Take::Item(entry.take_value())
+    #[must_use = "a taken item remains caller-owned"]
+    pub fn take_one(self) -> Option<W> {
+        let entry = self.registry.lanes.pop(self.lane)?;
+        Some(entry.take_value())
     }
 
     pub fn is_empty(self) -> bool {

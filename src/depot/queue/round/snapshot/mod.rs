@@ -41,7 +41,9 @@ impl<'a, T, const G: usize, const N: usize, P> Snapshot<&'a round::Lanes<T, G, N
 
     fn resolve(&self) -> Option<round::Location<&'a round::Lanes<T, G, N>, phase::Head>> {
         let entry = self.snapshot();
-        if entry.access().track.entries.first() != Some(entry.position.index) {
+        // SAFETY: the snapshot retains this lane's admission to its original owner.
+        let lane = unsafe { entry.owner.join(entry.position.lane) };
+        if lane.entries.first() != Some(entry.position.index) {
             return None;
         }
         Some(entry.phase())
@@ -49,8 +51,8 @@ impl<'a, T, const G: usize, const N: usize, P> Snapshot<&'a round::Lanes<T, G, N
 
     fn turn(&self) -> Option<round::Location<&'a round::Lanes<T, G, N>, phase::Head>> {
         let head = self.resolve()?;
-        // SAFETY: the retained FIFO front proves this lane's group remains nonempty.
-        let first = unsafe { head.access().group.first_live() };
+        // SAFETY: the admitted FIFO front proves its owner's lane and group remain nonempty.
+        let first = unsafe { head.owner.join(head.position.lane).active.first_live() };
         (first == self.position.lane).then_some(head)
     }
 

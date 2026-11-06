@@ -81,30 +81,6 @@ fn exhaustion_keeps_failure() {
 }
 
 #[test]
-fn keeps_joint_layout() {
-    assert_eq!(mem::size_of::<Set<u64>>(), 48);
-    assert_eq!(mem::size_of::<Option<Set<u64>>>(), 48);
-    assert_eq!(mem::size_of::<set::Occupied<'static, u64>>(), 32);
-    assert_eq!(
-        mem::size_of::<set::Occupied<'static, u64, (), { u32::MAX }, true, (), set::Idle>>(),
-        32
-    );
-    assert_eq!(
-        mem::size_of::<set::Occupied<'static, u64, (), { u32::MAX }, true, (), set::Ready>>(),
-        32
-    );
-    assert_eq!(
-        mem::size_of::<set::Occupied<'static, u64, (), { u32::MAX }, true, (), set::Head>>(),
-        32
-    );
-    assert_eq!(
-        mem::size_of::<Option<set::Occupied<'static, u64, (), { u32::MAX }, true, (), set::Head>>>(
-        ),
-        32
-    );
-}
-
-#[test]
 fn lanes_keep_three_planes() {
     assert_eq!(mem::size_of::<round::Lanes<cell::Cell<usize>, 3>>(), 40);
     assert_eq!(

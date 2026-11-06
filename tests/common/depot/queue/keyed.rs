@@ -20,14 +20,6 @@ pub struct Node {
     link: Link<Id>,
 }
 
-// SAFETY: construction pairs each bounded native key with its own stable link.
-unsafe impl<'a> depot::raw::KeyBorrow<'a> for &'a Node {
-    type Key = Id;
-    fn parts(self) -> (Self::Key, &'a Link<Id>) {
-        (self.key, &self.link)
-    }
-}
-
 pub struct Slots {
     nodes: Box<[Node]>,
     fifo: Fifo<Id>,
@@ -130,12 +122,8 @@ unsafe impl depot::raw::KeySource for Queues<'_> {
 
 // SAFETY: retaining this root prevents mutation or replacement of its slots and FIFOs.
 unsafe impl depot::raw::KeyRead for Queues<'_> {
-    fn entry<'a>(
-        live: depot::raw::Proof<(&'a Self, links::Index), Initialized<()>>,
-    ) -> keyed::Entry<'a, Id> {
-        let (source, index) = live.into_inner();
-        // SAFETY: the consumed proof retains this exact initialized slot and source.
-        keyed::Entry::from_source(unsafe { source.project_node(index) })
+    fn link(live: depot::raw::Proof<(&Self, links::Index), Initialized<()>>) -> &Link<Id> {
+        &live.into().link
     }
 }
 
@@ -167,18 +155,16 @@ unsafe impl depot::raw::KeyOwner for Selected<'_> {
     type Fifo = Fifo<Self::Key>;
 
     fn parts(&self) -> (Id, &keyed::Link<Id>) {
-        depot::raw::KeyBorrow::parts(self.node)
+        (self.node.key, &self.node.link)
     }
 
     fn fifo(&self) -> &Fifo<Id> {
         self.owner.fifo
     }
 
-    fn entry<'a>(
-        live: depot::raw::Proof<(&'a Self, links::Index), Initialized<()>>,
-    ) -> keyed::Entry<'a, Id> {
+    fn link(live: depot::raw::Proof<(&Self, links::Index), Initialized<()>>) -> &Link<Id> {
         let live = unsafe { live.map(|(selected, index)| (&selected.owner, index)) };
-        keyed::Entry::from_source(live.into())
+        &live.into().link
     }
 }
 

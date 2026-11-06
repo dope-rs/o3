@@ -3,8 +3,7 @@ use std::fmt;
 use crate::{
     buffer,
     buffer::{
-        hold, resident, resident::copy, segments, segments::Item, storage, storage::regions,
-        write::consume,
+        hold, resident, resident::copy, segments::Item, storage, storage::regions, write::consume,
     },
     mem::rc,
 };
@@ -41,7 +40,7 @@ impl Seal for storage::Shared {
             .into_shared();
         Ok(Item {
             value,
-            nonempty: segments::One::new(),
+            nonempty: (),
         })
     }
 
@@ -52,7 +51,7 @@ impl Seal for storage::Shared {
     fn try_share(view: regions::NonEmpty<'_, '_, Self>) -> Result<Item<Self>, rc::Error> {
         Ok(Item {
             value: view.view().try_clone()?,
-            nonempty: segments::One::new(),
+            nonempty: (),
         })
     }
 }
@@ -83,7 +82,7 @@ impl<'d> Seal for resident::Shared<'d> {
             .into_shared();
         Ok(Item {
             value,
-            nonempty: segments::One::new(),
+            nonempty: (),
         })
     }
 
@@ -95,7 +94,7 @@ impl<'d> Seal for resident::Shared<'d> {
     fn try_share(view: regions::NonEmpty<'_, '_, Self>) -> Result<Item<Self>, rc::Error> {
         Ok(Item {
             value: resident::Shared::try_share(view)?,
-            nonempty: segments::One::new(),
+            nonempty: (),
         })
     }
 }

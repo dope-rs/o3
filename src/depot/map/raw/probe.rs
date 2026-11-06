@@ -161,14 +161,14 @@ impl<Q: map::raw::Query> Probe<Q> {
         owner: Q,
         hash: u64,
         matches: impl Fn(&Q::Value) -> bool,
-    ) -> map::Entry<map::Found<Q>, map::Vacancy<Q, u64>> {
+    ) -> Result<map::Vacancy<Q, u64>, Q::Occupied> {
         let mut scan = Scan::<_, true>::new(owner.table(), hash);
         loop {
             let bucket = match scan.next() {
                 map::Entry::Occupied(bucket) => bucket,
                 map::Entry::Vacant(bucket) => {
-                    return map::Entry::Vacant(
-                        map::Vacancy::new(map::raw::Bucket { owner, bucket }).with_phase(hash),
+                    return Ok(
+                        map::Vacancy::new(map::raw::Bucket { owner, bucket }).with_phase(hash)
                     );
                 }
             };
@@ -176,7 +176,11 @@ impl<Q: map::raw::Query> Probe<Q> {
                 owner: &owner,
                 bucket,
             }))) {
-                return map::Entry::Occupied(map::Found::new(map::raw::Bucket { owner, bucket }));
+                drop(matches);
+                return Err(Q::occupied(map::Found::new(map::raw::Bucket {
+                    owner,
+                    bucket,
+                })));
             }
         }
     }
@@ -309,23 +313,3 @@ const _: () = {
             == size_of::<(&map::flat::Table<u64>, u64, u64)>()
     );
 };
-
-/// Owns a nonempty directory with at least one vacant bucket until consumed.
-/// # Safety
-/// The retained owner must keep at least one vacant bucket throughout probing and transfer that same vacancy into the returned insertion capability.
-pub(crate) unsafe trait Spare: map::raw::Query {
-    fn try_reserve<Q: Eq + ?Sized>(
-        self,
-        hash: u64,
-        key: &Q,
-    ) -> Result<map::Vacancy<Self, u64>, Self::Occupied>
-    where
-        Self::Value: AsRef<Q>,
-    {
-        // SAFETY: this consumed admission retains the same spare directory through probing.
-        match unsafe { Probe::spare(self, hash, |value| value.as_ref() == key) } {
-            map::Entry::Occupied(entry) => Err(Self::occupied(entry)),
-            map::Entry::Vacant(entry) => Ok(entry),
-        }
-    }
-}

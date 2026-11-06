@@ -38,9 +38,11 @@ pub unsafe trait Retain<'d>: buffer::Source {
     where
         Self: 'a,
     {
-        resident::Exact::try_copy(budget, buffer::Read::as_slice(plan))
-            .map(resident::Exact::into_shared)
-            .map_err(Error::Resident)
+        Ok(
+            resident::Exact::try_copy(budget, buffer::Read::as_slice(plan))
+                .map_err(Error::Resident)?
+                .into_shared(),
+        )
     }
 
     fn try_retain<'a>(

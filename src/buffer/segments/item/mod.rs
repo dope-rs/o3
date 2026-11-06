@@ -14,7 +14,7 @@ use crate::{
 #[repr(transparent)]
 pub struct Item<T> {
     pub(in crate::buffer::segments) value: T,
-    nonempty: segments::One,
+    nonempty: (),
 }
 
 impl<T> buffer::raw::Unary<T> for Item<T> {
@@ -39,7 +39,7 @@ impl<T: buffer::raw::Segment> Item<T> {
     pub(in crate::buffer::segments) unsafe fn assume(value: T) -> Self {
         Self {
             value,
-            nonempty: segments::One::new(),
+            nonempty: (),
         }
     }
 }
@@ -50,7 +50,7 @@ impl<'d, const N: usize> From<&'d [u8; N]> for Item<resident::Shared<'d>> {
         const { assert!(N != 0) };
         Self {
             value: resident::Shared::from(bytes.as_slice()),
-            nonempty: segments::One::new(),
+            nonempty: (),
         }
     }
 }
@@ -58,10 +58,6 @@ impl<'d, const N: usize> From<&'d [u8; N]> for Item<resident::Shared<'d>> {
 impl<T> Item<T> {
     pub const fn as_ref(&self) -> &T {
         &self.value
-    }
-
-    pub const fn count(&self) -> segments::Count {
-        self.nonempty.count()
     }
 
     pub fn into_inner(self) -> T {
@@ -117,7 +113,7 @@ impl<'source, S: ?Sized> From<&regions::NonEmpty<'_, 'source, S>>
                 source: view.source(),
                 bytes: view.as_slice(),
             },
-            nonempty: segments::One::new(),
+            nonempty: (),
         }
     }
 }
@@ -128,7 +124,7 @@ impl<'a, T: buffer::raw::Segment> From<&'a segments::Tail<'_, T, NonZero<usize>>
     fn from(tail: &'a segments::Tail<'_, T, NonZero<usize>>) -> Self {
         Self {
             value: tail.view(),
-            nonempty: segments::One::new(),
+            nonempty: (),
         }
     }
 }
@@ -188,7 +184,7 @@ impl<'a, T: buffer::raw::Segment> Item<buffer::View<'a, T>> {
         let bytes = &bytes[start..end];
         Some(Self {
             value: buffer::View { source, bytes },
-            nonempty: segments::One::new(),
+            nonempty: (),
         })
     }
 

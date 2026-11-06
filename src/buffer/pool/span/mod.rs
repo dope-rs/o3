@@ -6,6 +6,7 @@ use crate::{
     buffer::{
         pool,
         pool::{owners, state},
+        raw::SliceExt as _,
         resident::{AllocError, staging, write::Cause},
         storage,
         write::{consume, consume::Error},
@@ -42,7 +43,8 @@ impl<K: crate::buffer::raw::Backing, S> Span<K, pool::Owned, S> {
 
     pub(in crate::buffer::pool) fn from_seed(seed: owners::Seed<K, S>) -> Self {
         let (core, active) = seed.take();
-        owners::Header::release(core);
+        // Seed transferred the sole root; active keeps the pool live through detachment.
+        owners::Header::detach(core);
         Self::new(active, pool::Owned)
     }
 }
@@ -82,12 +84,7 @@ impl<'d> Span<owners::Resident<'d>> {
         let seed =
             owners::Block::<owners::Accounted, state::Uninit>::try_seed(layout, pool.budget())?;
         let span = Span::from_seed(seed);
-        let span = buffer::raw::Copy::copy(pool::CopyIn {
-            span,
-            sources: (first, second.into_input()),
-            len,
-        });
-        Ok(span)
+        Ok(span.copy_in((first, second.into_input()), len))
     }
 }
 
@@ -169,13 +166,10 @@ impl<'d> pool::Span<owners::Resident<'d>> {
             Ok(()) => {
                 let start = cursor.len();
                 let target = cursor.entry().data();
-                buffer::raw::Copy::copy(Append {
-                    cursor,
-                    sources: src,
-                    start,
-                    target,
-                    end: start + added,
-                });
+                let end = start + added;
+                // SAFETY: admission retains the exact suffix and every disjoint source.
+                unsafe { src.copy_to(target.add(start)) };
+                cursor.len = end as u32;
                 return Ok(());
             }
             Err(error) => error,
@@ -187,13 +181,10 @@ impl<'d> pool::Span<owners::Resident<'d>> {
             let start = mem::take(head) as usize;
             // SAFETY: the exclusive slot is unique and both ranges remain within its initialized extent.
             unsafe { ptr::copy(data.add(start), data, len) };
-            buffer::raw::Copy::copy(Append {
-                cursor,
-                sources: src,
-                start: len,
-                target: data,
-                end: len + added,
-            });
+            let end = len + added;
+            // SAFETY: compaction preserves the admitted suffix and disjoint sources.
+            unsafe { src.copy_to(data.add(len)) };
+            cursor.len = end as u32;
             return Ok(());
         }
         let Some(slab) = slab else {
@@ -206,36 +197,12 @@ impl<'d> pool::Span<owners::Resident<'d>> {
         // SAFETY: the exclusive source borrow retains its exact suffix through the copy.
         let bytes = unsafe { cursor.as_slice().get_unchecked(*head as usize..) };
         let target = next.entry().data();
-        buffer::raw::Copy::copy(Append {
-            cursor: &mut next,
-            sources: (bytes, src),
-            start: 0,
-            target,
-            end: bytes.len() + added,
-        });
+        let end = bytes.len() + added;
+        // SAFETY: the fresh slot fits both retained sources and is disjoint from them.
+        unsafe { (bytes, src).copy_to(target) };
+        next.len = end as u32;
         *head = 0;
         *cursor = next;
         Ok(())
-    }
-}
-
-struct Append<'a, 'd, I> {
-    cursor: &'a mut pool::Span<owners::Resident<'d>>,
-    sources: I,
-    start: usize,
-    target: *mut u8,
-    end: usize,
-}
-
-// SAFETY: each admitted edit retains the exact writable suffix and disjoint sources.
-unsafe impl<I: buffer::raw::SliceExt> buffer::raw::Copy for Append<'_, '_, I> {
-    type Output = ();
-
-    fn parts(&mut self) -> (impl buffer::raw::SliceExt, *mut u8, usize) {
-        (&self.sources, self.target, self.start)
-    }
-
-    unsafe fn publish(self) {
-        self.cursor.len = self.end as u32;
     }
 }

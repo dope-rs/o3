@@ -1,7 +1,6 @@
 use std::{marker, mem, num, ptr};
 
 pub use probe::Probe;
-pub(crate) use probe::Spare;
 pub(in crate::depot::map) use probe::{Candidate, Directory, Shift, State};
 
 use crate::{

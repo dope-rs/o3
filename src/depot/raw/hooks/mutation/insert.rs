@@ -83,27 +83,4 @@ impl<'a, C: crate::depot::raw::ChainCount, const FRONT: bool> Insert<'a, C, FRON
     }
 }
 
-impl<'a, const FRONT: bool> Insert<'a, (), FRONT> {
-    /// # Safety
-    /// The hook is exclusively detached and this edge and neighbor match the exact chain and plane until commit.
-    pub(in crate::depot) unsafe fn resolved(
-        chain: &'a links::Chain,
-        edge: links::Edge,
-        hook: &'a links::Hook,
-        neighbor: Option<&'a links::Hook>,
-    ) -> Self {
-        let end = if FRONT {
-            (unsafe { chain.parts() }).1
-        } else {
-            (unsafe { chain.parts() }).0
-        };
-        Self {
-            links: chain,
-            edge,
-            hook,
-            neighbor: neighbor.map_or(end, |hook| if FRONT { &hook.previous } else { &hook.next }),
-        }
-    }
-}
-
 const _: () = assert!(mem::size_of::<Insert<'static, (), false>>() == 5 * mem::size_of::<usize>());

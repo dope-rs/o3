@@ -34,30 +34,6 @@ impl<T> ring::Fifo<T> {
     }
 }
 
-impl<T> ring::Cell<T> {
-    /// Drops every resident value in place.
-    pub fn clear(&self) {
-        loop {
-            let mut state = self.state.get();
-            if state.is_empty() {
-                return;
-            }
-            let index = unsafe { state.pop_front(self.capacity()) };
-            self.state.set(state);
-            // SAFETY: publish removal before Drop can reenter, then reload state.
-            // Insertion cannot reuse the retiring slot until its destructor finishes.
-            unsafe {
-                self.block
-                    .as_ptr()
-                    .cast_mut()
-                    .add(index)
-                    .cast::<T>()
-                    .drop_in_place()
-            };
-        }
-    }
-}
-
 /// # Safety
 /// Consume both initialized runs exclusively, without outstanding loans or reentry.
 /// Do not access or destroy these elements again; clear their state before

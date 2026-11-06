@@ -36,4 +36,12 @@ pub struct Busy {
     pub index: u32,
 }
 
-const _: () = assert!(mem::size_of::<Error>() == 3 * mem::size_of::<u32>());
+const _: () = {
+    assert!(mem::size_of::<Error>() == 3 * mem::size_of::<u32>());
+    assert!(mem::size_of::<Error<()>>() == mem::size_of::<Error>());
+    assert!(mem::size_of::<Error<(), convert::Infallible>>() == mem::size_of::<Error>());
+    assert!(
+        mem::size_of::<Error<convert::Infallible, convert::Infallible>>()
+            == mem::size_of::<Error>()
+    );
+};

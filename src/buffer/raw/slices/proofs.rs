@@ -66,32 +66,6 @@ pub(in crate::buffer) unsafe trait Exclusive: Prefix {
 }
 
 /// # Safety
-/// Sources stay disjoint from the retained exclusive suffix, which fits their total length.
-/// Parts and publication refer to that same suffix.
-pub(in crate::buffer) unsafe trait Copy: Sized {
-    type Output;
-
-    fn parts(&mut self) -> (impl buffer::raw::SliceExt, *mut u8, usize);
-
-    /// # Safety
-    /// The exact returned suffix has received all source bytes once.
-    unsafe fn publish(self) -> Self::Output;
-
-    fn copy(mut self) -> Self::Output {
-        use buffer::raw::SliceExt as _;
-
-        {
-            let (sources, target, start) = self.parts();
-            // SAFETY: Copy retains the admitted exclusive suffix and disjoint sources.
-            let target = unsafe { target.add(start) };
-            unsafe { sources.copy_to(target) };
-        }
-        // SAFETY: every admitted byte was initialized in this exact suffix.
-        unsafe { self.publish() }
-    }
-}
-
-/// # Safety
 /// The consumed owner retains this exact initialized node for `'a`.
 /// Shared projection prevents mutation or release throughout the returned borrow.
 pub(in crate::buffer) unsafe trait Indexed<'a>: Sized {
@@ -165,17 +139,5 @@ pub(in crate::buffer) unsafe trait LinkedMut<'a>: Linked<'a> {
             let item = &mut *nodes.value_ptr(Self::head(desc));
             (desc, item)
         }
-    }
-}
-
-pub(in crate::buffer) struct Batch<I, M> {
-    pub(in crate::buffer) owners: I,
-    pub(in crate::buffer) total: M,
-}
-
-impl<I: Iterator, M> Iterator for Batch<I, M> {
-    type Item = I::Item;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.owners.next()
     }
 }

@@ -7,7 +7,7 @@ use std::{
     slice,
 };
 
-use common::depot::arena::pool::{Pinned, Reentry, Releases, Value};
+use common::depot::arena::pool::{Pinned, Reentry, Releases};
 use o3::depot::{
     arena::pool::recycle::{self, release},
     capacity::Count,
@@ -67,83 +67,6 @@ fn fills_disjoint_borrows() {
     .expect("zero resident allocation");
     assert_eq!(calls, 0);
     assert!(empty.take().is_none());
-}
-
-#[test]
-fn keeps_pointer_layout() {
-    use o3::depot::arena::pool::Shared;
-    type Owner = Shared<'static, u64>;
-    assert_eq!(
-        mem::size_of::<Result<Owner, o3::mem::rc::Error>>(),
-        mem::size_of::<Owner>()
-    );
-    type Static = Value<'static>;
-    type Notify = Releases<'static>;
-    assert_eq!(
-        mem::size_of::<recycle::Store<Static>>(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<o3::depot::arena::pool::Unique<'static, Static, recycle::Header<Static>>>(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            Option<o3::depot::arena::pool::Unique<'static, Static, recycle::Header<Static>>>,
-        >(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<release::Store<Static, Notify>>(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            o3::depot::arena::pool::Vacant<
-                'static,
-                Static,
-                release::Header<Static, Notify>,
-                release::Notify<'static>,
-            >,
-        >(),
-        2 * mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            Option<
-                o3::depot::arena::pool::Vacant<
-                    'static,
-                    Static,
-                    release::Header<Static, Notify>,
-                    release::Notify<'static>,
-                >,
-            >,
-        >(),
-        2 * mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            o3::depot::arena::pool::Unique<
-                'static,
-                Static,
-                release::Header<Static, Notify>,
-                release::Notify<'static>,
-            >,
-        >(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            o3::depot::arena::pool::Unique<
-                'static,
-                Static,
-                release::Header<Static, Notify>,
-                release::Notify<'static>,
-                release::Frozen,
-            >,
-        >(),
-        mem::size_of::<usize>()
-    );
 }
 
 #[test]

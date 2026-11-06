@@ -1,6 +1,6 @@
 pub mod common;
 
-use std::{hint, mem::size_of};
+use std::hint;
 
 use common::{
     alloc::system::Tracker,
@@ -56,15 +56,6 @@ fn resume_partial_moves() {
         });
         assert_eq!(activity, [0; 4]);
     }
-}
-
-#[test]
-fn keeps_borrowed_layout() {
-    type Cursor = <Slices<'static> as buffer::raw::Chunks>::Cursor<'static>;
-    assert_eq!(
-        size_of::<scatter::Take<'static, 'static, Cursor>>(),
-        2 * size_of::<usize>()
-    );
 }
 
 #[test]

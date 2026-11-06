@@ -23,6 +23,29 @@ pub mod pool;
 pub mod provided;
 pub mod scatter;
 
+pub struct Bounds<'a> {
+    pub range: (ops::Bound<usize>, ops::Bound<usize>),
+    pub calls: &'a Cell<u16>,
+}
+
+impl ops::RangeBounds<usize> for Bounds<'_> {
+    fn start_bound(&self) -> ops::Bound<&usize> {
+        self.calls.set(self.calls.get() * 10 + 1);
+        self.range.0.as_ref()
+    }
+
+    fn end_bound(&self) -> ops::Bound<&usize> {
+        self.calls.set(self.calls.get() * 10 + 2);
+        self.range.1.as_ref()
+    }
+}
+
+impl Drop for Bounds<'_> {
+    fn drop(&mut self) {
+        self.calls.set(self.calls.get() * 10 + 3);
+    }
+}
+
 pub struct Selected<'id> {
     range: ops::Range<usize>,
     brand: marker::PhantomData<*mut &'id ()>,
@@ -124,14 +147,14 @@ pub trait Fill<'a> {
     fn try_fill(
         &mut self,
         values: &[&'a [u8]],
-    ) -> Result<(), mem::Rejected<resident::Shared<'a>, segments::Error>>;
+    ) -> Result<(), mem::Rejected<segments::Item<resident::Shared<'a>>, segments::Error>>;
 }
 
 impl<'a> Fill<'a> for segments::Chain<resident::Shared<'a>> {
     fn try_fill(
         &mut self,
         values: &[&'a [u8]],
-    ) -> Result<(), mem::Rejected<resident::Shared<'a>, segments::Error>> {
+    ) -> Result<(), mem::Rejected<segments::Item<resident::Shared<'a>>, segments::Error>> {
         for value in values {
             self.try_push(resident::Shared::from(*value))?;
         }

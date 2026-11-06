@@ -282,18 +282,6 @@ impl<'a> Spare<'a> {
         buffer::raw::Exclusive::as_mut_slice(self)
     }
 
-    #[inline]
-    pub fn spare_capacity_mut(&mut self) -> &mut [mem::MaybeUninit<u8>] {
-        buffer::raw::Exclusive::spare_parts(self).1
-    }
-
-    /// # Safety
-    /// The first `len` bytes of this staged region must be initialized, `len`
-    /// must not exceed its original capacity, and external access must have ended.
-    pub unsafe fn set_len(&mut self, len: usize) {
-        self.len = len as u32;
-    }
-
     pub fn fill(&mut self, byte: u8) {
         buffer::raw::Exclusive::fill(self, byte)
     }
@@ -302,14 +290,14 @@ impl<'a> Spare<'a> {
     pub fn write(&mut self, src: &[u8]) -> usize {
         let (append, _) = Staging::prefix(self, src);
         let copied = append.len();
-        buffer::raw::Copy::copy(append);
+        append.copy();
         copied
     }
 
     /// Publishes the largest fitting prefix and leaves the original source's tail.
     pub fn drain(mut self, source: &mut &[u8]) {
         let (append, tail) = Staging::prefix(&mut self, source);
-        buffer::raw::Copy::copy(append);
+        append.copy();
         self.commit();
         *source = tail;
     }
@@ -337,7 +325,7 @@ impl<'a> Spare<'a> {
     ) -> Result<T, E> {
         let append = Staging::try_new(self, [bytes])?;
         let value = ready()?;
-        buffer::raw::Copy::copy(append);
+        append.copy();
         Ok(value)
     }
 
@@ -358,7 +346,7 @@ impl write::Sink for Spare<'_> {
     type Error = consume::Error;
 
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
-        Staging::try_new(self, slices).map(buffer::raw::Copy::copy)
+        Staging::try_new(self, slices).map(Staging::copy)
     }
 }
 

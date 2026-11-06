@@ -229,14 +229,19 @@ fn admits_before_acquiring() {
         identity
     };
     {
-        let mut limit = (Limit::try_borrow(&pool, 8, identity))
-            .expect("the recycled slot must admit the exact quota");
-        limit
-            .try_extend(b"abcdefgh")
-            .as_ref()
-            .expect("required fixture outcome");
-        let (cursor, identity) = limit.into_parts();
-        assert_eq!(cursor.as_ref(), b"abcdefgh");
+        let mut limit = (Limit::try_borrow(&pool, 5, identity))
+            .expect("the recycled slot must admit five bytes");
+        limit.try_extend(b"abc").expect("the first three bytes fit");
+        let error = limit
+            .try_extend(b"def")
+            .expect_err("the remaining quota is smaller than physical capacity");
+        let (required, room) = error.into_parts();
+        assert_eq!((required.get(), room), (3, 2));
+        assert_eq!((limit.remaining(), limit.as_ref()), (2, &b"abc"[..]));
+        limit.try_extend(b"de").expect("the last two bytes fit");
+        assert_eq!(limit.remaining(), 0);
+        let (span, identity) = limit.into_parts();
+        assert_eq!(span.as_ref(), b"abcde");
         assert_eq!(identity.as_ptr(), origin);
         assert_eq!(pool.available(), 0);
     }

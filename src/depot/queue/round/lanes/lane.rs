@@ -48,9 +48,7 @@ impl<T, const G: usize, const N: usize, O: ops::Deref<Target = round::Lanes<T, G
 }
 
 impl<T, const G: usize, const N: usize> Lane<&mut round::Lanes<T, G, N>> {
-    pub fn dequeue(
-        &mut self,
-    ) -> Option<round::Location<&mut round::Lanes<T, G, N>, round::Idle<false>>> {
+    pub fn dequeue(&mut self) -> Option<round::Location<&mut round::Lanes<T, G, N>, round::Idle>> {
         let lane = Lane {
             owner: &mut *self.owner,
             index: self.index,

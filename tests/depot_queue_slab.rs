@@ -17,6 +17,9 @@ fn rejects_stale_handles() {
     let second = (fifo.vacant().map(|vacant| vacant.insert(20).key()))
         .expect("the second indexed value must fit");
 
+    fifo.entry(stale).expect("live fifo entry").push_back();
+    assert!(fifo.front_pair().map(|pair| pair.0) == Some(second));
+    fifo.entry(stale).expect("live fifo entry").push_back();
     assert_eq!(fifo.entry(stale).expect("live fifo entry").remove(), 10);
     let fresh = (fifo.vacant().map(|vacant| vacant.insert(30).key()))
         .expect("the removed indexed slot must accept a recycled value");

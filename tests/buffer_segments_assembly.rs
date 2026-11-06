@@ -132,15 +132,13 @@ fn keeps_insert_cause() {
                 .eq([b"first".as_slice(), b"second"])
         );
         assert_eq!(item.as_slice(), b"last");
-        let (result, allocs) = Tracker::count(|| {
+        let (chain, allocs) = Tracker::count(|| {
             if front {
-                segments::Many::try_from((item, chain))
-                    .map_err(|error| error.map(|(item, chain)| (chain, item)))
+                segments::Many::try_from((item, chain)).expect("fallback assembly")
             } else {
-                segments::Many::try_from((chain, item))
+                segments::Many::try_from((chain, item)).expect("fallback assembly")
             }
         });
-        let chain = result.expect("fallback assembly");
         assert_eq!(allocs, 1);
         let order = if front { [2, 0, 1] } else { [0, 1, 2] };
         assert!(
@@ -439,11 +437,10 @@ fn preserves_empty_owner() {
         let owner = segments::Item::new(owner)
             .break_value()
             .expect("empty owner remains unadmitted");
-        let owner = match chain.try_push(owner).expect("empty admission") {
-            segments::Push::Discarded(owner) => Some(owner),
-            _ => None,
-        }
-        .expect("empty owner contributes no segment");
+        let owner = chain
+            .try_push(owner)
+            .expect("empty admission")
+            .expect("empty owner contributes no segment");
         assert_eq!(
             (owner.as_slice().as_ptr(), owner.resident()),
             (pointer, resident)

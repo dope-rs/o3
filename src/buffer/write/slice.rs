@@ -5,8 +5,8 @@ use crate::buffer::{self, write, write::consume};
 /// A checked cursor retaining its complete initialized output slice.
 pub struct Slice<'a> {
     base: ptr::NonNull<u8>,
-    pub(super) current: *mut u8,
-    pub(super) remaining: usize,
+    current: *mut u8,
+    remaining: usize,
     borrow: marker::PhantomData<&'a mut [u8]>,
 }
 
@@ -51,13 +51,16 @@ impl write::Sink for Slice<'_> {
     type Error = consume::Error;
 
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
-        write::Staging::try_new(self, slices).map(buffer::raw::Copy::copy)
-    }
-}
+        use buffer::raw::SliceExt as _;
 
-impl buffer::raw::Space for Slice<'_> {
-    fn remaining(&self) -> usize {
-        self.remaining()
+        let len = consume::Error::checked_end(0, self.remaining, &slices)?;
+        // SAFETY: admission retains this complete suffix and its disjoint sources.
+        unsafe {
+            slices.copy_to(self.current);
+            self.current = self.current.add(len);
+        }
+        self.remaining -= len;
+        Ok(())
     }
 }
 

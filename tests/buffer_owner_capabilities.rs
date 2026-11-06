@@ -32,7 +32,7 @@ fn keeps_initialized_bytes() {
     let mut left = storage::Owned::try_filled(3, b'a').expect("first owner");
     let mut right = storage::Owned::try_with(8).expect("second owner");
     right.try_extend(b"bc").expect("initialized prefix");
-    mem::swap(&mut *left, &mut *right);
+    mem::swap(&mut left, &mut right);
     assert_eq!((left.as_slice(), left.capacity()), (&b"bc"[..], 8));
     assert_eq!((right.as_slice(), right.capacity()), (&b"aaa"[..], 3));
     let mut spare = left.spare();

@@ -1,3 +1,5 @@
+use std::marker;
+
 use crate::base::cell::{
     region::{self, Brand, Identity},
     values,
@@ -7,14 +9,14 @@ use crate::base::cell::{
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
 pub struct Proof<B: Brand> {
-    pub(super) proof: values::Proof<B>,
+    pub(super) proof: marker::PhantomData<B>,
 }
 
 impl<B: Brand> Proof<B> {
     /// Binds newly owned state to this exact region identity.
     pub const fn bind<T>(self, value: T) -> region::Value<B, T> {
         region::Value {
-            value: self.proof.bind(value),
+            value: values::Value::new(value),
         }
     }
 }

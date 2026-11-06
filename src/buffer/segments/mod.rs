@@ -25,7 +25,7 @@ pub use item::Item;
 pub(in crate::buffer) use item::seal::Seal;
 pub use shape::{Shape, nonempty::Nonempty, owners::Owners};
 
-use crate::{buffer, buffer::write::consume, depot::capacity, mem::rc};
+use crate::{buffer::write::consume, depot::capacity, mem::rc};
 
 pub mod assembly;
 pub mod queue;
@@ -73,15 +73,6 @@ impl From<total::Error> for Error {
     }
 }
 
-impl<T: buffer::raw::Segment> From<crate::mem::Rejected<Item<T>, Error>>
-    for crate::mem::Rejected<T, Error>
-{
-    fn from(rejected: crate::mem::Rejected<Item<T>, Error>) -> Self {
-        let (item, error) = rejected.into_parts();
-        Self::new(item.into_inner(), error)
-    }
-}
-
 /// Independent capacities for segment nodes and simultaneous multi-chains.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Plan {
@@ -108,26 +99,6 @@ mod item;
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct Count(u32);
-
-/// Zero-sized proof of one-segment cardinality.
-#[derive(Clone, Copy, Debug)]
-pub struct One(());
-
-impl Default for One {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl One {
-    pub const fn new() -> Self {
-        Self(())
-    }
-
-    pub const fn count(&self) -> Count {
-        Count::ONE
-    }
-}
 
 #[repr(transparent)]
 pub(in crate::buffer::segments) struct Plural(NonZero<u32>);
@@ -207,12 +178,3 @@ const _: () = {
 
 mod tail;
 pub(in crate::buffer) use tail::Tail;
-
-/// Classification of one complete owner admitted by [`Chain::try_push`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Push<T> {
-    /// The owner became one new segment.
-    Loaded,
-    /// The owner was empty, contributed no segment, and is returned unchanged.
-    Discarded(T),
-}

@@ -2,8 +2,8 @@ use std::{num, ptr};
 
 use crate::{
     base::cell::region,
-    buffer::resident::Domain,
-    mem::{self, credit},
+    buffer::resident::{Domain, Reuse},
+    mem::credit,
 };
 
 /// A one-word authorization naming one exact stable accounting counter.
@@ -11,7 +11,7 @@ use crate::{
 /// Retaining a pool slot can reserve credits without allocating another backing.
 #[derive(Clone, Copy, Debug)]
 pub struct Budget<'d> {
-    pub(super) core: mem::raw::Bound<&'d Domain, region::Proof<region::Identity<'d>>>,
+    core: (&'d Domain, region::Proof<region::Identity<'d>>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,9 +20,30 @@ pub enum BindError {
     Foreign,
 }
 
+impl Domain {
+    /// Activates an empty counter for the exact region carried by `proof`.
+    pub fn try_budget<'d>(
+        &'d mut self,
+        capacity: usize,
+        proof: region::Proof<region::Identity<'d>>,
+    ) -> Result<Budget<'d>, Reuse> {
+        if let Some(retained) = num::NonZero::new(self.resident.get()) {
+            return Err(Reuse {
+                retained,
+                previous: self.capacity,
+                requested: capacity,
+            });
+        }
+        self.capacity = capacity;
+        Ok(Budget {
+            core: (self, proof),
+        })
+    }
+}
+
 impl<'d> Budget<'d> {
     pub(in crate::buffer) const fn core(self) -> &'d Domain {
-        self.core.source()
+        self.core.0
     }
 
     pub(in crate::buffer) fn try_bind(self, domain: &mut Option<Self>) -> Result<(), BindError> {

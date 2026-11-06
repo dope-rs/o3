@@ -75,28 +75,22 @@ impl<W: EndpointWord> EndpointHook<'_, W> {
         adjacent: Option<(links::Index, EndpointHook<'_, W>)>,
     ) {
         const { assert!(FRONT || H::TAIL) };
-        let (outer, inner) = if FRONT {
-            (self.previous, self.next)
-        } else {
-            (self.next, self.previous)
-        };
-        outer.set(endpoint);
-        match adjacent {
-            Some((adjacent, hook)) => {
-                inner.set(W::node(adjacent));
-                let neighbor = if FRONT { hook.previous } else { hook.next };
-                neighbor.set(W::node(index));
-            }
-            None => {
-                inner.set(endpoint);
-                // SAFETY: the empty lane receives this exact first and last node.
-                if FRONT {
-                    if let Some(tail) = head.tail() {
-                        tail.set_last(Some(index));
-                    }
-                } else {
-                    unsafe { head.set_first(Some(index)) };
+        let adjacent = adjacent.map(|(adjacent, hook)| {
+            let neighbor = if FRONT { hook.previous } else { hook.next };
+            neighbor.set(W::node(index));
+            W::node(adjacent)
+        });
+        let word = adjacent.unwrap_or(endpoint);
+        self.previous.set(if FRONT { endpoint } else { word });
+        self.next.set(if FRONT { word } else { endpoint });
+        if adjacent.is_none() {
+            // SAFETY: the empty lane receives this exact first and last node.
+            if FRONT {
+                if let Some(tail) = head.tail() {
+                    tail.set_last(Some(index));
                 }
+            } else {
+                unsafe { head.set_first(Some(index)) };
             }
         }
         // SAFETY: the retained lane's adjacent edge was repaired above.

@@ -2,11 +2,10 @@ use std::mem;
 
 use front::Front;
 
-use crate::depot::{arena::linked::slots, capacity, queue::pool};
+use crate::depot::{arena::linked::slots, capacity};
 
 pub(super) mod front;
 mod raw;
-pub(super) mod vacancy;
 pub(super) mod view;
 
 /// Exclusive access to one exact FIFO lane and its state.
@@ -83,18 +82,17 @@ impl<'a, T, S, const TRACK: bool> Lane<'a, T, S, TRACK> {
 
 impl<'a, T, S> Lane<'a, T, S> {
     /// Reserves one slot and retains the disjoint state loan on both outcomes.
-    pub fn reserve(self) -> (pool::Vacancy<'a, T>, &'a mut S) {
-        let vacant = match self.store.vacant() {
-            Some(claim) => pool::Vacancy::Ready(unsafe { claim.bind(&mut self.slot.queue) }),
-            None => pool::Vacancy::Exhausted,
-        };
+    pub fn reserve(self) -> (Option<slots::Vacant<T, slots::Bound<'a, T>>>, &'a mut S) {
+        let vacant = self
+            .store
+            .vacant()
+            .map(|claim| unsafe { claim.bind(&mut self.slot.queue) });
         (vacant, &mut self.slot.state)
     }
 
     /// Reserves one exact slot until insertion or cancellation.
     pub fn vacant(&mut self) -> Option<slots::Vacant<T, slots::Bound<'_, T>>> {
-        let claim = self.store.vacant()?;
-        Some(unsafe { claim.bind(&mut self.slot.queue) })
+        self.borrow_mut().reserve().0
     }
 
     pub fn push_back(&mut self, value: T) -> Result<(), T> {

@@ -29,14 +29,7 @@ impl<T> Pool<T> {
         Self::allocate(layout)
     }
 
-    pub(in crate::buffer::segments) fn try_reserve(
-        current: segments::Count,
-        required: segments::Count,
-    ) -> Result<Self, crate::alloc::Error> {
-        let layout = Parts::<T>::try_reserve(current, required)?;
-        Self::allocate(layout)
-    }
-
+    #[inline]
     fn allocate(layout: Parts<T>) -> Result<Self, crate::alloc::Error> {
         let heap = layout.bundle.layout();
         let fields = layout.bundle.try_allocate()?;

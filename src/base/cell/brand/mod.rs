@@ -30,7 +30,7 @@ pub struct Token<B: Brand> {
 impl<B: Brand> Token<B> {
     pub const fn bind<T>(&self, value: T) -> brand::Value<B, T> {
         brand::Value {
-            value: self.token.proof().bind(value),
+            value: values::Value::new(value),
         }
     }
 }

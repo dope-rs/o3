@@ -278,6 +278,21 @@ where
 const _: () = {
     assert!(size_of::<slab::Occupied<entries::Busy<'static, u64>>>() == 2 * size_of::<usize>());
     assert!(
+        size_of::<Option<slab::Occupied<entries::Busy<'static, u64>>>>() == 2 * size_of::<usize>()
+    );
+    assert!(
+        size_of::<Option<slab::Vacant<entries::Pending<'static, u64>>>>() == 2 * size_of::<usize>()
+    );
+    assert!(
+        size_of::<
+            Option<
+                slab::Staged<
+                    crate::mem::Lease<entries::Busy<'static, u64>, crate::mem::lease::Open>,
+                >,
+            >,
+        >() == 2 * size_of::<usize>()
+    );
+    assert!(
         size_of::<slab::Occupied<entries::Busy<'static, u64>, (), false>>()
             == size_of::<slab::Occupied<entries::Busy<'static, u64>>>()
     );

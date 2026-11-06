@@ -38,11 +38,11 @@ impl<S: crate::depot::raw::KeyRead<P>, P, const REVERSE: bool> Iter<S, P, REVERS
     ) -> Option<crate::depot::raw::Proof<(&S, links::Index), Initialized<P>>> {
         let index = self.next?;
         // SAFETY: the source has retained this endpoint or its predecessor's neighbor.
-        let entry = S::entry(unsafe { crate::depot::raw::Proof::new((&self.source, index)) });
+        let link = S::link(unsafe { crate::depot::raw::Proof::new((&self.source, index)) });
         self.next = if REVERSE {
-            entry.predecessor()
+            link.raw.prev_index()
         } else {
-            entry.successor()
+            link.raw.next_index()
         };
         // SAFETY: advancing only the iterator leaves the same source and slot intact.
         Some(unsafe { crate::depot::raw::Proof::new((&self.source, index)) })
@@ -55,7 +55,7 @@ impl<S: crate::depot::raw::KeyRead<P>, P> Iter<S, P> {
         live: crate::depot::raw::Proof<(S, links::Index), Initialized<P>>,
     ) -> Option<crate::depot::raw::Proof<(S, links::Index), Initialized<P>>> {
         // SAFETY: KeyRead preserves this exact member and permits only shared traversal.
-        let next = S::entry(unsafe { live.as_ref() }).successor()?;
+        let next = S::link(unsafe { live.as_ref() }).raw.next_index()?;
         let (source, _) = live.into_inner();
         // SAFETY: Read retains this member, its linked successor, and their source.
         Some(unsafe { crate::depot::raw::Proof::new((source, next)) })

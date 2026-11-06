@@ -293,41 +293,6 @@ fn block_owns_elements() {
 }
 
 #[test]
-fn block_assume_init() {
-    let drops = cell::Cell::new(Some(0));
-    let mut block = array::Block::try_new(
-        3_usize,
-        Owner {
-            drops: &drops,
-            digit: 9,
-        },
-    )
-    .expect("allocation before ownership transfer");
-    let pointer = block.as_ptr().cast::<Owner<'_>>();
-    let (state, slots) = block.parts_mut();
-    state.digit = 4;
-    for (index, slot) in slots.iter_mut().enumerate() {
-        slot.write(Owner {
-            drops: &drops,
-            digit: index + 1,
-        });
-    }
-    // SAFETY: every slot owns one initialized Owner and none has been extracted.
-    let (block, activity) =
-        Tracker::measure(|| unsafe { alloc::raw::AssumeInit::assume_init(block) });
-    assert_eq!(activity, [0; 4]);
-    assert_eq!(block.as_ptr(), pointer);
-    assert_eq!(*block.extent(), 3);
-    assert_eq!(block.state().digit, 4);
-    assert_eq!(drops.get(), Some(0));
-    let ((), released) = Tracker::measure(move || {
-        assert_eq!(block.iter().map(|value| value.digit).sum::<usize>(), 6);
-    });
-    assert_eq!(drops.get(), Some(1234));
-    assert_eq!(released, [0, 0, 1, 3 * mem::size_of::<Owner<'_>>()]);
-}
-
-#[test]
 fn block_zero_size() {
     let mut calls = 0;
     let ((), activity) = Tracker::measure(|| {

@@ -9,10 +9,10 @@ pub enum Error {
         error: rc::Error,
     },
     Resident {
-        index: usize,
+        index: u32,
         current: usize,
         added: usize,
     },
 }
 
-const _: () = assert!(size_of::<Error>() <= 4 * size_of::<usize>());
+const _: () = assert!(size_of::<Error>() <= 3 * size_of::<usize>());

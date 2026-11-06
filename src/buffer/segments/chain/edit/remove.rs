@@ -108,8 +108,12 @@ impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
         self.take_front().0
     }
 
+    #[inline(always)]
     pub(in crate::buffer::segments) fn take_front(self) -> (segments::Item<T>, Remaining) {
-        self.detach().take()
+        let mut removed = self.detach();
+        let rest = removed.finish().1;
+        let owner = removed.owner.take().0;
+        (owner, rest)
     }
 
     pub(in crate::buffer::segments) fn discard(self) -> (hold::Charge, Remaining) {
@@ -133,12 +137,7 @@ impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
 }
 
 impl<T: buffer::raw::Segment, H: Handle<T>> Removed<'_, T, H> {
-    fn take(mut self) -> (segments::Item<T>, Remaining) {
-        let rest = self.finish().1;
-        let owner = self.owner.take().0;
-        (owner, rest)
-    }
-
+    #[inline(always)]
     fn finish(&mut self) -> (hold::Charge, Remaining) {
         let len = self.owner.get().len().get();
         let resident = buffer::Residency::resident(self.owner.get());

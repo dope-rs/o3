@@ -13,12 +13,64 @@ pub(super) mod group;
 pub(super) mod lane;
 pub(in crate::depot::queue::round) mod stores;
 
+type Block<T> =
+    alloc::raw::Block<stores::Capacity<T>, (), alloc::raw::Initialized, stores::Node<T>>;
+
 /// Stable resident values partitioned among runtime FIFO lanes and active groups.
 #[derive(Debug)]
 pub struct Lanes<T, const G: usize, const N: usize = 0> {
-    pub(in crate::depot::queue::round) block:
-        alloc::raw::Block<stores::Capacity<T>, (), alloc::raw::Initialized, stores::Node<T>>,
+    pub(in crate::depot::queue::round) block: Block<T>,
     pub(in crate::depot::queue::round) groups: [links::Cycle; G],
+}
+
+/// # Safety
+/// Both fields belong to the same live owner with nonzero G; index is an admitted lane.
+unsafe fn join<'a, T, const G: usize>(
+    block: &'a Block<T>,
+    groups: &'a [links::Cycle; G],
+    index: links::Index,
+) -> round::Join<'a, [stores::Node<T>], [stores::Track]> {
+    let lanes = block.tail();
+    round::Join {
+        hooks: block.as_ref(),
+        lanes,
+        entries: &unsafe { lanes.get_unchecked(index.get()) }.entries,
+        active: &groups[index.get() % G],
+        index,
+    }
+}
+
+/// # Safety
+/// Both fields belong to the same live owner with nonzero G. Position retains
+/// its admitted resident and destination; lane is its current membership, or
+/// None proves detachment. No other topology mutation may intervene until commit.
+pub(super) unsafe fn push_from<T, const G: usize>(
+    block: &Block<T>,
+    groups: &[links::Cycle; G],
+    position: round::Position,
+    lane: Option<links::Index>,
+) {
+    let index = position.index;
+    let vacant = if let Some(lane) = lane {
+        // SAFETY: lane retains this resident's exact membership until removal.
+        round::Join::remove(unsafe {
+            crate::depot::raw::Proof::new((join(block, groups, lane), index))
+        })
+    } else {
+        // SAFETY: None proves this exact admitted hook is detached.
+        unsafe {
+            links::Detached::new(
+                crate::depot::raw::Hooks::hook_raw(block.as_ref(), index),
+                index,
+            )
+        }
+    };
+    // SAFETY: position admits the destination against these same-owner fields.
+    let target = unsafe { join(block, groups, position.lane) };
+    // SAFETY: the detached resident and admitted destination share this owner.
+    round::Join::push(unsafe { crate::depot::raw::Proof::new((target, vacant)) });
+    // SAFETY: position admits this resident's disjoint ownership cell.
+    unsafe { block.values().get_unchecked(index.get()) }.set(position.lane);
 }
 
 impl<T, const G: usize> Lanes<T, G> {
@@ -32,6 +84,15 @@ impl<T, const G: usize> Lanes<T, G> {
 }
 
 impl<T, const G: usize, const N: usize> Lanes<T, G, N> {
+    /// # Safety
+    /// `index` was admitted against this exact owner's lane extent.
+    pub(in crate::depot::queue::round) unsafe fn join(
+        &self,
+        index: links::Index,
+    ) -> round::Join<'_, [stores::Node<T>], [stores::Track]> {
+        unsafe { join(&self.block, &self.groups, index) }
+    }
+
     /// Allocates the lane extent carried by this owner's type.
     pub fn try_fixed(capacity: usize) -> Result<Self, alloc::Error>
     where

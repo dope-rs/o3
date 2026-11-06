@@ -50,7 +50,10 @@ impl<K, V, const N: usize> Table<K, V, N> {
         use planes::map::vacancy::Place;
 
         let place = Place::try_new(self, index, key)?;
-        map::raw::Spare::try_reserve(place, hash, key.as_ref()).map(Into::into)
+        let key = key.as_ref();
+        // SAFETY: Place retains installed < capacity < buckets under this exclusive loan.
+        unsafe { map::raw::Probe::spare(place, hash, |value| value.as_ref() == key) }
+            .map(Into::into)
     }
 
     pub fn get<Q: Eq + ?Sized>(&self, hash: u64, key: &Q) -> Option<&Record<K, V>>

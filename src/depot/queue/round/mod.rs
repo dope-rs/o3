@@ -154,6 +154,7 @@ const _: () = {
         mem::size_of::<Set<()>>()
             == mem::size_of::<slab::Store<()>>() + 2 * mem::size_of::<usize>()
     );
+    assert!(mem::size_of::<Set<u64>>() == 6 * mem::size_of::<usize>());
     assert!(mem::size_of::<Option<Set<()>>>() == mem::size_of::<Set<()>>());
 };
 

@@ -35,11 +35,14 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
         Self::try_build(source, handle)
     }
 
+    #[inline(always)]
     pub(in crate::buffer::segments) fn try_reserve(
         source: S,
         current: segments::Count,
     ) -> Result<Self, S::Error> {
-        let handle = Pool::try_reserve(current, source.count());
+        let handle = handles::Parts::<T>::try_reserve(current, source.count())
+            .map_err(crate::alloc::Error::from)
+            .and_then(Pool::allocate);
         Self::try_build(source, handle)
     }
 
@@ -56,6 +59,7 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
 }
 
 impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
+    #[inline(always)]
     pub fn collect(self) -> S::Output
     where
         S: buffer::raw::Sequence<T, Item = segments::Item<T>>,
@@ -64,12 +68,12 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
         let mut source = source.owners();
         let nodes = handles::nodes(&handle);
         let mut writer = Writer::new(nodes);
-        for value in source.by_ref() {
+        source.0.by_ref().for_each(|value| {
             let claim = unsafe { slots::Vacant::reserve(nodes) };
             unsafe { writer.push_claim(claim, value) };
-        }
+        });
         let links = writer.into_links();
-        Self::finish(handle, links, source)
+        Self::finish(handle, links, &source.1)
     }
 
     pub fn try_collect<E>(self) -> Result<S::Output, E>
@@ -80,21 +84,21 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
         let mut source = source.owners();
         let nodes = handles::nodes(&handle);
         let mut writer = Writer::new(nodes);
-        for value in source.by_ref() {
+        for value in source.0.by_ref() {
             let value = value?;
             let claim = unsafe { slots::Vacant::reserve(nodes) };
             unsafe { writer.push_claim(claim, value) };
         }
         let links = writer.into_links();
-        Ok(Self::finish(handle, links, source))
+        Ok(Self::finish(handle, links, &source.1))
     }
 
     fn finish(
         handle: Pool<T>,
         links: ends::Exclusive<slots::Index>,
-        total: impl buffer::raw::Total,
+        total: &impl buffer::raw::Total,
     ) -> S::Output {
-        let key = match buffer::raw::Total::count(&total).kind() {
+        let key = match buffer::raw::Total::count(total).kind() {
             segments::Kind::Empty => Key::EMPTY,
             segments::Kind::One => Key::single(links.head_raw()),
             segments::Kind::Many(count) => {
@@ -106,8 +110,8 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
                     unsafe { slots::Vacant::reserve(descs) }.insert(handles::Descriptor::new(
                         links,
                         count.nonzero(),
-                        buffer::raw::Total::len(&total),
-                        buffer::raw::Total::resident(&total),
+                        buffer::raw::Total::len(total),
+                        buffer::raw::Total::resident(total),
                     ));
                 let key = Key::multi(claim.index());
                 unsafe { claim.publish() };

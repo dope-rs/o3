@@ -52,11 +52,7 @@ impl<const CAPACITY: usize> Pool<state::Initialized, owners::Plain<Width<CAPACIT
     ) -> Option<Span<owners::Plain<Width<CAPACITY>>, Owned, state::Initialized>> {
         const { assert!(PARTS * WIDTH == CAPACITY, "width") }
         let span = self.acquire()?;
-        Some(buffer::raw::Copy::copy(CopyIn {
-            span,
-            sources: sources.map(|source| source.as_slice()),
-            len: CAPACITY,
-        }))
+        Some(span.copy_in(sources.map(|source| source.as_slice()), CAPACITY))
     }
 }
 
@@ -94,12 +90,7 @@ impl<L> Pool<state::Uninit, owners::Plain<L>> {
         let Some(span) = self.acquire() else {
             return Ok(None);
         };
-        let span = buffer::raw::Copy::copy(CopyIn {
-            span,
-            sources: [bytes],
-            len: bytes.len(),
-        });
-        Ok(Some(span.freeze()))
+        Ok(Some(span.copy_in([bytes], bytes.len()).freeze()))
     }
 
     #[must_use]
@@ -115,7 +106,8 @@ impl<L> Pool<state::Uninit, owners::Plain<L>> {
 
 impl<S: state::State, K: crate::buffer::raw::Backing> Drop for Pool<S, K> {
     fn drop(&mut self) {
-        owners::Header::release(self.core);
+        owners::Header::detach(self.core);
+        owners::Header::retire(self.core);
     }
 }
 
@@ -132,11 +124,7 @@ impl<'d> Pool<state::Uninit, owners::Resident<'d>> {
         reserve: staging::Reserve<&Self, &owners::Measured<I>>,
     ) -> Option<Span<owners::Resident<'d>>> {
         let (pool, _, src) = reserve.into_parts();
-        Some(buffer::raw::Copy::copy(CopyIn {
-            span: pool.acquire()?,
-            sources: src.input(),
-            len: src.len(),
-        }))
+        Some(pool.acquire()?.copy_in(src.input(), src.len()))
     }
 }
 
@@ -203,24 +191,11 @@ mod cursor;
 
 mod span;
 
-struct CopyIn<K: crate::buffer::raw::Backing, M, S, I> {
-    span: Span<K, M, S>,
-    sources: I,
-    len: usize,
-}
-
-// SAFETY: fresh-slot admission proves all sources fit this retained exclusive span.
-unsafe impl<K: crate::buffer::raw::Backing, M, S, I: buffer::raw::SliceExt> buffer::raw::Copy
-    for CopyIn<K, M, S, I>
-{
-    type Output = Span<K, M, S>;
-
-    fn parts(&mut self) -> (impl buffer::raw::SliceExt, *mut u8, usize) {
-        (&self.sources, self.span.entry().data(), 0)
-    }
-
-    unsafe fn publish(mut self) -> Self::Output {
-        self.span.len = self.len as u32;
-        self.span
+impl<K: crate::buffer::raw::Backing, M, S> Span<K, M, S> {
+    fn copy_in<I: buffer::raw::SliceExt>(mut self, sources: I, len: usize) -> Self {
+        // SAFETY: fresh-slot admission proves all sources fit this retained exclusive span.
+        unsafe { sources.copy_to(self.entry().data()) };
+        self.len = len as u32;
+        self
     }
 }

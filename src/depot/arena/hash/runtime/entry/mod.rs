@@ -141,7 +141,8 @@ impl<'a, T, Tag> entry::Live<'a, T, Tag, Staged> {
     where
         T: AsRef<Q>,
     {
-        map::raw::Spare::try_reserve(self, hash, key)
+        // SAFETY: the staged slot keeps indexed < live <= capacity < buckets.
+        unsafe { map::raw::Probe::spare(self, hash, |value| value.as_ref() == key) }
     }
     pub fn remove(mut self) -> T {
         hash::Entry::vacate(&mut self);
@@ -229,5 +230,3 @@ unsafe impl<T, Tag> map::raw::Query for entry::Live<'_, T, Tag, entry::Staged> {
         (owner, key)
     }
 }
-// SAFETY: the live unindexed slot proves indexed < live <= capacity < buckets.
-unsafe impl<T, Tag> map::raw::Spare for entry::Live<'_, T, Tag, entry::Staged> {}

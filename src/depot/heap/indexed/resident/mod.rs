@@ -150,7 +150,9 @@ impl<P: Ord, T: Values, C: alloc::raw::Extent> Min<P, T, C> {
 
     /// Retires every priority in linear time, preserving pending event order.
     pub fn clear(&mut self, convert: impl FnMut(&mut T::Common, T::Scheduled) -> T::Idle) {
-        raw::clear(self, convert);
+        if !self.order.is_empty() {
+            raw::clear(self, convert);
+        }
     }
 }
 

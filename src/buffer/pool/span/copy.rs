@@ -20,25 +20,14 @@ impl<'a, const N: usize> Copy<'a, N> {
     }
 
     /// Initializes and freezes the retained lease without checking bounds again.
-    pub fn commit(self) -> pool::Span<owners::Plain, pool::Owned, pool::Frozen> {
-        buffer::raw::Copy::copy(self)
-    }
-}
+    pub fn commit(mut self) -> pool::Span<owners::Plain, pool::Owned, pool::Frozen> {
+        use buffer::raw::SliceExt as _;
 
-// SAFETY: Copy retains every measured source and its admitted exclusive lease suffix.
-unsafe impl<const N: usize> buffer::raw::Copy for Copy<'_, N> {
-    type Output = pool::Span<owners::Plain, pool::Owned, pool::Frozen>;
-
-    fn parts(&mut self) -> (impl buffer::raw::SliceExt, *mut u8, usize) {
-        (
-            *self.source.slices(),
-            self.target.entry().data(),
-            self.target.len(),
-        )
-    }
-
-    unsafe fn publish(mut self) -> Self::Output {
-        self.target.len += self.source.len().get();
+        let target = self.target.entry().data();
+        let start = self.target.len();
+        // SAFETY: Copy retains every measured source and its admitted disjoint lease suffix.
+        unsafe { self.source.slices().copy_to(target.add(start)) };
+        self.target.len = start as u32 + self.source.len().get();
         self.target.freeze()
     }
 }

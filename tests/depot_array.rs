@@ -22,10 +22,6 @@ fn copy_shape() {
     assert!(!mem::needs_drop::<copy::Vec<u64, 4>>());
     assert!(!mem::needs_drop::<copy::IntoIter<u64, 4>>());
     assert_eq!(
-        mem::size_of::<copy::IntoIter<u64, 4>>(),
-        mem::size_of::<copy::Vec<u64, 4>>()
-    );
-    assert_eq!(
         mem::size_of::<copy::Vec<u64, 4>>(),
         mem::size_of::<[u64; 4]>() + mem::size_of::<usize>()
     );
@@ -133,35 +129,25 @@ fn sorted_membership() {
 }
 
 #[test]
-fn selects_without_mutation() {
-    let source = copy::Vec::from([7, 2, 5, 4]);
-    let mut selected = copy::Vec::from([0; 4]);
-    let ((), allocs) = Tracker::measure(|| {
-        selected.filter_from(&source, |value| value % 2 == 0);
-    });
-    assert_eq!(allocs, [0; 4]);
-    assert_eq!(source.as_slice(), [7, 2, 5, 4]);
-    assert_eq!(selected.as_slice(), [2, 4]);
-    let mut retained = source;
-    retained.retain(|value| value % 2 == 0);
-    assert_eq!(retained.as_slice(), selected.as_slice());
+fn retains_original_slots() {
+    let mut values = std::hint::black_box(copy::Vec::from([[2_u64; 6], [7; 6], [4; 6], [5; 6]]));
+    let base = values.as_ptr();
     let mut calls = 0;
-    selected.filter_from(&retained, |_| {
-        calls += 1;
-        true
+    let ((), allocs) = Tracker::measure(|| {
+        values.retain(|value| {
+            assert_eq!(ptr::from_ref(value), base.wrapping_add(calls));
+            calls += 1;
+            value[0] % 2 == 0
+        });
     });
-    assert_eq!(calls, 2);
-    assert_eq!(selected.as_slice(), retained.as_slice());
-    selected.filter_from(&source, |_| false);
-    assert!(selected.is_empty());
-    calls = 0;
-    selected.retain(|_| {
-        calls += 1;
-        true
-    });
-    assert_eq!(calls, 0);
-    selected.filter_from(&source, |_| true);
-    assert_eq!(selected.as_slice(), source.as_slice());
+    assert_eq!(calls, 4);
+    assert_eq!(values.as_slice(), [[2; 6], [4; 6]]);
+    assert_eq!(allocs, [0; 4]);
+    values.retain(|_| true);
+    assert_eq!(values.as_slice(), [[2; 6], [4; 6]]);
+    values.retain(|_| false);
+    values.retain(|_| unreachable!("empty"));
+    assert!(values.is_empty());
 }
 
 #[test]

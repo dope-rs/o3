@@ -1,18 +1,17 @@
 use regions::Initialize as _;
 
-use crate::buffer::{pool::owners, storage::regions};
 pub(in crate::buffer::resident) mod exact;
 pub(in crate::buffer::resident) mod state;
 
 use std::ops;
 
-use storage::{backing, provided, range};
+use storage::{backing, provided, range, regions};
 
 use crate::{
     buffer,
     buffer::{
         bytes::bounded,
-        pool, resident,
+        resident,
         resident::copy,
         storage,
         write::{consume, consume::Consume},
@@ -110,38 +109,10 @@ impl<'d> Shared<'d> {
 // SAFETY: shared access preserves the original immutable extent.
 unsafe impl buffer::raw::Source for Shared<'_> {}
 impl buffer::Residency for Shared<'_> {
+    #[inline]
     fn resident(&self) -> usize {
-        self.region.owner().resident()
-    }
-}
-impl<'a: 'd, 'd> From<&'a [u8]> for Shared<'d> {
-    fn from(bytes: &'a [u8]) -> Self {
-        Self {
-            region: bytes.into(),
-        }
-    }
-}
-impl<'d> From<storage::Shared> for Shared<'d> {
-    fn from(shared: storage::Shared) -> Self {
-        Self {
-            region: shared.into(),
-        }
-    }
-}
-impl<'d> From<storage::Shared<crate::buffer::raw::Rc<resident::Budget<'d>>>> for Shared<'d> {
-    fn from(shared: storage::Shared<crate::buffer::raw::Rc<resident::Budget<'d>>>) -> Self {
-        Self {
-            region: shared.into(),
-        }
-    }
-}
-impl<'d, L> From<storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>>
-    for Shared<'d>
-{
-    fn from(shared: storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>) -> Self {
-        Self {
-            region: shared.into(),
-        }
+        use backing::Owner as _;
+        self.region.owner().root().map_or(0, backing::Root::bytes)
     }
 }
 impl Consume for Shared<'_> {
@@ -166,18 +137,9 @@ impl ops::Deref for Shared<'_> {
         &self.region
     }
 }
-impl<'d> From<storage::Shared<Option<provided::Account<'d>>>> for Shared<'d> {
-    fn from(shared: storage::Shared<Option<provided::Account<'d>>>) -> Self {
-        Self {
-            region: shared.into(),
-        }
-    }
-}
 impl<'d> From<bounded::Value<storage::Shared<Option<provided::Account<'d>>>>> for Shared<'d> {
     fn from(bytes: bounded::Value<storage::Shared<Option<provided::Account<'d>>>>) -> Self {
-        Self {
-            region: bytes.0.into(),
-        }
+        bytes.0.into()
     }
 }
 const _: () = {

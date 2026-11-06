@@ -105,17 +105,19 @@ impl Chain {
         hooks: &H,
         index: links::Index,
     ) {
-        use crate::depot::raw::{Detach, Insert, Removal};
+        use crate::depot::raw::{Detach, EndpointHook, Removal};
 
         // SAFETY: caller supplies exact store identity and reciprocal source/target edges.
         let removal = unsafe { Detach::new(self, hooks, index) };
-        let tail = target.last();
         // SAFETY: the original target tail belongs to this same retained hook store.
-        let neighbor = tail.map(|tail| unsafe { hooks.hook_raw(tail) });
+        let adjacent = target
+            .last()
+            .map(|tail| (tail, EndpointHook::from(unsafe { hooks.hook_raw(tail) })));
         let (hook, index) = Removal::commit(removal).into_parts();
-        let edge = links::Edge::new(index, links::Index::encode(tail), links::Index::END);
         // SAFETY: detachment preserves the target tail because index is not that tail.
-        unsafe { Insert::<(), false>::resolved(target, edge, hook, neighbor) }.commit();
+        unsafe {
+            EndpointHook::from(hook).push::<false, _>(target, index, links::Index::END, adjacent)
+        };
     }
 }
 

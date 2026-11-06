@@ -35,7 +35,10 @@ impl<V> Table<V> {
     ) -> (Entry<'_, V>, C) {
         let (table, context) = source.into_inner();
         // SAFETY: the consumed admission retains logical and directory capacity.
-        let entry = unsafe { map::raw::Probe::spare(table, hash, matches) };
+        let entry = match unsafe { map::raw::Probe::spare(table, hash, matches) } {
+            Ok(entry) => map::Entry::Vacant(entry),
+            Err(entry) => map::Entry::Occupied(entry),
+        };
         (entry, context)
     }
 

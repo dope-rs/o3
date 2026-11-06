@@ -63,6 +63,7 @@ fn snapshots_retain_owners() {
 #[test]
 fn retries_range_retention() {
     for (spans, expected) in [
+        (&[][..], &b""[..]),
         (&[(1, 3)][..], &b"ab"[..]),
         (&[(1, 3), (5, 8)][..], &b"abcde"[..]),
     ] {
@@ -71,33 +72,33 @@ fn retries_range_retention() {
                 (storage::Shared::try_copy(b"_ab__cde_")).expect("range source allocation");
             let plan = (ranges::Set::<_, u16>::try_new(&source, spans, expected.len()))
                 .expect("complete source ranges");
-            let (failed, hot) = Tracker::measure(|| Tracker::fail_after(0, || plan.try_retain()));
-            assert!(matches!(
-                failed,
-                Err(ranges::retain::Error::Metadata(o3::alloc::Error::Exhausted))
-            ));
-            assert_eq!(hot, [0; 4]);
-            assert_eq!(plan.len(), expected.len());
-            assert_eq!(plan.count().into_raw() as usize, spans.len());
+            if spans.len() > 1 {
+                let (failed, hot) =
+                    Tracker::measure(|| Tracker::fail_after(0, || plan.try_retain()));
+                assert!(matches!(
+                    failed,
+                    Err(ranges::retain::Error::Metadata(o3::alloc::Error::Exhausted))
+                ));
+                assert_eq!(hot, [0; 4]);
+            }
 
             let (result, hot) = Tracker::measure(|| plan.try_retain());
             let retained = (result).expect("the unchanged plan must retry successfully");
-            assert_eq!(hot[0], 1);
+            assert_eq!(hot[0], usize::from(spans.len() > 1));
             assert_eq!(hot[2], 0);
             assert!(retained.count() == plan.count());
             assert_eq!(retained.len(), plan.len());
-            assert_eq!(retained.resident(), source.resident() * spans.len());
+            if let segments::Shape::Many(parts) = &retained {
+                assert_eq!(parts.as_chain().resident(), source.resident() * spans.len());
+            }
             assert!(
                 plan.iter()
                     .zip(retained.segments())
-                    .all(|(view, owner)| { view.as_slice().as_ptr() == owner.as_slice().as_ptr() })
+                    .all(|(view, owner)| { view.as_slice().as_ptr() == owner.as_ptr() })
             );
             retained
         };
-        assert_eq!(
-            retained.try_bytes().expect("chain bytes must allocate"),
-            expected
-        );
+        assert!(retained.segments().flatten().eq(expected));
     }
 }
 

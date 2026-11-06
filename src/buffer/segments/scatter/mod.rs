@@ -41,6 +41,8 @@ pub struct Take<'cursor, 'data, C> {
     data: marker::PhantomData<&'data [u8]>,
 }
 
+const _: () = assert!(size_of::<Take<'static, 'static, &'static [u8]>>() == 2 * size_of::<usize>());
+
 impl<'cursor, 'data, C> Take<'cursor, 'data, C> {
     pub fn new(cursor: &'cursor mut C, limit: usize) -> Self
     where
@@ -68,16 +70,11 @@ impl<'data, C: buffer::raw::Scatter<'data>> Take<'_, 'data, C> {
     pub fn next_chunk<const MAX: usize>(&mut self) -> Option<buffer::raw::Chunk<'data, MAX>> {
         const { assert!(MAX > 0) };
         let cap = NonZero::new(self.remaining.min(MAX))?;
-        Some(self.advance(cap))
-    }
-
-    fn advance<const MAX: usize>(&mut self, cap: NonZero<usize>) -> buffer::raw::Chunk<'data, MAX> {
         // SAFETY: the exclusive cursor borrow retains this admitted prefix.
         // Exact advancement consumes at most cap, which fits both remaining counts.
-        let left = unsafe { NonZero::new_unchecked(self.cursor.remaining()) };
-        let chunk = unsafe { self.cursor.advance(cap, left) };
+        let chunk = unsafe { self.cursor.advance(cap) };
         self.remaining -= chunk.len().get();
-        chunk
+        Some(chunk)
     }
 
     pub(in crate::buffer) fn finish(mut self) {
@@ -91,8 +88,7 @@ impl<'data, C: buffer::raw::Scatter<'data>> Iterator for Take<'_, 'data, C> {
     type Item = buffer::raw::Chunk<'data>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let cap = NonZero::new(self.remaining)?;
-        Some(self.advance(cap))
+        self.next_chunk::<{ usize::MAX }>()
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

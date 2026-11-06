@@ -90,12 +90,7 @@ impl<'id, T, Tag, const MAX: u32, C: crate::depot::raw::Count> Scope<'_, 'id, T,
         };
         // SAFETY: this scope's branded parent is initialized and distinct
         // from the reserved vacancy, which has no Key until the splice commits.
-        let splice = match parent {
-            Some(parent) => {
-                slot::Splice::Parent(unsafe { crate::depot::raw::Proof::new((slot, parent.index)) })
-            }
-            None => slot::Splice::Root(slot),
-        };
+        let splice = unsafe { slot::Splice::new(slot, parent.map(|parent| parent.index)) };
         let index = splice.insert(build).index;
         Ok(Edit {
             child: self.inserted(index),

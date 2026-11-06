@@ -42,6 +42,7 @@ impl<'a, T: buffer::raw::Segment, H: Handle<T>> Front<'a, T, H> {
     }
 
     /// Removes and returns the admitted nonempty front owner.
+    #[inline(always)]
     pub fn take(self) -> segments::Item<T> {
         match self.position() {
             handles::Occupied::Single(index) => edit::Single {

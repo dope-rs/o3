@@ -1,3 +1,3 @@
-/// Exclusive detached membership; ASSIGN records whether the destination must be written.
+/// Exclusive detached membership.
 #[derive(Debug)]
-pub struct Idle<const ASSIGN: bool>;
+pub struct Idle;

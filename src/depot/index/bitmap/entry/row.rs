@@ -152,3 +152,8 @@ impl<S, P, M, W> Row<S, P, M, W> {
 type Mutable<'a, S, P, W> = Row<&'a mut S, <S as crate::depot::raw::Words<W>>::Plane, P, W>;
 
 type Phase<M, W> = marker::PhantomData<fn(M, W) -> (M, W)>;
+
+const _: () = {
+    assert!(size_of::<Row<&()>>() == 2 * size_of::<usize>());
+    assert!(size_of::<Option<Row<&()>>>() == size_of::<Row<&()>>());
+};

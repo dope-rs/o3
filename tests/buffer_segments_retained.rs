@@ -104,12 +104,13 @@ fn classifies_without_copy() {
         .try_push(owner)
         .as_ref()
         .expect("metadata admits the owner");
-    let owner = match single.into_shape() {
+    let single = single.into_shape();
+    assert!(single.count() == segments::Count::ONE);
+    let owner = match single {
         segments::Shape::One(owner) => Some(owner),
         segments::Shape::Empty | segments::Shape::Many(_) => None,
     }
     .expect("single classification retains the nonempty item");
-    assert!(owner.count() == segments::Count::ONE);
     assert_eq!(owner.as_slice().as_ptr(), ptr);
 
     let mut multi = (pool.try_chain()).expect("metadata edge must fit");

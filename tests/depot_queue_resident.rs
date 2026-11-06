@@ -3,7 +3,7 @@ pub mod common;
 use std::{mem, num::NonZero};
 
 use common::alloc::system::Tracker;
-use o3::depot::queue::resident::{self, Drain, Fixed, Take, fifo};
+use o3::depot::queue::resident::{self, Fixed, fifo};
 
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
@@ -27,8 +27,8 @@ fn retains_owner_and_slot() {
         .lane::<1>()
         .try_keep(&mut active, 33)
         .expect("move lane");
-    assert!(owner.lane::<0>().take_one() == Take::Empty);
-    assert!(owner.lane::<1>().take_one() == Take::Item(33));
+    assert!(owner.lane::<0>().take_one().is_none());
+    assert!(owner.lane::<1>().take_one() == Some(33));
     assert_eq!(
         owner.lane::<0>().try_keep(&mut spare, 44),
         Err(fifo::Reject::Full { index: 0 }),
@@ -62,7 +62,7 @@ fn scope_retains_admission() {
         fifo.lane(index)
             .try_keep(&mut slot, *source)
             .expect("scoped value");
-        assert!(fifo.first().take_one() == Take::Item(*source));
+        assert!(fifo.first().take_one() == Some(*source));
     })
     .expect("scoped owner");
 }
@@ -85,7 +85,7 @@ fn compacts_scoped_indices() {
         for compact in [first, upper, last] {
             let index = compact.into_index();
             assert_eq!(fifo::Compact::try_from(index), Ok(compact));
-            assert!(fifo.lane(index).take_one() == Take::Empty);
+            assert!(fifo.lane(index).take_one().is_none());
         }
         assert_eq!(upper.after(None), Some(first));
         assert_eq!(
@@ -129,9 +129,9 @@ fn drains_and_reuses() {
         );
         assert!(queue.take_next().is_none());
         for value in [40, 41, 50] {
-            assert!(queue.drain_next() == Drain::Item(value));
+            assert!(queue.drain_next() == Some(value));
         }
-        assert!(queue.drain_next() == Drain::Done);
+        assert!(queue.drain_next().is_none());
         assert!(!queue.is_draining());
         lane0.try_keep(&mut first, 60).expect("drain ended");
     });
@@ -170,7 +170,7 @@ fn cancellation_hands_off_only_taken_lane() {
         assert_eq!(first.cancel(), None);
         assert_eq!(third.cancel(), Some(21));
         assert_eq!(second.cancel(), None);
-        assert!(queue.first().take_one() == Take::Item(90));
+        assert!(queue.first().take_one() == Some(90));
     });
     assert_eq!(hot, [0; 4]);
 }
@@ -196,14 +196,14 @@ fn cancellation_preserves_drain_and_rearm() {
                 .expect("moved lane");
             queue.lane(lane).try_keep(&mut second, 20).expect("second");
             queue.first().try_keep(&mut peer, 90).expect("peer");
-            assert!(queue.lane(lane).take_one() == Take::Item(11));
+            assert!(queue.lane(lane).take_one() == Some(11));
 
             queue.begin_drain();
             assert_eq!(first.cancel(), None);
-            assert!(queue.drain_next() == Drain::Item(20));
+            assert!(queue.drain_next() == Some(20));
             assert_eq!(second.cancel(), None);
-            assert!(queue.drain_next() == Drain::Item(90));
-            assert!(queue.drain_next() == Drain::Done);
+            assert!(queue.drain_next() == Some(90));
+            assert!(queue.drain_next().is_none());
             assert_eq!(peer.cancel(), None);
 
             queue
@@ -214,13 +214,13 @@ fn cancellation_preserves_drain_and_rearm() {
                 .lane(lane)
                 .try_keep(&mut second, 40)
                 .expect("reuse second");
-            assert!(queue.lane(lane).take_one() == Take::Item(30));
+            assert!(queue.lane(lane).take_one() == Some(30));
             queue
                 .lane(lane)
                 .try_keep(&mut first, 31)
                 .expect("rearmed first");
             assert_eq!(first.cancel(), None);
-            assert!(queue.lane(lane).take_one() == Take::Item(40));
+            assert!(queue.lane(lane).take_one() == Some(40));
             assert_eq!(second.cancel(), None);
             assert!(!queue.has_waiters());
         },
@@ -253,9 +253,15 @@ fn storage_is_exact() {
         let (result, cold) = Tracker::measure(|| fifo::Fifo::<usize>::try_new(capacity, lanes));
         assert_eq!(cold, [1, bytes, 0, 0]);
         let queue = result.expect("resident allocation");
-        assert!(queue.first().take_one() == Take::Empty);
+        assert!(queue.first().take_one().is_none());
         for index in 0..lanes.get() {
-            assert!(queue.try_lane(index).expect("allocated lane").take_one() == Take::Empty);
+            assert!(
+                queue
+                    .try_lane(index)
+                    .expect("allocated lane")
+                    .take_one()
+                    .is_none()
+            );
         }
         for index in [lanes.get(), u32::MAX as usize, usize::MAX] {
             let error = queue.try_lane(index).err().expect("outside lane domain");

@@ -68,9 +68,7 @@ impl<T, const N: usize, C: crate::depot::raw::Count> Fifo<T, N, C> {
         tagged::Vacant::try_new::<C>(position)
     }
     pub fn pop_front<const L: usize>(&mut self) -> Option<T> {
-        tagged::Endpoint::constant::<L>(self)
-            .pop_entry()
-            .map(|(_, value)| value)
+        tagged::Endpoint::constant::<L>(self).pop_front()
     }
     pub fn remove_if(&mut self, index: usize, test: impl FnOnce(&T) -> bool) -> Option<T> {
         let entry = tagged::Linked::at(self, index)?;

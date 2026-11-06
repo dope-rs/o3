@@ -1,8 +1,8 @@
-use crate::{buffer, buffer::storage::regions};
+use crate::buffer;
 pub(in crate::buffer::storage) mod bytes;
-use std::{num, ops};
+use std::num;
 
-use storage::{Bytes, alloc};
+use storage::alloc;
 
 use crate::buffer::{
     resident, storage,
@@ -14,22 +14,10 @@ pub(super) mod nonempty;
 
 /// Construction and ownership transitions for one initialized byte allocation.
 #[derive(Debug)]
-#[repr(transparent)]
-pub struct Owned<P: crate::buffer::raw::Policy = (), const CAP: u32 = 0> {
-    pub(in crate::buffer::storage) bytes: Bytes<P, CAP>,
-}
-
-impl<P: crate::buffer::raw::Policy, const CAP: u32> ops::Deref for Owned<P, CAP> {
-    type Target = Bytes<P, CAP>;
-    fn deref(&self) -> &Self::Target {
-        &self.bytes
-    }
-}
-
-impl<P: crate::buffer::raw::Policy, const CAP: u32> ops::DerefMut for Owned<P, CAP> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.bytes
-    }
+#[repr(C)]
+pub struct Owned<P: crate::buffer::raw::Policy = ()> {
+    pub(in crate::buffer::storage) allocation: Option<crate::buffer::raw::Heap<P>>,
+    pub(in crate::buffer::storage) len: u32,
 }
 
 impl Owned {
@@ -52,10 +40,10 @@ impl Owned {
         &mut self,
         target: num::NonZero<u32>,
     ) -> Result<(), crate::alloc::Exhausted> {
-        match &mut self.bytes.allocation {
+        match &mut self.allocation {
             Some(heap) => heap.try_reserve(target),
             None => crate::buffer::raw::Heap::try_new((), target)
-                .map(|heap| self.bytes.allocation = Some(heap)),
+                .map(|heap| self.allocation = Some(heap)),
         }
         .map_err(alloc::Error::into_alloc)
     }
@@ -83,84 +71,63 @@ impl Owned {
     }
 }
 
-impl<P: crate::buffer::raw::Policy, const CAP: u32> Owned<P, CAP> {
+impl<P: crate::buffer::raw::Policy> Owned<P> {
     pub fn try_extend(&mut self, src: &[u8]) -> Result<(), consume::Error> {
-        Staging::try_new(&mut self.bytes, [src]).map(buffer::raw::Copy::copy)
-    }
-}
-
-impl<const CAP: u32> Owned<(), CAP> {
-    #[must_use]
-    pub fn freeze(self) -> storage::Shared {
-        let Some(buf) = self.into_shared() else {
-            return storage::Shared::empty(None);
-        };
-        buf.into()
+        Staging::try_new(self, [src]).map(Staging::copy)
     }
 }
 
 impl Owned {
+    #[must_use]
+    #[inline]
+    pub fn freeze(self) -> storage::Shared {
+        self.into_shared().map(Into::into).unwrap_or_default()
+    }
+
     #[must_use]
     pub fn new() -> Self {
         Self::from_heap(None)
     }
 }
 
-impl<P: crate::buffer::raw::Policy, const CAP: u32> AsRef<[u8]> for Owned<P, CAP> {
+impl<P: crate::buffer::raw::Policy> AsRef<[u8]> for Owned<P> {
     fn as_ref(&self) -> &[u8] {
         self.as_slice()
     }
 }
 
-impl<P: crate::buffer::raw::Policy, const CAP: u32> AsMut<[u8]> for Owned<P, CAP> {
+impl<P: crate::buffer::raw::Policy> AsMut<[u8]> for Owned<P> {
     fn as_mut(&mut self) -> &mut [u8] {
         self.as_mut_slice()
     }
 }
 
-impl<P: crate::buffer::raw::Policy, const CAP: u32> Owned<P, CAP> {
-    pub(in crate::buffer) fn try_init(self) -> Result<Option<regions::Init<P>>, Self> {
-        if self.len() != self.capacity() {
-            return Err(self);
-        }
-        match self.bytes.allocation {
-            None => Ok(None),
-            Some(heap) => {
-                // SAFETY: the initialized length equals this live allocation's capacity.
-                Ok(Some(unsafe { regions::Init::new(heap.into_shared()) }))
-            }
-        }
-    }
-
+impl<P: crate::buffer::raw::Policy> Owned<P> {
     pub(in crate::buffer) fn into_shared(
         self,
     ) -> Option<storage::Shared<crate::buffer::raw::Rc<P>>> {
-        let heap = self.bytes.allocation?;
-        let len = num::NonZero::new(self.bytes.len)?;
+        let heap = self.allocation?;
+        let len = num::NonZero::new(self.len)?;
         // SAFETY: Owned retains this live allocation's initialized prefix.
         Some(unsafe { heap.into_shared().into_range(0, len.get()) })
     }
-}
 
-impl<P: crate::buffer::raw::Policy> Owned<P> {
     pub(in crate::buffer) const EMPTY: Self = Self::from_heap(None);
 
     pub(in crate::buffer) const fn from_heap(heap: Option<crate::buffer::raw::Heap<P>>) -> Self {
         Self {
-            bytes: Bytes {
-                allocation: heap,
-                len: 0,
-            },
+            allocation: heap,
+            len: 0,
         }
     }
 }
 
 impl<'d> Owned<resident::Budget<'d>> {
     pub fn try_compact(&mut self) -> Result<(), crate::alloc::Exhausted> {
-        let Some(heap) = &mut self.bytes.allocation else {
+        let Some(heap) = &mut self.allocation else {
             return Ok(());
         };
-        let Some(capacity) = num::NonZero::new(self.bytes.len) else {
+        let Some(capacity) = num::NonZero::new(self.len) else {
             *self = Self::EMPTY;
             return Ok(());
         };
@@ -168,28 +135,7 @@ impl<'d> Owned<resident::Budget<'d>> {
     }
 }
 
-impl<const CAP: u32> Owned<(), CAP> {
-    pub fn try_new() -> Result<Self, crate::alloc::Exhausted> {
-        let state = match num::NonZero::<u32>::new(CAP) {
-            None => None,
-            Some(capacity) => Some(
-                crate::buffer::raw::Heap::try_new((), capacity)
-                    .map_err(alloc::Error::into_alloc)?,
-            ),
-        };
-        Ok(Self {
-            bytes: Bytes {
-                allocation: state,
-                len: 0,
-            },
-        })
-    }
-}
-
-const _: () = {
-    assert!(size_of::<Owned<()>>() == 2 * size_of::<usize>());
-    assert!(size_of::<Owned<(), 1>>() == size_of::<Owned<()>>());
-};
+const _: () = assert!(size_of::<Owned<()>>() == 2 * size_of::<usize>());
 
 /// Unique bytes charged to one resident domain.
 impl<'d> storage::Owned<resident::Budget<'d>> {
@@ -228,26 +174,16 @@ impl<'d> storage::Owned<resident::Budget<'d>> {
         let Some(target) = num::NonZero::new(target as u32) else {
             return Ok(());
         };
-        match &mut self.bytes.allocation {
+        match &mut self.allocation {
             Some(heap) => heap.try_reserve(target)?,
-            None => self.bytes.allocation = Some(crate::buffer::raw::Heap::try_new(*seed, target)?),
+            None => self.allocation = Some(crate::buffer::raw::Heap::try_new(*seed, target)?),
         }
         Ok(())
     }
 
     #[must_use]
     pub fn freeze(self) -> resident::Shared<'d> {
-        let Some(inner) = self.into_shared() else {
-            return resident::Shared::new();
-        };
-        inner.into()
-    }
-
-    pub fn try_freeze(self) -> Result<resident::Exact<'d>, Self> {
-        Ok(match self.try_init()? {
-            Some(inner) => resident::Exact::from_init(inner),
-            None => resident::Exact::new(),
-        })
+        self.into_shared().map(Into::into).unwrap_or_default()
     }
 }
 
@@ -261,4 +197,4 @@ impl Default for Owned {
 }
 
 // SAFETY: shared access cannot change the unique allocation or initialized range.
-unsafe impl<P: crate::buffer::raw::Policy, const CAP: u32> buffer::raw::Source for Owned<P, CAP> {}
+unsafe impl<P: crate::buffer::raw::Policy> buffer::raw::Source for Owned<P> {}

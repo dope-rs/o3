@@ -37,12 +37,11 @@ impl<K> Header<K> {
 }
 
 impl<K: crate::buffer::raw::Backing> Header<K> {
-    pub(in crate::buffer::pool) fn release<S>(core: super::Ptr<K, S>) {
+    pub(in crate::buffer::pool) fn detach<S>(core: super::Ptr<K, S>) {
         core.header().state.set(State::Detached);
-        Self::retire(core);
     }
 
-    pub(super) fn retire<S>(core: super::Ptr<K, S>) {
+    pub(in crate::buffer::pool) fn retire<S>(core: super::Ptr<K, S>) {
         let header = core.header();
         if header.available.get() == header.slots() && matches!(header.state.get(), State::Detached)
         {

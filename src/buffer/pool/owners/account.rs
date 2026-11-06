@@ -205,11 +205,8 @@ impl<'d> Accounts<'d> {
         let seed = unsafe { super::Seed::from_ptr(next) };
         // SAFETY: Slot retains this span's initialized suffix and admitted target.
         let bytes = unsafe { span.as_slice().get_unchecked(*head as usize..) };
-        let next = buffer::raw::Copy::copy(pool::CopyIn {
-            span: pool::Span::from_seed(seed),
-            sources: (bytes, input.input()),
-            len: bytes.len() + input.len(),
-        });
+        let next =
+            pool::Span::from_seed(seed).copy_in((bytes, input.input()), bytes.len() + input.len());
         // SAFETY: the copy ended every payload borrow. The sole old edge and
         // its transferred root must not run Drop after deallocation.
         unsafe {

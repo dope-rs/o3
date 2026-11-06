@@ -4,7 +4,7 @@ use crate::{
     alloc,
     base::marker::ThreadBound,
     depot::{
-        self, arena,
+        self,
         heap::{
             self, indexed,
             indexed::resident::{
@@ -25,68 +25,51 @@ pub enum Tag {
     Active,
 }
 
-/// Unit-key repr(C) unions put every sole initialized field at offset zero.
-type Fields<T> = arena::raw::StagedValue<
-    (),
-    <T as Values>::Scheduled,
-    arena::raw::StagedValue<
-        (),
-        <T as Values>::Idle,
-        arena::raw::StagedValue<
-            (),
-            <T as Values>::Control,
-            arena::raw::StagedValue<(), <T as Values>::Data, <T as Values>::Active>,
-        >,
-    >,
->;
-
-pub(super) struct Stored<T: Values>(Fields<T>);
+#[repr(C)]
+pub(super) union Stored<T: Values> {
+    scheduled: mem::ManuallyDrop<T::Scheduled>,
+    idle: mem::ManuallyDrop<T::Idle>,
+    control: mem::ManuallyDrop<T::Control>,
+    data: mem::ManuallyDrop<T::Data>,
+    active: mem::ManuallyDrop<T::Active>,
+}
 
 impl<T: Values> Stored<T> {
     fn new(value: Owned<T>) -> Self {
-        Self(match value {
-            Value::Scheduled(value) => arena::raw::StagedValue::queued((), value),
-            Value::Idle(value) => {
-                arena::raw::StagedValue::parked((), arena::raw::StagedValue::queued((), value))
-            }
-            Value::Control(value) => arena::raw::StagedValue::parked(
-                (),
-                arena::raw::StagedValue::parked((), arena::raw::StagedValue::queued((), value)),
-            ),
-            Value::Data(value) => arena::raw::StagedValue::parked(
-                (),
-                arena::raw::StagedValue::parked(
-                    (),
-                    arena::raw::StagedValue::parked((), arena::raw::StagedValue::queued((), value)),
-                ),
-            ),
-            Value::Active(value) => arena::raw::StagedValue::parked(
-                (),
-                arena::raw::StagedValue::parked(
-                    (),
-                    arena::raw::StagedValue::parked((), arena::raw::StagedValue::parked((), value)),
-                ),
-            ),
-        })
+        match value {
+            Value::Scheduled(value) => Self {
+                scheduled: mem::ManuallyDrop::new(value),
+            },
+            Value::Idle(value) => Self {
+                idle: mem::ManuallyDrop::new(value),
+            },
+            Value::Control(value) => Self {
+                control: mem::ManuallyDrop::new(value),
+            },
+            Value::Data(value) => Self {
+                data: mem::ManuallyDrop::new(value),
+            },
+            Value::Active(value) => Self {
+                active: mem::ManuallyDrop::new(value),
+            },
+        }
     }
 
     // SAFETY: callers retain the exact initialized field selected by the owner.
     unsafe fn get<F>(&self) -> &F {
-        unsafe { &*ptr::addr_of!(self.0).cast::<F>() }
+        unsafe { &*ptr::from_ref(self).cast::<F>() }
     }
 
     unsafe fn get_mut<F>(&mut self) -> &mut F {
-        unsafe { &mut *ptr::addr_of_mut!(self.0).cast::<F>() }
+        unsafe { &mut *ptr::from_mut(self).cast::<F>() }
     }
 
     unsafe fn take<F>(&mut self) -> F {
-        unsafe { ptr::read(ptr::addr_of!(self.0).cast::<F>()) }
+        unsafe { ptr::read(ptr::from_mut(self).cast::<F>()) }
     }
 
     unsafe fn drop_field<F>(&mut self) {
-        if mem::needs_drop::<F>() {
-            unsafe { ptr::drop_in_place(ptr::addr_of_mut!(self.0).cast::<F>()) };
-        }
+        unsafe { ptr::drop_in_place(ptr::from_mut(self).cast::<F>()) };
     }
 }
 
@@ -195,13 +178,13 @@ impl<'a, T: Values, F: Phase<T>> Held<'a, T, F> {
                     }
                     Tag::Common => {}
                 }
+                self.core.nodes.get_unchecked_mut(self.index.get()).tag = G::TAG;
             }
         }
         // SAFETY: F is the sole initialized field; transition consumes it exactly once.
         let node = unsafe { self.core.nodes.get_unchecked_mut(self.index.get()) };
         let old = unsafe { node.value.take::<F::Item>() };
         node.value = value;
-        node.tag = G::TAG;
         (
             Held {
                 core: self.core,

@@ -245,10 +245,7 @@ fn stripes_share_allocation() {
     );
     assert_eq!(
         mem::size_of::<
-            round::Snapshot<
-                &'static mut round::Lanes<[cell::Cell<u64>; 3], GROUPS>,
-                round::Idle<false>,
-            >,
+            round::Snapshot<&'static mut round::Lanes<[cell::Cell<u64>; 3], GROUPS>, round::Idle>,
         >(),
         2 * mem::size_of::<usize>()
     );
@@ -257,7 +254,7 @@ fn stripes_share_allocation() {
             Option<
                 round::Snapshot<
                     &'static mut round::Lanes<[cell::Cell<u64>; 3], GROUPS>,
-                    round::Idle<false>,
+                    round::Idle,
                 >,
             >,
         >(),
@@ -310,6 +307,8 @@ fn stripes_share_allocation() {
             Some(0)
         );
         assert_eq!(group0.active().map(|turn| turn.lane()), Some(5));
+        places[1].push();
+        assert_eq!(group0.active().map(|turn| turn.lane()), Some(0));
         assert_eq!(
             lane5.pop_front().map(|slot| slot[0].get() as usize),
             Some(1)

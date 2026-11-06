@@ -88,11 +88,7 @@ impl<'a, P: buffer::raw::Policy, const MAX_CAPACITY: usize> Edit<'a, P, MAX_CAPA
     ) -> Result<(), alloc::Error<P::Failure>> {
         let Some(growth) = window::Growth::new(self.state.cap, required) else {
             if self.state.buf.is_unique() {
-                buffer::raw::Copy::copy(Append {
-                    state: Self::compact(self),
-                    src,
-                    end: required.get(),
-                });
+                append(Self::compact(self), src, required.get());
                 return Ok(());
             }
             let cap = self.state.cap;
@@ -214,11 +210,8 @@ impl<'a, const MAX: usize> Edit<'a, (), MAX> {
         src: &'a [u8],
     ) -> Result<(), storage::AllocError> {
         if (self.state.cap.get() - self.state.head) as usize >= src.len() {
-            buffer::raw::Copy::copy(Append {
-                end: self.state.head + src.len() as u32,
-                state: self.state,
-                src,
-            });
+            let end = self.state.head + src.len() as u32;
+            append(self.state, src, end);
             return Ok(());
         }
         let required =
@@ -252,7 +245,7 @@ impl<'a, 'd> Edit<'a, resident::Budget<'d>, { u32::MAX as usize }> {
     }
 
     pub(in crate::buffer) fn try_staged<I: buffer::raw::SliceExt>(
-        append: staging::Reserve<
+        reserve: staging::Reserve<
             (
                 &'a mut window::State<resident::Budget<'d>, { u32::MAX as usize }>,
                 &'a mut u32,
@@ -260,13 +253,13 @@ impl<'a, 'd> Edit<'a, resident::Budget<'d>, { u32::MAX as usize }> {
             owners::Measured<I>,
         >,
     ) -> Result<(), alloc::Error<credit::Error>> {
-        let ((state, tail), target, src) = append.into_parts();
+        let ((state, tail), target, src) = reserve.into_parts();
         let added = src.len();
         let src = src.into_input();
         let ideal = window::Capacity::from(target);
         if (state.cap.get() - state.head) as usize >= added {
             let end = state.head + added as u32;
-            buffer::raw::Copy::copy(Append { state, src, end });
+            append(state, src, end);
             return Ok(());
         }
         let required = num::NonZero::<u32>::MIN
@@ -299,64 +292,21 @@ fn append_slices<'a, const MAX: usize>(
 ) {
     for src in sources {
         if !src.is_empty() {
-            buffer::raw::Copy::copy(Append {
-                end: state.head + src.len() as u32,
-                state: &mut *state,
-                src,
-            });
+            let end = state.head + src.len() as u32;
+            append(state, src, end);
         }
     }
 }
 
-struct Append<'a, P: crate::buffer::raw::Policy, const MAX: usize, I> {
-    state: &'a mut window::State<P, MAX>,
+fn append<P: buffer::raw::Policy, const MAX: usize, I: buffer::raw::SliceExt>(
+    state: &mut window::State<P, MAX>,
     src: I,
     end: u32,
-}
-
-// SAFETY: Edit admitted this source against the exact unchanged exclusive suffix.
-unsafe impl<P: crate::buffer::raw::Policy, const MAX: usize, I: buffer::raw::SliceExt>
-    buffer::raw::Copy for Append<'_, P, MAX, I>
-{
-    type Output = ();
-
-    fn parts(&mut self) -> (impl buffer::raw::SliceExt, *mut u8, usize) {
-        (
-            &self.src,
-            self.state.buf.data().cast_mut(),
-            self.state.head as usize,
-        )
-    }
-
-    unsafe fn publish(self) {
-        self.state.head = self.end;
-    }
-}
-
-struct Init<P: crate::buffer::raw::Policy, const MAX: usize, I> {
-    heap: crate::buffer::raw::Heap<P>,
-    cap: window::Capacity<MAX>,
-    sources: I,
-    len: u32,
-}
-
-// SAFETY: Init retains the checked total and allocation covering its sources.
-unsafe impl<P: crate::buffer::raw::Policy, const MAX: usize, I: buffer::raw::SliceExt>
-    buffer::raw::Copy for Init<P, MAX, I>
-{
-    type Output = window::State<P, MAX>;
-
-    fn parts(&mut self) -> (impl buffer::raw::SliceExt, *mut u8, usize) {
-        (&self.sources, self.heap.as_mut_ptr().cast(), 0)
-    }
-
-    unsafe fn publish(self) -> Self::Output {
-        window::State {
-            buf: self.heap.into_shared(),
-            cap: self.cap,
-            head: self.len,
-        }
-    }
+) {
+    let target = state.buf.data().cast_mut();
+    // SAFETY: Edit admitted this source against the unchanged exclusive suffix.
+    unsafe { src.copy_to(target.add(state.head as usize)) };
+    state.head = end;
 }
 
 pub(in crate::buffer::bytes::window) fn try_slices<const MAX: usize, const N: usize>(
@@ -402,7 +352,7 @@ fn try_allocate<P: buffer::raw::Policy, const MAX: usize, I: buffer::raw::SliceE
     } else {
         need
     };
-    let (heap, cap) = match crate::buffer::raw::Heap::try_new(seed, target.nonzero()) {
+    let (mut heap, cap) = match crate::buffer::raw::Heap::try_new(seed, target.nonzero()) {
         Ok(heap) => (heap, target),
         Err(alloc::Error::Allocation(crate::alloc::Exhausted)) if target != need => (
             crate::buffer::raw::Heap::try_new(seed, need.nonzero())?,
@@ -410,12 +360,14 @@ fn try_allocate<P: buffer::raw::Policy, const MAX: usize, I: buffer::raw::SliceE
         ),
         Err(error) => return Err(error),
     };
-    Ok(buffer::raw::Copy::copy(Init {
-        heap,
+    // SAFETY: the admitted sources fit this fresh allocation, which remains
+    // exclusively owned until the complete initialized prefix is published.
+    unsafe { sources.copy_to(heap.as_mut_ptr().cast()) };
+    Ok(window::State {
+        buf: heap.into_shared(),
         cap,
-        sources,
-        len,
-    }))
+        head: len,
+    })
 }
 
 const _: () = {

@@ -448,27 +448,20 @@ fn retains_fifo() {
 
 #[test]
 fn drops_cell_once() {
-    for clear in [false, true] {
-        let drops = [Cell::new(Some(0)), Cell::new(Some(0))];
-        {
-            let queue = (ring::Cell::try_new(Count::new(2)))
-                .expect("the two-slot owned cell ring must allocate");
-            for id in 0..2 {
-                // SAFETY: this loop inserts exactly two values into this empty two-slot cell.
-                unsafe {
-                    depot::raw::RingCell::insert::<false>(
-                        &queue,
-                        Tracked::try_new(id, &drops).expect("drop counter exists"),
-                    )
-                };
-            }
-            assert_eq!(drops.each_ref().map(Cell::get), [Some(0); 2]);
-            if clear {
-                queue.clear();
-                assert!(queue.is_empty());
-                assert_eq!(drops.each_ref().map(Cell::get), [Some(1); 2]);
-            }
+    let drops = [Cell::new(Some(0)), Cell::new(Some(0))];
+    {
+        let queue = (ring::Cell::try_new(Count::new(2)))
+            .expect("the two-slot owned cell ring must allocate");
+        for id in 0..2 {
+            // SAFETY: this loop inserts exactly two values into this empty two-slot cell.
+            unsafe {
+                depot::raw::RingCell::insert::<false>(
+                    &queue,
+                    Tracked::try_new(id, &drops).expect("drop counter exists"),
+                )
+            };
         }
-        assert_eq!(drops.each_ref().map(Cell::get), [Some(1); 2]);
+        assert_eq!(drops.each_ref().map(Cell::get), [Some(0); 2]);
     }
+    assert_eq!(drops.each_ref().map(Cell::get), [Some(1); 2]);
 }

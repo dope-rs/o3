@@ -1,5 +1,7 @@
 //! Generation-checked FIFO topology over caller-owned keyed slots.
 
+use crate::depot::{queue::links, raw};
+
 mod fifo;
 pub mod lanes;
 mod link;
@@ -10,13 +12,18 @@ pub use link::Link;
 mod slot;
 pub use slot::Slot;
 
-mod entry;
 mod iter;
-pub use entry::Entry;
 pub use iter::Iter;
 
-/// The retained owner holds its exact initialized slot, key, link, FIFO and plane.
-/// LINKED means membership in that FIFO; otherwise its hook is canonically vacant.
+fn selected<O: raw::KeyOwner<P>, P>(owner: &O) -> (links::Index, &Link<O::Key, P>) {
+    let (key, link) = owner.parts();
+    // SAFETY: this owner loan retains the exact key/link pair and an index below u32::MAX.
+    let index = unsafe { links::Index::new_usize(raw::Key::index(key)) };
+    (index, link)
+}
+
+/// The retained owner holds its selected-slot authority, exact key/link pair, FIFO and plane.
+/// The link is initialized; LINKED means FIFO membership, otherwise canonical vacancy.
 /// The phase holds until its authorized transition; borrowed outputs retain their prescribed root authority.
 pub struct Membership<const LINKED: bool>;
 

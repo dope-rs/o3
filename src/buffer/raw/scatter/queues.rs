@@ -17,11 +17,10 @@ unsafe impl<'a, T: buffer::raw::Segment> buffer::raw::Scatter<'a> for Iter<'a, T
     unsafe fn advance<const MAX: usize>(
         &mut self,
         cap: NonZero<usize>,
-        left: NonZero<usize>,
     ) -> buffer::raw::Chunk<'a, MAX> {
         // SAFETY: the raw cursor contract supplies the exact bounds for this
         // borrowed state; Step retains them until the physical read completes.
-        unsafe { self.next_chunk(cap, left) }
+        unsafe { self.next_chunk(cap) }
     }
 }
 

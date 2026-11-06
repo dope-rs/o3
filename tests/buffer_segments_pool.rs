@@ -33,12 +33,10 @@ fn insert_amortizes_growth() {
         let (chain, allocs) = Tracker::count(|| {
             for item in items {
                 chain = if front {
-                    segments::Many::try_from((item, chain))
-                        .map_err(|error| error.map(|(item, chain)| (chain, item)))
+                    segments::Many::try_from((item, chain)).expect("growing chain")
                 } else {
-                    segments::Many::try_from((chain, item))
-                }
-                .expect("growing chain");
+                    segments::Many::try_from((chain, item)).expect("growing chain")
+                };
             }
             chain
         });

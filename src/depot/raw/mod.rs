@@ -346,37 +346,16 @@ pub unsafe trait KeyFinish<const LINKED: bool, P = ()>: Sized {
     unsafe fn finish(self) -> Self::Output;
 }
 /// # Safety
-/// This exclusive root retains its exact initialized slot, key, link and FIFO.
-/// All safe borrows and escaping values preserve retained slot/link authority and membership; indices exclude `Fifo` endpoint tags.
+/// This exclusive root retains its selected slot authority, exact key/link pair and FIFO.
+/// The key index is below `u32::MAX` and excludes the FIFO's endpoint tags.
+/// Shared loans retain the initialized link and plane; escaping values preserve authority and membership.
+/// Neighbor projection returns the exact initialized slot's link without changing or reentering the topology.
 pub unsafe trait KeyOwner<P = ()>: Sized {
     type Key: Key;
     type Fifo;
     fn parts(&self) -> (Self::Key, &keyed::Link<Self::Key, P>);
-    fn slot(&self) -> keyed::Entry<'_, Self::Key, P> {
-        keyed::Entry::from_source(self)
-    }
     fn fifo(&self) -> &Self::Fifo;
-    fn entry<'a>(slot: Proof<(&'a Self, Index), Initialized<P>>) -> keyed::Entry<'a, Self::Key, P>;
-}
-/// # Safety
-/// Consumption retains the exact key/link pair (index below `u32::MAX`), initialized storage and plane for `'a`.
-pub unsafe trait KeyBorrow<'a, P = ()> {
-    type Key: Key;
-    fn parts(self) -> (Self::Key, &'a keyed::Link<Self::Key, P>);
-}
-// SAFETY: the shared loan retains the owner's exact selected key and link plane.
-unsafe impl<'a, O: KeyOwner<P>, P> KeyBorrow<'a, P> for &'a O {
-    type Key = O::Key;
-    fn parts(self) -> (Self::Key, &'a keyed::Link<Self::Key, P>) {
-        O::parts(self)
-    }
-}
-// SAFETY: Entry already retains this exact initialized key and co-located link.
-unsafe impl<'a, K: Key, P> KeyBorrow<'a, P> for keyed::Entry<'a, K, P> {
-    type Key = K;
-    fn parts(self) -> (K, &'a keyed::Link<K, P>) {
-        (self.key(), self.link())
-    }
+    fn link(live: Proof<(&Self, Index), Initialized<P>>) -> &keyed::Link<Self::Key, P>;
 }
 /// # Safety
 /// Routing preserves this exact live slot, vacancy and exclusive root in its destination FIFO.
@@ -393,9 +372,10 @@ pub unsafe trait KeySource<P = ()> {
     fn fifo(&self) -> &keyed::Fifo<Self::Key, P>;
 }
 /// # Safety
-/// Shared traversal preserves membership, links and identities; projection resolves the exact live slot.
+/// Shared traversal preserves membership, links and identities.
+/// Projection returns the exact initialized slot's link without changing or reentering the topology.
 pub unsafe trait KeyRead<P = ()>: KeySource<P> {
-    fn entry<'a>(live: Proof<(&'a Self, Index), Initialized<P>>) -> keyed::Entry<'a, Self::Key, P>;
+    fn link(live: Proof<(&Self, Index), Initialized<P>>) -> &keyed::Link<Self::Key, P>;
 }
 /// # Safety
 /// Every FIFO edge is live in this exact owner; selection retains its exclusive authority.

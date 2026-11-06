@@ -234,13 +234,24 @@ impl<
 }
 
 pub(in crate::depot) enum Splice<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count> {
-    Root(Vacant<'a, T, Tag, MAX, links::Hook, 0, C, phase::Vacant>),
-    Parent(
-        Live<Vacant<'a, T, Tag, MAX, links::Hook, 0, C, phase::Vacant>, links::Index, links::Hook>,
-    ),
+    Root(Vacant<'a, T, Tag, MAX, links::Hook, 0, C>),
+    Parent(Live<Vacant<'a, T, Tag, MAX, links::Hook, 0, C>, links::Index, links::Hook>),
 }
 
 impl<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count> Splice<'a, T, Tag, MAX, C> {
+    /// # Safety
+    /// A present parent is initialized in this slot's exact owner and distinct
+    /// from its vacancy; it remains live until this phase is consumed.
+    pub(in crate::depot) unsafe fn new(
+        slot: Vacant<'a, T, Tag, MAX, links::Hook, 0, C>,
+        parent: Option<links::Index>,
+    ) -> Self {
+        match parent {
+            Some(parent) => Self::Parent(unsafe { crate::depot::raw::Proof::new((slot, parent)) }),
+            None => Self::Root(slot),
+        }
+    }
+
     pub(in crate::depot) fn insert(
         self,
         build: impl FnOnce(Option<&mut T>, slab::Handle<Tag, MAX>) -> T,
