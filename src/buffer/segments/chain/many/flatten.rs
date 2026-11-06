@@ -35,9 +35,21 @@ impl<T: buffer::raw::Segment> Flatten<T> {
     /// Only completion exposes the fully initialized output.
     pub fn step(mut self, mut budget: NonZero<usize>) -> ControlFlow<storage::Shared, Self> {
         loop {
-            let copied = buffer::raw::Copy::copy((&mut self, budget));
-            let left = budget.get() - copied.get();
-            if self.offset < self.source.front().as_ref().len() {
+            let source = self.source.front().as_ref();
+            let remaining = source.len() - self.offset;
+            let amount = budget.get().min(remaining);
+            let prefix = self.output.len() as u32;
+            // SAFETY: positive budget and strict offset select an exact nonempty range.
+            // The admitted total fits u32 and reserves the remaining bytes in a disjoint
+            // output; its current initialized length is this replacement's prefix.
+            unsafe {
+                let source = source.get_unchecked(self.offset..self.offset + amount);
+                buffer::raw::Slices::new(NonZero::new_unchecked(amount as u32), [source])
+                    .replace(&mut self.output, prefix);
+            }
+            let left = budget.get() - amount;
+            if amount < remaining {
+                self.offset += amount;
                 return ControlFlow::Continue(self);
             }
             self.source = match self.source {
@@ -50,38 +62,5 @@ impl<T: buffer::raw::Segment> Flatten<T> {
             };
             budget = left;
         }
-    }
-}
-
-// SAFETY: Flatten owns both the unchanged source suffix and its separately
-// allocated output. Admission reserves the full source length; every copy
-// advances source offset and initialized output by the same amount. Thus all
-// remaining source bytes fit the output's spare capacity, even if allocation
-// rounded that capacity up. The pair cannot substitute a different source,
-// target, or offset, and its exclusive loan preserves them through publication.
-// Parts stores the exact positive copied amount for publication.
-unsafe impl<T: buffer::raw::Segment> buffer::raw::Copy for (&mut Flatten<T>, NonZero<usize>) {
-    type Output = NonZero<usize>;
-
-    fn parts(&mut self) -> (impl buffer::raw::SliceExt, *mut u8, usize) {
-        let source = self.0.source.front().as_ref();
-        let amount = self.1.get().min(source.len() - self.0.offset);
-        // SAFETY: the strict offset leaves nonempty bytes and the budget is positive.
-        self.1 = unsafe { NonZero::new_unchecked(amount) };
-        // SAFETY: offset and amount retain this unchanged front's in-bounds prefix.
-        let source = unsafe { source.get_unchecked(self.0.offset..self.0.offset + amount) };
-        let output = &mut *self.0.output;
-        let pointer = buffer::raw::Exclusive::as_mut_ptr(output);
-        let start = *buffer::raw::Exclusive::len_mut(output) as usize;
-        (source, pointer.cast(), start)
-    }
-
-    unsafe fn publish(self) -> NonZero<usize> {
-        let amount = self.1.get();
-        // SAFETY: Copy initialized this exact reserved output suffix; both
-        // original positions remain unchanged until this paired publication.
-        *buffer::raw::Exclusive::len_mut(&mut *self.0.output) += amount as u32;
-        self.0.offset += amount;
-        self.1
     }
 }

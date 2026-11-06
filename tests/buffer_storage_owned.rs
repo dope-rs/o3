@@ -322,9 +322,14 @@ fn freezes_in_place() {
             let mut owner = (storage::Owned::try_allocate(&budget, 8))
                 .expect("the compact-failure resident owner must allocate");
             let ptr = owner.as_ptr();
-            let mut spare = owner.spare();
-            assert_eq!(spare.write(b"part"), 4);
-            spare.commit();
+            // SAFETY: this live eight-byte allocation receives a disjoint
+            // initialized four-byte prefix before publication.
+            unsafe {
+                owner
+                    .as_mut_ptr()
+                    .copy_from_nonoverlapping(b"part".as_ptr(), 4);
+                owner.set_len(4);
+            }
             let compact = Tracker::fail_after(0, || owner.try_compact());
             assert!(compact.is_err());
             assert_eq!(owner.as_ptr(), ptr);

@@ -44,6 +44,18 @@ impl<P: crate::buffer::raw::Policy, const CAP: u32> Bytes<P, CAP> {
         self.len as usize
     }
 
+    /// Returns the allocation pointer without borrowing its initialized prefix.
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        buffer::raw::Exclusive::as_mut_ptr(self).cast()
+    }
+
+    /// # Safety
+    /// `len` must not exceed capacity, the first `len` allocation bytes must
+    /// be initialized, and external access must have ended.
+    pub unsafe fn set_len(&mut self, len: usize) {
+        self.len = len as u32;
+    }
+
     pub fn truncate(&mut self, len: usize) {
         if len < self.len() {
             self.len = len as u32;
