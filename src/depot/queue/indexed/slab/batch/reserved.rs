@@ -4,7 +4,7 @@ use crate::depot::queue::{indexed::slab, links};
 const END: u32 = links::Index::END;
 
 /// Admitted capacity retained by the allocation's exclusive borrow.
-pub(in crate::depot) struct Reserved<
+pub struct Reserved<
     'a,
     T,
     Tag,
@@ -28,7 +28,7 @@ impl<
     C: crate::depot::raw::Count,
 > Reserved<'a, T, Tag, MAX, H, N, M, C>
 {
-    pub(in crate::depot) fn new(core: &'a mut slab::Slab<T, Tag, MAX, H, N, C>) -> Option<Self> {
+    pub(in crate::depot) fn admit(core: &'a mut slab::Slab<T, Tag, MAX, H, N, C>) -> Option<Self> {
         (M <= core.available()).then_some(Self { core })
     }
 

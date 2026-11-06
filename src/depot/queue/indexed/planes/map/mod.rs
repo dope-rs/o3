@@ -1,6 +1,6 @@
 //! Indexed payloads whose hash directory and FIFO planes share one owner.
 
-use core::{Core, Hooks};
+use core::{Hooks, Node};
 
 pub use error::Error;
 pub use occupied::Occupied;

@@ -1,4 +1,4 @@
-use std::{num::NonZero, ops, ptr, slice};
+use std::{num::NonZero, ops, ptr};
 
 pub(in crate::buffer) use nonempty::NonEmpty;
 pub(in crate::buffer) use prefix::Prefix;
@@ -90,10 +90,6 @@ impl regions::Extent {
         self.0.len()
     }
 
-    pub(in crate::buffer) const fn as_ptr(&self) -> *const u8 {
-        self.0.as_ptr().cast::<u8>()
-    }
-
     fn offset(&self, amount: usize) -> ptr::NonNull<u8> {
         let pointer = self.0.cast::<u8>().as_ptr().wrapping_add(amount);
         // SAFETY: constructors establish nonwrapping addresses; callers keep amount
@@ -150,7 +146,7 @@ impl<O> regions::Shared<O> {
 
     pub fn as_slice(&self) -> &[u8] {
         // SAFETY: this owner borrow retains the unchanged initialized extent.
-        unsafe { slice::from_raw_parts(self.bytes.as_ptr(), self.bytes.len()) }
+        unsafe { self.bytes.0.as_ref() }
     }
 
     /// # Safety

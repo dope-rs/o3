@@ -40,7 +40,7 @@ impl<Tag, const MAX: u32, B, R> Error<Tag, MAX, B, R> {
     pub(in crate::depot::arena::slab) fn refused(
         key: key::Handle<Tag, MAX>,
         actual: key::Generation<MAX>,
-        refusal: Refusal<R>,
+        refusal: Refusal<B, R>,
     ) -> Self {
         match refusal {
             Refusal::Free => Self::Free { key, actual },
@@ -51,6 +51,11 @@ impl<Tag, const MAX: u32, B, R> Error<Tag, MAX, B, R> {
                 retired,
             },
             Refusal::Stale => Self::Generation { key, actual },
+            Refusal::Busy(borrow) => Self::Busy {
+                key,
+                actual,
+                borrow,
+            },
         }
     }
 

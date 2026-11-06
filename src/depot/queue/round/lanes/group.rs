@@ -18,7 +18,7 @@ impl<'a, T, const G: usize, const N: usize> Group<'a, T, G, N> {
         let lane = ring.first()?;
         let track = unsafe { self.owner.block.tail().get_unchecked(lane.get()) };
         // SAFETY: this group's live lane is non-empty until the immediate commit.
-        let index = unsafe { track.entries.front_key() };
+        let index = unsafe { track.front_key() };
         Some(round::Location::new(
             self.owner,
             round::Position { lane, index },

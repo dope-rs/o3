@@ -296,7 +296,7 @@ fn keeps_empty_contracts() {
             let (prefix, hot) = Tracker::measure(|| buffer::raw::Segment::prefix(clone, max));
             assert_eq!(hot, [0; 4]);
             assert!(prefix.is_empty());
-            assert!(matches!(prefix.scope(), resident::Scope::Independent));
+            assert!(prefix.scope().is_none());
             assert!(matches!(prefix.try_detach(), Ok(owner) if owner.is_empty()));
         }
         scope::Owner::with(source, |owner| {

@@ -130,7 +130,7 @@ pub trait Rows<W: bitmap::Width = usize>: Words<W> + Sized {
 
 impl<W: bitmap::Width, S: Words<W>> Rows<W> for S {}
 mod hooks;
-pub use hooks::Hooks;
+pub use hooks::{Hooks, Node};
 
 /// An immutable u32 count retaining its original domain proof.
 /// # Safety
@@ -193,11 +193,13 @@ pub unsafe trait BitIndex<const N: usize>: Copy {
     unsafe fn from_index(index: usize) -> Self;
 }
 
-/// A retained capability for one stationary planar owner.
+/// A retained capability for one stationary set owner.
 /// # Safety
 /// Projections are pure; every projection and move retains the same live owner, extent, and lifetime.
 pub unsafe trait SetSource<Tag, Raw, const N: usize> {
-    fn planes(&self) -> &set::State<Tag, Raw, N>;
+    type Mode;
+
+    fn planes(&self) -> &set::State<Tag, Raw, N, Self::Mode>;
 }
 
 /// A storage owner whose exclusive borrow excludes every other plane access.
@@ -222,19 +224,6 @@ pub unsafe trait TagStore {
 /// The lane belongs to TagEntry::store; its projection returns normally without topology reentry or mutation.
 pub unsafe trait TagTarget: TagEntry {
     fn lane(&self) -> tagged::Endpoint<&Self::Store>;
-}
-/// # Safety
-/// Storage owns the exact linked entry and completes its phase once on drop; projections preserve it.
-/// into_inner disarms completion and transfers that entry with its owner and membership unchanged.
-pub unsafe trait TagFinish<E: TagEntry> {
-    type Storage;
-
-    fn new(entry: tagged::Linked<E>) -> Self::Storage;
-    fn entry(storage: &Self::Storage) -> &E;
-    /// # Safety
-    /// Mutation preserves the exact entry, owner, payload initialization, and linked membership.
-    unsafe fn entry_mut(storage: &mut Self::Storage) -> &mut E;
-    fn into_inner(storage: Self::Storage) -> E;
 }
 mod tagentry;
 pub use tagentry::TagEntry;
@@ -461,7 +450,7 @@ pub(in crate::depot) use arena::{
     QueueBlock, QueueSlot, Retired, SlabCapacity, SlabLinks, SlabSlot, StagedMove, StagedNode,
     StagedPhase, StagedState,
 };
-pub(in crate::depot) use hooks::{LaneInit, LaneStore};
+pub(in crate::depot) use hooks::{LaneInit, LaneStore, LaneUndo};
 
 mod entry;
 mod links;

@@ -160,12 +160,12 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                                     links.append_end(nodes, left);
                                     links.append_end(nodes, right);
                                 }
-                                let claim = claim.insert(Descriptor::new(
+                                let claim = claim.insert(Descriptor {
                                     links,
-                                    sum.count,
-                                    sum.len,
-                                    sum.resident,
-                                ));
+                                    count: sum.count,
+                                    len: sum.len,
+                                    resident_bytes: sum.resident,
+                                });
                                 target.key = Key::multi(claim.index());
                                 source.key = Key::EMPTY;
                                 unsafe { claim.publish() };
@@ -254,12 +254,12 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                         match output {
                             None => target.key = Key::single(links.head_raw()),
                             Some(claim) => {
-                                let claim = claim.insert(Descriptor::new(
+                                let claim = claim.insert(Descriptor {
                                     links,
-                                    sum.count,
-                                    sum.len,
-                                    sum.resident,
-                                ));
+                                    count: sum.count,
+                                    len: sum.len,
+                                    resident_bytes: sum.resident,
+                                });
                                 target.key = Key::multi(claim.index());
                                 unsafe { claim.publish() };
                             }
@@ -301,7 +301,7 @@ impl<T: buffer::raw::Segment> TryFrom<(Self, Self)> for segments::Many<T> {
 impl<T> Rejected<(&mut segments::Chain<T>, &mut segments::Chain<T>)> {
     pub(in crate::buffer::segments) fn into_error(self) -> segments::Error {
         match self {
-            Self::Total(cause) => segments::Error::Total(cause),
+            Self::Total(cause) => cause.into(),
             Self::Capacity(capacity) => capacity.cause.into_error(),
         }
     }

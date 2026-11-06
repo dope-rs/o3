@@ -5,7 +5,6 @@ use crate::depot::queue::indexed::lanes;
 /// Hooks match nodes; linked hooks own initialized payloads, and entries exclude mutation.
 pub unsafe trait LaneStore: crate::depot::raw::TagStore {
     type Item;
-    type Publish<E: crate::depot::raw::TagEntry<Store = Self>>: crate::depot::raw::TagFinish<E>;
     fn nodes(&self) -> &[lanes::Value<Self::Item>];
 
     fn node<'a, E: crate::depot::raw::TagEntry<Store = Self>>(

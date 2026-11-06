@@ -15,12 +15,12 @@ pub enum Owners<'a, T> {
     Many(segments::Iter<'a, T>),
 }
 
-impl<'a, T: buffer::raw::Segment> Owners<'a, T> {
-    pub(in crate::buffer::segments) fn new(shape: &'a Shape<T>) -> Self {
-        match shape {
-            Shape::Empty => Self::Empty,
-            Shape::One(owner) => Self::One(owner),
-            Shape::Many(owners) => Self::Many(owners.as_chain().segments()),
+impl<T: buffer::raw::Segment> Shape<T> {
+    pub fn owners(&self) -> Owners<'_, T> {
+        match self {
+            Self::Empty => Owners::Empty,
+            Self::One(owner) => Owners::One(owner),
+            Self::Many(owners) => Owners::Many(owners.as_chain().segments()),
         }
     }
 }

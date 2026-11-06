@@ -247,7 +247,7 @@ impl<'source, T: buffer::raw::Segment, I> Views<'_, 'source, T, I> {
                 .map_err(queue::RetainError::Copy)?
         };
         self.resident = total::Error::resident(self.resident, owner.resident())
-            .map_err(segments::Error::component)?;
+            .map_err(segments::Error::from)?;
         Ok(owner)
     }
 }

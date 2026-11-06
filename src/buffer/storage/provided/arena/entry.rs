@@ -59,13 +59,6 @@ impl<'d> Entry<'d> {
     }
 
     /// # Safety
-    /// The complete newly initialized slot belongs to this scope for `'d`.
-    pub(in crate::buffer::storage::provided) unsafe fn seed<T, L>(slot: &'d arena::Slot<'d, T, L>) {
-        let entry = ptr::NonNull::from(slot).cast::<Self>();
-        slot.entry.domain.push_free(arena::Empty { entry });
-    }
-
-    /// # Safety
     /// The pointer retains the complete slot allocation for its active scope.
     /// Its resident was initialized by the fixed scope or exact admission.
     pub(in crate::buffer::storage::provided) unsafe fn resident(

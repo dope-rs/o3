@@ -2,7 +2,7 @@ use pool::state;
 
 use crate::buffer::{pool, pool::owners, write::consume::Error};
 
-/// A cursor and the remaining write budget admitted by that exact cursor.
+/// A span and the remaining write budget admitted by that exact span.
 pub struct Limit<T, B> {
     target: T,
     remaining: u32,
@@ -29,26 +29,10 @@ impl<T, B> Limit<T, B> {
     }
 }
 
-impl<L, M, B> Limit<pool::Cursor<L, M>, B> {
-    pub fn try_from(
-        target: pool::Cursor<L, M>,
-        bytes: usize,
-        brand: B,
-    ) -> Result<Self, (pool::Cursor<L, M>, B, Error)> {
-        if let Err(error) = Error::check(bytes, target.spare_len()) {
-            return Err((target, brand, error));
-        }
-        Ok(Self {
-            target,
-            remaining: bytes as u32,
-            brand,
-        })
-    }
-
+impl<L, M, B> Limit<pool::Span<owners::Plain<L>, M>, B> {
     pub fn try_extend(&mut self, src: &[u8]) -> Result<(), Error> {
         let input = owners::Measured::slice(src);
         Error::check(input.len(), self.remaining as usize)?;
-        self.target.compact_for(input.len());
         self.remaining -= input.len() as u32;
         pool::Append {
             target: &mut self.target,
@@ -59,7 +43,22 @@ impl<L, M, B> Limit<pool::Cursor<L, M>, B> {
     }
 }
 
-impl<L, B> Limit<pool::Cursor<L>, B> {
+impl<L, B> Limit<pool::Span<owners::Plain<L>>, B> {
+    pub fn try_from(
+        target: pool::Span<owners::Plain<L>>,
+        bytes: usize,
+        brand: B,
+    ) -> Result<Self, (pool::Span<owners::Plain<L>>, B, Error)> {
+        if let Err(error) = Error::check(bytes, target.capacity().get() as usize - target.len()) {
+            return Err((target, brand, error));
+        }
+        Ok(Self {
+            target,
+            remaining: bytes as u32,
+            brand,
+        })
+    }
+
     pub fn try_acquire(
         pool: &pool::Pool<state::Uninit, owners::Plain<L>>,
         bytes: usize,
@@ -68,7 +67,7 @@ impl<L, B> Limit<pool::Cursor<L>, B> {
         if let Err(error) = Error::check(bytes, pool.capacity().get() as usize) {
             return Err((brand, pool::Error::Capacity(error)));
         }
-        let Some(target) = pool.cursor() else {
+        let Some(target) = pool.acquire() else {
             return Err((brand, pool::Error::Empty));
         };
         Ok(Self {
@@ -97,21 +96,9 @@ impl<'pool, L, B> Limit<pool::Span<owners::Plain<L>, pool::Borrowed<'pool>>, B> 
             brand,
         })
     }
-
-    pub fn try_extend(&mut self, src: &[u8]) -> Result<(), Error> {
-        let input = owners::Measured::slice(src);
-        Error::check(input.len(), self.remaining as usize)?;
-        self.remaining -= input.len() as u32;
-        pool::Append {
-            target: &mut self.target,
-            input,
-        }
-        .commit();
-        Ok(())
-    }
 }
 
 const _: () = {
-    assert!(size_of::<Limit<pool::Cursor, u8>>() == size_of::<pool::Cursor>() + size_of::<usize>());
-    assert!(size_of::<Option<Limit<pool::Cursor, u8>>>() == size_of::<Limit<pool::Cursor, u8>>());
+    assert!(size_of::<Limit<pool::Span, u8>>() == size_of::<pool::Span>() + size_of::<usize>());
+    assert!(size_of::<Option<Limit<pool::Span, u8>>>() == size_of::<Limit<pool::Span, u8>>());
 };

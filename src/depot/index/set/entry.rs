@@ -5,8 +5,8 @@ use crate::depot::index::{
 };
 
 /// A bounded position retaining its original shared or exclusive source.
-pub struct Entry<S, Tag = (), Raw = usize, const N: usize = 1, P = (), K = ()> {
-    pub(in crate::depot) row: Row<set::View<S, Tag, Raw, N, K>, P>,
+pub struct Entry<S, Tag = (), Raw = usize, const N: usize = 1, P = ()> {
+    pub(in crate::depot) row: Row<set::View<S, Tag, Raw, N>, P>,
 }
 
 impl<S: Copy, Tag, Raw, const N: usize> Clone for Entry<S, Tag, Raw, N> {
@@ -17,12 +17,18 @@ impl<S: Copy, Tag, Raw, const N: usize> Clone for Entry<S, Tag, Raw, N> {
 
 impl<S: Copy, Tag, Raw, const N: usize> Copy for Entry<S, Tag, Raw, N> {}
 
-impl<S, Tag, Raw: crate::depot::raw::Word, const N: usize, K> Entry<S, Tag, Raw, N, set::Id<N>, K>
+impl<S, Tag, Raw: crate::depot::raw::Word, const N: usize> Entry<S, Tag, Raw, N, set::Id<N>>
 where
-    S: set::Storage<Tag, Raw, N, K>,
+    S: crate::depot::raw::SetSource<Tag, Raw, N>,
 {
+    pub fn take_front(source: S, plane: set::Id<N>) -> Option<Self> {
+        let start = set::NonEmpty::new(source.planes())?.cursor(plane).get();
+        let removed = bitmap::pop_from(set::View::new(source), plane, start)?;
+        Some(Self::new(removed))
+    }
+
     pub(in crate::depot::index::set) fn new(
-        removed: Row<set::View<S, Tag, Raw, N, K>, set::Id<N>, Removed>,
+        removed: Row<set::View<S, Tag, Raw, N>, set::Id<N>, Removed>,
     ) -> Self {
         let row = removed.with_phase();
         set::NonEmpty::advance(&row);
@@ -33,9 +39,9 @@ where
     }
 }
 
-impl<S, Tag, Raw: crate::depot::raw::Word, const N: usize, P, K> Entry<S, Tag, Raw, N, P, K>
+impl<S, Tag, Raw: crate::depot::raw::Word, const N: usize, P> Entry<S, Tag, Raw, N, P>
 where
-    S: set::Storage<Tag, Raw, N, K>,
+    S: crate::depot::raw::SetSource<Tag, Raw, N>,
 {
     pub fn index(&self) -> index::Ordinal<Tag, Raw> {
         let raw = unsafe { <Raw as crate::depot::raw::Word>::from_offset(self.row.index()) };
@@ -60,30 +66,12 @@ impl<Tag, Raw: crate::depot::raw::Word, const N: usize>
         self.row.update::<true>(target);
     }
 }
-impl<'a, Tag, Raw, const N: usize>
-    Entry<&'a set::State<Tag, Raw, N>, Tag, Raw, N, set::Id<N>, set::Planar>
-{
+impl<'a, Tag, Raw, const N: usize> Entry<&'a set::State<Tag, Raw, N>, Tag, Raw, N, set::Id<N>> {
     pub fn into_entry(self) -> Entry<&'a set::State<Tag, Raw, N>, Tag, Raw, N> {
         Entry {
             // SAFETY: project the same source owner with its original lifetime and domain.
-            row: unsafe { self.row.map(|view| set::View::new(view.source)) },
+            row: unsafe { self.row.map(std::convert::identity) },
         }
-    }
-}
-impl<
-    S: crate::depot::raw::SetSource<Tag, Raw, N>,
-    Tag,
-    Raw: crate::depot::raw::Word,
-    const N: usize,
-> Entry<S, Tag, Raw, N, set::Id<N>, set::Planar>
-{
-    pub fn take_front(source: S, plane: set::Id<N>) -> Option<Self> {
-        let start = set::NonEmpty::new(source.planes())?.cursor(plane).get();
-        let removed = bitmap::pop_from(set::View::new(source), plane, start)?;
-        Some(Self::new(removed))
-    }
-    pub fn set(self, target: set::Id<N>) {
-        self.row.update::<true>(target);
     }
 }
 
@@ -96,7 +84,7 @@ const _: () = {
             == 2 * size_of::<usize>()
     );
     assert!(
-        size_of::<Entry<&'static mut set::State<(), u16, 2>, (), u16, 2, set::Id<2>, set::Planar>>(
-        ) == 2 * size_of::<usize>()
+        size_of::<Entry<&'static mut set::State<(), u16, 2>, (), u16, 2, set::Id<2>>>()
+            == 2 * size_of::<usize>()
     );
 };

@@ -365,21 +365,14 @@ pub enum State<B, R> {
     Retired(R),
 }
 
-/// The exact non-live-borrow refusal of one admitted slot.
+/// The exact refusal of one admitted slot.
 #[derive(Debug)]
-pub(in crate::depot::arena::slab) enum Refusal<R> {
+pub(in crate::depot::arena::slab) enum Refusal<B, R> {
     Free,
     Reserved,
     Retired(R),
     Stale,
-}
-
-/// The classification of one admitted slot against a retained generation.
-#[derive(Debug)]
-pub(in crate::depot::arena::slab) enum Admitted<B, R> {
-    Exact,
-    Refused(Refusal<R>),
-    Borrowed(B),
+    Busy(B),
 }
 
 impl<B, R> State<B, R> {
@@ -388,14 +381,14 @@ impl<B, R> State<B, R> {
         self,
         actual: key::Generation<MAX>,
         expected: key::Generation<MAX>,
-    ) -> Admitted<B, R> {
+    ) -> Result<(), Refusal<B, R>> {
         match self {
-            Self::Free => Admitted::Refused(Refusal::Free),
-            Self::Reserved => Admitted::Refused(Refusal::Reserved),
-            Self::Retired(retired) => Admitted::Refused(Refusal::Retired(retired)),
-            Self::Busy(borrow) => Admitted::Borrowed(borrow),
-            Self::Occupied if actual != expected => Admitted::Refused(Refusal::Stale),
-            Self::Occupied => Admitted::Exact,
+            Self::Free => Err(Refusal::Free),
+            Self::Reserved => Err(Refusal::Reserved),
+            Self::Retired(retired) => Err(Refusal::Retired(retired)),
+            Self::Busy(borrow) => Err(Refusal::Busy(borrow)),
+            Self::Occupied if actual != expected => Err(Refusal::Stale),
+            Self::Occupied => Ok(()),
         }
     }
 }

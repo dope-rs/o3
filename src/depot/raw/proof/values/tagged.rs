@@ -19,26 +19,6 @@ unsafe impl<S: crate::depot::raw::TagStore> crate::depot::raw::TagEntry
         *self.key()
     }
 }
-// SAFETY: ordinary membership has no rollback obligation.
-unsafe impl<E: crate::depot::raw::TagEntry> crate::depot::raw::TagFinish<E> for () {
-    type Storage = E;
-
-    fn new(entry: tagged::Linked<E>) -> Self::Storage {
-        entry.into_inner()
-    }
-
-    fn entry(storage: &Self::Storage) -> &E {
-        storage
-    }
-
-    unsafe fn entry_mut(storage: &mut Self::Storage) -> &mut E {
-        storage
-    }
-
-    fn into_inner(storage: Self::Storage) -> E {
-        storage
-    }
-}
 
 // SAFETY: the position owns the entry unchanged; it cannot select a different store.
 unsafe impl<E: crate::depot::raw::TagEntry, const N: usize> crate::depot::raw::TagEntry

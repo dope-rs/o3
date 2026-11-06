@@ -18,16 +18,16 @@ impl<'a, K: Copy, V, const N: usize> Place<'a, K, V, N> {
         index: usize,
         key: K,
     ) -> Result<Self, Error<K>> {
-        let Some(node) = owner.core.nodes.get(index) else {
+        let Some(node) = owner.nodes.get(index) else {
             return Err(Error::Bounds {
                 key,
                 index,
-                capacity: owner.core.nodes.len(),
+                capacity: owner.nodes.len(),
             });
         };
         let index = unsafe { links::Index::new_usize(index) };
         if index.is_linked(&node.hooks[0]) {
-            let stored = unsafe { owner.core.record(index) }.key;
+            let stored = unsafe { owner.record(index) }.key;
             return Err(Error::Occupied {
                 key,
                 stored,
@@ -35,7 +35,7 @@ impl<'a, K: Copy, V, const N: usize> Place<'a, K, V, N> {
             });
         }
         let capacity = owner.shape.capacity().get();
-        if owner.core.queues[0].len() == capacity {
+        if owner.queues[0].len() == capacity {
             return Err(Error::Full { key, capacity });
         }
         Ok(Self { owner, index, key })
@@ -55,7 +55,7 @@ unsafe impl<K: Copy, V, const N: usize> map::raw::Query for Place<'_, K, V, N> {
     fn value(entry: map::Found<&Self>) -> &K {
         let (place, index) = entry.project();
         // SAFETY: the found bucket retains this owner's installed record.
-        &unsafe { place.owner.core.record(*index) }.key
+        &unsafe { place.owner.record(*index) }.key
     }
 
     fn occupied(entry: map::Found<Self>) -> Self::Occupied {

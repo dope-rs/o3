@@ -4,9 +4,10 @@ use crate::{
     buffer,
     buffer::{
         hold, segments,
-        segments::{Chain, Handle, Key, Plural, handles},
+        segments::{Chain, Handle, Key, Nonempty, Plural, Shape, Tail, handles},
     },
     depot::arena::linked::slots,
+    mem::rc,
 };
 
 pub(in crate::buffer::segments) enum Remaining {
@@ -28,39 +29,20 @@ struct Removed<'a, T, H: Handle<T>> {
     index: slots::Index,
 }
 
-// SAFETY: Multi retains its initialized descriptor and exact nonempty node partition.
-unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::Linked<'a> for &'a mut Multi<'_, T, H> {
-    type Item = segments::Item<T>;
-    type Metadata = handles::Descriptor;
-
-    fn parts(
-        self,
-    ) -> (
-        &'a slots::Store<Self::Item>,
-        &'a slots::Store<Self::Metadata>,
-        slots::Index,
-    ) {
-        let handle = &self.sequence.handle;
-        (
-            handles::nodes(handle),
-            handles::descriptors(handle),
-            self.index,
-        )
-    }
-
-    fn head(metadata: &Self::Metadata) -> slots::Index {
-        metadata.links.head_raw()
-    }
-}
-
-// SAFETY: this Multi exclusively borrows the original sequence and both stores are disjoint.
-unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::LinkedMut<'a> for &'a mut Multi<'_, T, H> {}
-
 impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
     pub(in crate::buffer::segments) fn front(
         &mut self,
     ) -> (&mut handles::Descriptor, &mut segments::Item<T>) {
-        buffer::raw::LinkedMut::front_mut(self)
+        let handle = &self.sequence.handle;
+        let nodes = handles::nodes(handle);
+        let descs = handles::descriptors(handle);
+        // SAFETY: Multi exclusively retains this live descriptor and its head
+        // in distinct stores belonging to the same sequence.
+        unsafe {
+            let desc = &mut *descs.value_ptr(self.index);
+            let owner = &mut *nodes.value_ptr(desc.links.head_raw());
+            (desc, owner)
+        }
     }
 
     pub(in crate::buffer::segments::chain::edit) fn consume(
@@ -130,5 +112,27 @@ impl<T: buffer::raw::Segment, H: Handle<T>> Removed<'_, T, H> {
             Remaining::Multi
         };
         (charge, rest)
+    }
+}
+
+impl<T: buffer::raw::Segment> Nonempty<T> {
+    pub fn try_pop(self, limit: usize) -> Result<(T, Shape<T>), (rc::Error, Self)> {
+        match self {
+            Self::One(mut owner) => {
+                let Some(tail) = Tail::new(&mut owner.value, limit) else {
+                    return Ok((owner.into_inner(), Shape::Empty));
+                };
+                match tail.try_commit() {
+                    Ok(head) => Ok((head, Shape::One(owner))),
+                    Err(error) => Err((error, Self::One(owner))),
+                }
+            }
+            Self::Many(owners) => {
+                let (head, rest) = owners
+                    .try_pop(limit)
+                    .map_err(|(error, owners)| (error, Self::Many(owners)))?;
+                Ok((head, rest.into_shape()))
+            }
+        }
     }
 }

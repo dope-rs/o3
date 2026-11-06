@@ -324,7 +324,7 @@ fn allocation_is_exact() {
     let (result, delta) = Tracker::measure(|| Pool::<u64>::try_new(CAPACITY));
     let pool = result.expect("the 257-node linked arena must allocate");
     assert_eq!(delta, [1, CAPACITY * NODE_BYTES, 0, 0]);
-    let mut source = Head::new();
+    let mut source = Head::default();
 
     let ((), delta) = Tracker::measure(|| {
         for value in 0..CAPACITY as u64 {
@@ -347,7 +347,7 @@ fn drops_live_payloads() {
     {
         let result = Pool::<Counted<_>>::try_new(3);
         let pool = result.expect("the three-node drop arena must allocate");
-        let mut head = Head::new();
+        let mut head = Head::default();
         for (index, count) in counts.iter().enumerate() {
             assert!(unsafe { head.try_push(&pool, index as u64, Counted(count),) }.is_ok());
         }
@@ -366,7 +366,7 @@ fn drops_live_payloads() {
 fn reuses_sorted_slots() {
     let result = Pool::<Box<u64>>::try_new(3);
     let pool = result.expect("the three-node rejection arena must allocate");
-    let mut head = Head::new();
+    let mut head = Head::default();
     assert!(unsafe { head.try_insert(&pool, 10, Box::new(10u64)) }.is_ok());
     assert!(unsafe { head.try_insert(&pool, 30, Box::new(30u64)) }.is_ok());
     assert!(unsafe { head.try_insert(&pool, 20, Box::new(20u64)) }.is_ok());

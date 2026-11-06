@@ -14,14 +14,7 @@ pub struct Slot<'a, T, const G: usize, const N: usize = 0> {
 impl<'a, T, const G: usize, const N: usize> Slot<'a, T, G, N> {
     pub fn get(&self) -> &'a T {
         // SAFETY: this slot retains the allocation against which its index was admitted.
-        unsafe {
-            &self
-                .owner
-                .block
-                .as_ref()
-                .get_unchecked(self.index.get())
-                .value
-        }
+        unsafe { self.owner.block.as_ref().get_unchecked(self.index.get()) }
     }
 
     pub const fn index(&self) -> usize {
@@ -30,7 +23,7 @@ impl<'a, T, const G: usize, const N: usize> Slot<'a, T, G, N> {
 
     pub fn is_linked(&self) -> bool {
         let node = unsafe { self.owner.block.as_ref().get_unchecked(self.index.get()) };
-        self.index.is_linked(&node.hook)
+        self.index.is_linked(node.hook())
     }
 
     pub(in crate::depot::queue::round) fn linked_lane(&self) -> Option<links::Index> {

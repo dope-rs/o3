@@ -21,7 +21,6 @@ pub(in crate::buffer::segments::chain::edit::join) struct Incoming<'a, T> {
 
 struct Drain<'a, T> {
     store: &'a slots::Store<segments::Item<T>>,
-    key: &'a mut Key,
     links: ends::Exclusive<slots::Index>,
     remaining: capacity::Count,
 }
@@ -68,10 +67,10 @@ unsafe impl<T> depot::raw::Start<segments::Item<T>> for Incoming<'_, T> {
                 count.get(),
             ),
         };
+        self.source.key = Key::EMPTY;
         (
             Drain {
                 store,
-                key: &mut self.source.key,
                 links,
                 remaining: capacity::Count::new(count),
             },
@@ -97,7 +96,5 @@ unsafe impl<T> depot::raw::Exact for Drain<'_, T> {
     fn remaining(&self) -> capacity::Count {
         self.remaining
     }
-    unsafe fn finish(self) {
-        *self.key = Key::EMPTY;
-    }
+    unsafe fn finish(self) {}
 }

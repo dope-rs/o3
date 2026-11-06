@@ -24,19 +24,12 @@ pub(in crate::buffer::segments) struct Single<'a, T, H: Handle<T>> {
     pub(in crate::buffer::segments) index: slots::Index,
 }
 
-// SAFETY: every Single construction retains its sequence's exact live single key.
-unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::Indexed<'a> for &'a mut Single<'_, T, H> {
-    type Item = segments::Item<T>;
-
-    fn parts(self) -> (&'a slots::Store<Self::Item>, slots::Index) {
-        (handles::nodes(&self.sequence.handle), self.index)
-    }
-}
-
-// SAFETY: the native Single carries the exclusive loan of this same sequence.
-unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::IndexedMut<'a> for &'a mut Single<'_, T, H> {}
-
 impl<T: buffer::raw::Segment, H: Handle<T>> Single<'_, T, H> {
+    pub(in crate::buffer::segments::chain::edit) fn get_mut(&mut self) -> &mut segments::Item<T> {
+        // SAFETY: Single retains this live index and the sequence's exclusive loan.
+        unsafe { &mut *handles::nodes(&self.sequence.handle).value_ptr(self.index) }
+    }
+
     pub(in crate::buffer::segments) fn take(self) -> segments::Item<T> {
         self.sequence.key = Key::EMPTY;
         unsafe { handles::nodes(&self.sequence.handle).detached(self.index) }

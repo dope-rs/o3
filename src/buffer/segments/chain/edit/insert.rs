@@ -56,12 +56,12 @@ impl<T: buffer::raw::Segment, H: Handle<T>> Chain<T, H> {
                         // SAFETY: `links` now holds that live node set and `live` is the
                         // sole fresh claim from the same store, with no successor.
                         unsafe { live.append(&mut links) };
-                        let desc = desc.insert(Descriptor::new(
+                        let desc = desc.insert(Descriptor {
                             links,
-                            NonZero::<u32>::MIN.saturating_add(1),
-                            growth.len,
-                            growth.resident,
-                        ));
+                            count: NonZero::<u32>::MIN.saturating_add(1),
+                            len: growth.len,
+                            resident_bytes: growth.resident,
+                        });
                         self.key = Key::multi(desc.index());
                         // SAFETY: the key above names this descriptor, which now owns the
                         // complete live node set, count, and checked accounting.

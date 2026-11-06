@@ -16,7 +16,6 @@ pub trait Seal: Sized {
         domain: &Self::Retention,
     ) -> Result<Item<Self>, hold::CopyError>;
     fn try_share(view: regions::NonEmpty<'_, '_, Self>) -> Result<Item<Self>, rc::Error>;
-    fn truncate(self, max: usize) -> Self;
 }
 
 impl Seal for storage::Shared {
@@ -42,10 +41,6 @@ impl Seal for storage::Shared {
         })
     }
 
-    fn truncate(mut self, max: usize) -> Self {
-        buffer::raw::Selection::new(&mut self, max).commit();
-        self
-    }
     fn try_share(view: regions::NonEmpty<'_, '_, Self>) -> Result<Item<Self>, rc::Error> {
         Ok(Item {
             value: view.view().try_clone()?,
@@ -78,11 +73,6 @@ impl<'d> Seal for resident::Shared<'d> {
             value,
             nonempty: (),
         })
-    }
-
-    fn truncate(mut self, max: usize) -> Self {
-        buffer::raw::Selection::new(&mut self, max).commit();
-        self
     }
 
     fn try_share(view: regions::NonEmpty<'_, '_, Self>) -> Result<Item<Self>, rc::Error> {

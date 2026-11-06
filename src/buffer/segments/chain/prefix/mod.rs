@@ -53,12 +53,9 @@ impl<'a, T: buffer::raw::Segment> Projection<'a, T> {
             Relation::Other
         };
         let (current, base_len, base_mem) = target.total();
-        let count =
-            total::Error::count(current, shape.count()).map_err(segments::Error::component)?;
-        let len =
-            total::Error::logical(base_len, shape.amount).map_err(segments::Error::component)?;
-        let resident = total::Error::resident(base_mem, shape.projected_resident)
-            .map_err(segments::Error::component)?;
+        let count = total::Error::count(current, shape.count())?;
+        let len = total::Error::logical(base_len, shape.amount)?;
+        let resident = total::Error::resident(base_mem, shape.projected_resident)?;
         Ok(Self {
             target,
             shape,

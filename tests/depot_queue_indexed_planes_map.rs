@@ -144,7 +144,7 @@ fn collisions_and_planes() {
 
 #[test]
 fn storage_contract() {
-    assert_eq!(mem::size_of::<map::Table<[u64; 1], u64, 3>>(), 96);
+    assert_eq!(mem::size_of::<map::Table<[u64; 1], u64, 3>>(), 88);
     assert_eq!(mem::size_of::<map::Occupied<'_, [u64; 1], u64, 3>>(), 16);
     assert_eq!(
         mem::size_of::<Option<map::Occupied<'_, [u64; 1], u64, 3>>>(),

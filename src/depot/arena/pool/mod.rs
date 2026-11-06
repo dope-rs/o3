@@ -1,10 +1,14 @@
 use std::{cell, marker, mem, ops, pin, ptr};
 
 use crate::{
-    depot::arena::pool::{
-        self,
-        recycle::release,
-        shared::{Header, Initialized, Resident},
+    alloc::tail,
+    depot::{
+        arena::pool::{
+            self,
+            recycle::release,
+            shared::{Header, Initialized, Resident},
+        },
+        capacity,
     },
     mem::{raw::Edge, rc},
 };
@@ -280,20 +284,28 @@ impl<'a, T, O: crate::depot::raw::PoolOwner<T>> Terminal<'a, T, O> {
 }
 
 impl<T, O> Entry<T, O> {
-    pub(crate) const fn new(value: T) -> Self {
-        Self {
-            value,
-            state: cell::Cell::new(ptr::null_mut()),
+    pub(crate) fn init(
+        memory: tail::Uninit<O, Self, capacity::Count>,
+        header: O,
+        mut init: impl FnMut(u32) -> T,
+    ) -> tail::Block<O, Self, capacity::Count>
+    where
+        O: crate::depot::raw::PoolOwner<T>,
+    {
+        let mut block = memory.init(header);
+        let indices = 0..block.extent().raw();
+        let (header, entries) = block.parts_mut();
+        let mut free: *mut Self = ptr::null_mut();
+        for (index, slot) in indices.zip(entries) {
+            free = ptr::from_mut(slot.write(Self {
+                value: init(index),
+                state: cell::Cell::new(free.cast()),
+            }));
         }
-    }
-
-    pub(crate) unsafe fn chain(entries: &mut [Self], free: &cell::Cell<*mut Self>) {
-        let mut next = free.get();
-        for entry in entries.iter_mut().rev() {
-            entry.state.set(next.cast());
-            next = entry;
-        }
-        free.set(next);
+        // SAFETY: each initialized slot belongs to this retained pinned owner.
+        unsafe { header.free() }.set(free);
+        // SAFETY: every admitted slot was initialized once in index order.
+        unsafe { block.assume_init() }
     }
 
     pub(in crate::depot::arena::pool) unsafe fn recycle(

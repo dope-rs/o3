@@ -7,7 +7,7 @@ use std::mem;
 
 use common::{
     alloc::system::Tracker,
-    buffer::{Bytes as _, try_fill},
+    buffer::{try_bytes, try_fill},
 };
 use o3::{
     buffer::{
@@ -119,7 +119,7 @@ fn drains_every_boundary() {
             try_fill(&mut chain, &values[..count]).expect("fixture segments fit");
             assert!(segments::Drain::try_new(&mut chain, len + 1).is_err());
             assert_eq!(
-                chain.try_bytes().expect("chain bytes must allocate"),
+                try_bytes(&chain).expect("chain bytes must allocate"),
                 &whole[..len]
             );
             let ((), hot) = Tracker::measure(|| {
@@ -130,7 +130,7 @@ fn drains_every_boundary() {
             });
             assert_eq!(hot, [0; 4]);
             assert_eq!(
-                chain.try_bytes().expect("chain bytes must allocate"),
+                try_bytes(&chain).expect("chain bytes must allocate"),
                 &whole[amount..len]
             );
             let left = chain.count().into_raw() as usize;
@@ -205,11 +205,11 @@ fn transfers_every_boundary() {
                     assert_eq!(required.get(), whole.len() + 1);
                     assert_eq!(room, whole.len());
                     assert_eq!(
-                        source.try_bytes().expect("chain bytes must allocate"),
+                        try_bytes(&source).expect("chain bytes must allocate"),
                         whole
                     );
                     assert_eq!(
-                        target.try_bytes().expect("chain bytes must allocate"),
+                        try_bytes(&target).expect("chain bytes must allocate"),
                         values[..present].concat()
                     );
                     let mut wanted = values[..present].concat();
@@ -219,11 +219,11 @@ fn transfers_every_boundary() {
                     result.as_ref().expect("required fixture outcome");
                     assert_eq!(hot, [0; 4]);
                     assert_eq!(
-                        source.try_bytes().expect("chain bytes must allocate"),
+                        try_bytes(&source).expect("chain bytes must allocate"),
                         &whole[amount..]
                     );
                     assert_eq!(
-                        target.try_bytes().expect("chain bytes must allocate"),
+                        try_bytes(&target).expect("chain bytes must allocate"),
                         wanted
                     );
                     assert_eq!(
@@ -318,16 +318,13 @@ fn scopes_preserve_owners() {
     let mut visited = 0;
     let (source, hot) = Tracker::measure(|| {
         for owner in source.segments() {
-            match owner.scope() {
-                resident::Scope::Independent => {}
-                resident::Scope::Bound(owner) => {
-                    assert!(
-                        visited < expected.len(),
-                        "each borrowed slot is visited once"
-                    );
-                    assert_eq!(owner.as_slice(), expected[visited]);
-                    visited += 1;
-                }
+            if let Some(owner) = owner.scope() {
+                assert!(
+                    visited < expected.len(),
+                    "each borrowed slot is visited once"
+                );
+                assert_eq!(owner.as_slice(), expected[visited]);
+                visited += 1;
             }
         }
         source

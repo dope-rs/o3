@@ -33,6 +33,6 @@ impl<'a, T, Tag> Slot<'a, T, Tag> {
         }
         core.free = next;
         core.len += 1;
-        unsafe { hash::Entry::new(core, self.index) }.with_phase()
+        unsafe { entry::Live::new(core, self.index) }.with_phase()
     }
 }

@@ -71,10 +71,10 @@ impl<T, S, C: crate::depot::raw::Count> Drop for QueueBlock<T, S, C> {
         unsafe { self.store.drop_values() };
         let slots = ptr::slice_from_raw_parts_mut(self.slots.as_ptr(), self.lanes.count().get());
         unsafe { ptr::drop_in_place(slots) };
-        let bundle = self.store.region.capacity().bundle();
+        let bundle = self.store.capacity().bundle();
         // SAFETY: the immutable count reconstructs the allocation's original tail.
         let bundle =
             unsafe { bundle.tail::<crate::depot::raw::QueueSlot<S>>(self.lanes.count().get()) };
-        unsafe { bundle.deallocate(self.store.region.pointer()) };
+        unsafe { bundle.deallocate(self.store.pointer()) };
     }
 }

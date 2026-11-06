@@ -57,8 +57,8 @@ impl<T> Pool<T> {
 
     pub fn capacity(&self) -> segments::Plan {
         segments::Plan {
-            segments: self.header().nodes.region.capacity().len(),
-            chains: self.header().descriptors.region.capacity().len(),
+            segments: self.header().nodes.capacity().len(),
+            chains: self.header().descriptors.capacity().len(),
         }
     }
 
@@ -150,7 +150,12 @@ impl<T> Pool<T> {
                 State::Empty => Key::EMPTY,
                 State::One => Key::single(links.head_raw()),
                 State::Many { count, claim } => {
-                    let live = claim.insert(Descriptor::new(links, count.nonzero(), len, resident));
+                    let live = claim.insert(Descriptor {
+                        links,
+                        count: count.nonzero(),
+                        len,
+                        resident_bytes: resident,
+                    });
                     let key = Key::multi(live.index());
                     unsafe { live.publish() };
                     key

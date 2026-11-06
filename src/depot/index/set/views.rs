@@ -2,12 +2,12 @@ use std::{cell, marker, slice};
 
 use crate::depot::index::{bitmap, bitmap::entry::Row, set};
 
-pub(in crate::depot) struct View<S, Tag, Raw, const N: usize, K = ()> {
+pub(in crate::depot) struct View<S, Tag, Raw, const N: usize> {
     pub(in crate::depot::index::set) source: S,
-    tag: Domain<Tag, Raw, K>,
+    tag: Domain<Tag, Raw>,
 }
 
-impl<S, Tag, Raw, const N: usize, K> View<S, Tag, Raw, N, K> {
+impl<S, Tag, Raw, const N: usize> View<S, Tag, Raw, N> {
     pub(in crate::depot) const fn new(source: S) -> Self {
         Self {
             source,
@@ -16,13 +16,13 @@ impl<S, Tag, Raw, const N: usize, K> View<S, Tag, Raw, N, K> {
     }
 }
 
-impl<S: Copy, Tag, Raw, const N: usize, K> Clone for View<S, Tag, Raw, N, K> {
+impl<S: Copy, Tag, Raw, const N: usize> Clone for View<S, Tag, Raw, N> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<S: Copy, Tag, Raw, const N: usize, K> Copy for View<S, Tag, Raw, N, K> {}
+impl<S: Copy, Tag, Raw, const N: usize> Copy for View<S, Tag, Raw, N> {}
 
 /// Retains one nonempty packed set, including its cursor header and all planes.
 pub(in crate::depot::index::set) struct NonEmpty<'a, Tag, Raw, const N: usize, M> {
@@ -38,12 +38,11 @@ impl<'a, Tag, Raw, const N: usize, M> NonEmpty<'a, Tag, Raw, N, M> {
     }
 
     /// Advances the original source plane from its retained bounded row.
-    pub(in crate::depot::index::set) fn advance<S, K>(
-        row: &'a Row<View<S, Tag, Raw, N, K>, set::Id<N>>,
-    ) where
-        S: set::Storage<Tag, Raw, N, K, Mode = M>,
+    pub(in crate::depot::index::set) fn advance<S>(row: &'a Row<View<S, Tag, Raw, N>, set::Id<N>>)
+    where
+        S: crate::depot::raw::SetSource<Tag, Raw, N, Mode = M>,
     {
-        let state = row.source().source.state();
+        let state = row.source().source.planes();
         let next = row.index() + 1;
         Self { state }
             .cursor(row.plane())
@@ -79,29 +78,29 @@ impl<'a, Tag, Raw, const N: usize, M> NonEmpty<'a, Tag, Raw, N, M> {
 }
 
 // SAFETY: the retained source owns every initialized plane in one immutable domain.
-unsafe impl<S, Tag, Raw, const N: usize, K> crate::depot::raw::Words for View<S, Tag, Raw, N, K>
+unsafe impl<S, Tag, Raw, const N: usize> crate::depot::raw::Words for View<S, Tag, Raw, N>
 where
-    S: set::Storage<Tag, Raw, N, K>,
+    S: crate::depot::raw::SetSource<Tag, Raw, N>,
 {
     type Plane = set::Id<N>;
     type Size = u32;
 
     fn shape(&self) -> bitmap::Shape {
-        self.source.state().block.extent().shape()
+        self.source.planes().block.extent().shape()
     }
 
     fn words(&self, plane: Self::Plane) -> &[bitmap::Word] {
-        let Some(view) = NonEmpty::new(self.source.state()) else {
+        let Some(view) = NonEmpty::new(self.source.planes()) else {
             return &[];
         };
         view.words(plane)
     }
     fn row(entry: Row<&Self>, plane: Self::Plane) -> &[bitmap::Word] {
         NonEmpty {
-            state: entry.source().source.state(),
+            state: entry.source().source.planes(),
         }
         .words(plane)
     }
 }
 
-type Domain<Tag, Raw, K> = marker::PhantomData<fn(Tag, Raw, K) -> (Tag, Raw, K)>;
+type Domain<Tag, Raw> = marker::PhantomData<fn(Tag, Raw) -> (Tag, Raw)>;

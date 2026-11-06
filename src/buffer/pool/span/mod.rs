@@ -6,7 +6,6 @@ use crate::{
     buffer::{
         pool,
         pool::{owners, state},
-        raw::SliceExt as _,
         resident::{AllocError, staging, write::Cause},
         storage,
         write::{consume, consume::Error},
@@ -191,16 +190,12 @@ impl<'d> pool::Span<owners::Resident<'d>> {
             return Err(Cause::Shared(tail));
         };
         // Slot and slab retain the same warm pool; the suffix check above proves the copy fits.
-        let Some(mut next) = slab.acquire() else {
+        let Some(next) = slab.acquire() else {
             return Err(Cause::Rotation(tail));
         };
         // SAFETY: the exclusive source borrow retains its exact suffix through the copy.
         let bytes = unsafe { cursor.as_slice().get_unchecked(*head as usize..) };
-        let target = next.entry().data();
-        let end = bytes.len() + added;
-        // SAFETY: the fresh slot fits both retained sources and is disjoint from them.
-        unsafe { (bytes, src).copy_to(target) };
-        next.len = end as u32;
+        let next = next.copy_in((bytes, src), bytes.len() + added);
         *head = 0;
         *cursor = next;
         Ok(())

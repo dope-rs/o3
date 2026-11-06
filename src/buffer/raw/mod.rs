@@ -23,9 +23,7 @@ mod segment;
 pub use segment::Segment;
 mod scatter;
 pub use scatter::Scatter;
-pub(in crate::buffer) use slices::{
-    Exclusive, Indexed, IndexedMut, Linked, LinkedMut, Prefix, SliceExt,
-};
+pub(in crate::buffer) use slices::{Exclusive, Prefix, SliceExt};
 
 /// # Safety
 /// The `buffer::raw::Source` contract must hold. `buffer::Cursor` must expose that same range.

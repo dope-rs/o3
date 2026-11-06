@@ -84,13 +84,13 @@ impl<'d> Shared<'d> {
     pub fn try_owned(self) -> Result<storage::Shared, Self> {
         self.region.try_own().map_err(|region| Self { region })
     }
-    pub fn scope(&self) -> resident::Scope<'_, 'd> {
-        use resident::{Scope, State};
+    pub fn scope(&self) -> Option<&Self> {
+        use resident::State;
         match self.region.owner() {
-            State::Owned(_) | State::Borrowed(_) => Scope::Independent,
-            State::Slice if self.region.is_empty() => Scope::Independent,
+            State::Owned(_) | State::Borrowed(_) => None,
+            State::Slice if self.region.is_empty() => None,
             State::Slice | State::Resident(_) | State::Accounted(_) | State::Provided(_) => {
-                Scope::Bound(self)
+                Some(self)
             }
         }
     }

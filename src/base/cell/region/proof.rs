@@ -15,9 +15,7 @@ pub struct Proof<B: Brand> {
 impl<B: Brand> Proof<B> {
     /// Binds newly owned state to this exact region identity.
     pub const fn bind<T>(self, value: T) -> region::Value<B, T> {
-        region::Value {
-            value: values::Value::new(value),
-        }
+        values::Value::new(value)
     }
 }
 

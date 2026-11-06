@@ -13,4 +13,7 @@ mod raw;
 mod table;
 
 /// Abandoned initialized insertions are unlinked and their value is dropped.
-pub struct Rollback;
+pub type Rollback<'a, T, const N: usize, const L: usize, C> = crate::mem::Lease<
+    crate::depot::raw::LaneUndo<Position<'a, T, N, L, C, true>>,
+    crate::mem::lease::Open,
+>;

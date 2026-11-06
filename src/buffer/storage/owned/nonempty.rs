@@ -59,12 +59,6 @@ impl NonEmpty<Vec<u8>> {
         Append::new(&mut self.0)
     }
 
-    pub fn first_mut(&mut self) -> &mut u8 {
-        // SAFETY: construction admits a nonempty initialized vector, and every
-        // exposed mutation preserves its first byte on this exact owner.
-        unsafe { self.0.get_unchecked_mut(0) }
-    }
-
     pub fn truncate(&mut self, len: NonZero<usize>) {
         self.0.truncate(len.get());
     }

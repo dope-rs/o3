@@ -181,10 +181,7 @@ impl<T: buffer::raw::Segment> Chain<T> {
         if amount == self.len() {
             return edit::Relation::new((target, self))
                 .try_commit()
-                .map_err(|error| match error.into_error() {
-                    segments::Error::Total(cause) => segments::Error::component(cause),
-                    error => error,
-                });
+                .map_err(|error| error.into_error());
         }
         let shape = prefix::Shape::try_new(self, amount)?;
         shape.try_move_to(target)

@@ -61,7 +61,7 @@ impl<T: buffer::raw::Segment> Drain<'_, segments::Chain<T>> {
                         sequence: head.sequence,
                         index,
                     };
-                    let owner = buffer::raw::IndexedMut::get_mut(&mut single);
+                    let owner = single.get_mut();
                     match Tail::positive(owner, amount) {
                         Some(tail) => tail.commit(),
                         None => single.discard(),

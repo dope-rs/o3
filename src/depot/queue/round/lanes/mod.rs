@@ -6,15 +6,17 @@ use lane::Lane;
 use crate::{
     alloc,
     base::num::bounded,
-    depot::queue::{links, round},
+    depot::{
+        queue::{links, round},
+        raw,
+    },
 };
 
 pub(super) mod group;
 pub(super) mod lane;
 pub(in crate::depot::queue::round) mod stores;
 
-type Block<T> =
-    alloc::raw::Block<stores::Capacity<T>, (), alloc::raw::Initialized, stores::Node<T>>;
+type Block<T> = alloc::raw::Block<stores::Capacity<T>, (), alloc::raw::Initialized, raw::Node<T>>;
 
 /// Stable resident values partitioned among runtime FIFO lanes and active groups.
 #[derive(Debug)]
@@ -29,12 +31,12 @@ unsafe fn join<'a, T, const G: usize>(
     block: &'a Block<T>,
     groups: &'a [links::Cycle; G],
     index: links::Index,
-) -> round::Join<'a, [stores::Node<T>], [stores::Track]> {
+) -> round::Join<'a, [raw::Node<T>], [raw::Node<links::Chain>]> {
     let lanes = block.tail();
     round::Join {
         hooks: block.as_ref(),
         lanes,
-        entries: &unsafe { lanes.get_unchecked(index.get()) }.entries,
+        entries: unsafe { lanes.get_unchecked(index.get()) },
         active: &groups[index.get() % G],
         index,
     }
@@ -89,7 +91,7 @@ impl<T, const G: usize, const N: usize> Lanes<T, G, N> {
     pub(in crate::depot::queue::round) unsafe fn join(
         &self,
         index: links::Index,
-    ) -> round::Join<'_, [stores::Node<T>], [stores::Track]> {
+    ) -> round::Join<'_, [raw::Node<T>], [raw::Node<links::Chain>]> {
         unsafe { join(&self.block, &self.groups, index) }
     }
 
@@ -116,14 +118,11 @@ impl<T, const G: usize, const N: usize> Lanes<T, G, N> {
                 // SAFETY: Capacity bounds both initialized planes by the Index domain.
                 let key = unsafe { links::Index::new_usize(index) };
                 (
-                    stores::Node {
-                        value: T::default(),
-                        hook: links::Hook::new(key),
-                    },
+                    raw::Node::vacant(T::default(), key.raw(), links::Index::END),
                     cell::Cell::new(unsafe { links::Index::new_usize(0) }),
                 )
             },
-            |index| stores::Track::new(unsafe { links::Index::new_usize(index) }),
+            |index| raw::Node::vacant(links::Chain::new(), index as u32, links::Index::END),
         )?;
         Ok(Self {
             block,

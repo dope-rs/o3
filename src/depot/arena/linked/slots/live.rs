@@ -30,13 +30,7 @@ impl<T, H: linked::Source<T>, Tag> Live<T, H, Tag> {
 
     pub(crate) fn take(self) -> (T, slots::Vacant<T, H, Tag>) {
         let this = mem::ManuallyDrop::new(self);
-        let node = unsafe {
-            this.vacant
-                .owner
-                .store()
-                .region
-                .slot(this.vacant.index.raw())
-        };
+        let node = unsafe { this.vacant.owner.store().slot(this.vacant.index.raw()) };
         let value = unsafe { (&*node.value.get()).assume_init_read() };
         node.next.set(this.vacant.index.raw());
         (value, unsafe { ptr::read(&this.vacant) })
@@ -62,7 +56,7 @@ impl<T, H: linked::Source<T>, Tag> Live<T, H, Tag> {
 impl<T, H: linked::Source<T>, Tag> Drop for Live<T, H, Tag> {
     fn drop(&mut self) {
         let index = self.vacant.index.raw();
-        let node = unsafe { self.vacant.owner.store().region.slot(index) };
+        let node = unsafe { self.vacant.owner.store().slot(index) };
         // SAFETY: Drop consumes this node's sole initialized-value owner.
         unsafe { (&mut *node.value.get()).assume_init_drop() };
     }

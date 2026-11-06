@@ -95,8 +95,8 @@ impl<T, Tag> Arena<T, Tag> {
 impl<T, Tag, const TRACK: bool> Drop for Arena<T, Tag, TRACK> {
     fn drop(&mut self) {
         unsafe { self.inner.drop_values() };
-        let bundle = self.inner.region.capacity().bundle();
-        unsafe { bundle.deallocate(self.inner.region.pointer()) };
+        let bundle = self.inner.capacity().bundle();
+        unsafe { bundle.deallocate(self.inner.pointer()) };
     }
 }
 

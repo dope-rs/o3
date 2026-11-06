@@ -43,4 +43,4 @@ impl<'a, Tag, Raw: crate::depot::raw::Word, const N: usize> Plane<'a, Tag, Raw, 
 
 /// Removed membership retains the original shared plane for restoration.
 type Removed<'a, Tag, Raw, const N: usize> =
-    set::Entry<&'a set::State<Tag, Raw, N>, Tag, Raw, N, set::Id<N>, set::Planar>;
+    set::Entry<&'a set::State<Tag, Raw, N>, Tag, Raw, N, set::Id<N>>;

@@ -258,7 +258,17 @@ impl<S: crate::depot::raw::TagStore, const INITIALIZED: bool>
 }
 
 /// A vacant lane slot keeps its unique runtime FIFO loan until publication.
-type Vacancy<'a, T, C, L, H> =
-    tagged::Vacant<tagged::Endpoint<&'a mut runtime::Fifo<T, C, L, H>, links::Index, false>>;
+type Vacancy<'a, T, C, L, H> = tagged::Vacant<Position<'a, T, C, L, H, false>>;
+
+type Position<'a, T, C, L, H, const INITIALIZED: bool = true> =
+    Endpoint<&'a mut runtime::Fifo<T, C, L, H>, links::Index, INITIALIZED>;
+
+impl<'a, T, C: crate::depot::raw::Count, L: crate::depot::raw::Count, H: tagged::raw::Head>
+    Vacancy<'a, T, C, L, H>
+{
+    pub fn insert<const FRONT: bool>(self, value: T) -> tagged::Linked<Position<'a, T, C, L, H>> {
+        self.insert_linked::<FRONT>(value)
+    }
+}
 
 type Entry<'a, T, C, L, H> = Result<Option<Vacancy<'a, T, C, L, H>>, Error<C>>;

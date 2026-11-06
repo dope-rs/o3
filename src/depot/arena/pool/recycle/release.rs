@@ -32,20 +32,16 @@ impl<T: recycle::Recycle, C> Store<T, C> {
         context: C,
         seed: T::Seed,
     ) -> Result<Self, crate::alloc::Error> {
-        let plan = tail::Plan::try_new(capacity)?;
-        let memory = plan.try_allocate()?;
-        let mut block = memory.repeat_with(
-            Header {
-                free: cell::Cell::new(ptr::null_mut()),
-                context: mem::ManuallyDrop::new(context),
-            },
-            || pool::Entry::new(T::from_seed(seed)),
-        );
-        let (header, entries) = block.parts_mut();
-        // SAFETY: this constructor exclusively owns the freshly allocated block,
-        // so every entry is linked into the empty free list exactly once.
-        unsafe { pool::Entry::chain(entries, &header.free) };
-        Ok(Self { block })
+        Ok(Self {
+            block: pool::Entry::init(
+                tail::Plan::try_new(capacity)?.try_allocate()?,
+                Header {
+                    free: cell::Cell::new(ptr::null_mut()),
+                    context: mem::ManuallyDrop::new(context),
+                },
+                |_| T::from_seed(seed),
+            ),
+        })
     }
 
     pub fn vacancy<'owner>(

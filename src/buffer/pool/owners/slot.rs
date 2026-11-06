@@ -173,7 +173,7 @@ pub(in crate::buffer) struct Entry<'span, K: crate::buffer::raw::Backing, S = st
 }
 
 impl<'span, K: crate::buffer::raw::Backing, S> Entry<'span, K, S> {
-    pub(in crate::buffer::pool) const fn new<M>(span: &'span pool::Lease<K, M, S>) -> Self {
+    pub(in crate::buffer::pool) const fn new<M>(span: &'span pool::Span<K, M, S>) -> Self {
         Self {
             slots: span.slots,
             key: span.key,

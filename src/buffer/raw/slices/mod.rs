@@ -81,7 +81,7 @@ impl<const P: usize, const N: usize> SliceExt for ([u8; P], [&[u8]; N]) {
 }
 
 mod proofs;
-pub(in crate::buffer) use proofs::{Exclusive, Indexed, IndexedMut, Linked, LinkedMut, Prefix};
+pub(in crate::buffer) use proofs::{Exclusive, Prefix};
 
 impl<'a, const N: usize> Slices<'a, N> {
     /// Admits one exact slice set whose byte sum fits the allocation domain.

@@ -253,12 +253,12 @@ impl<T> Topology<'_, T> {
             Output::Small(Small::Empty) => *self.body.key = Key::EMPTY,
             Output::Small(Small::One) => *self.body.key = Key::single(self.body.links.head_raw()),
             Output::Many { count, claim } => {
-                let live = claim.insert(Descriptor::new(
-                    self.body.links,
+                let live = claim.insert(Descriptor {
+                    links: self.body.links,
                     count,
-                    self.body.len,
-                    self.body.resident,
-                ));
+                    len: self.body.len,
+                    resident_bytes: self.body.resident,
+                });
                 *self.body.key = Key::multi(live.index());
                 unsafe { live.publish() };
             }

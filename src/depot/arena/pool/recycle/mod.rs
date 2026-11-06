@@ -39,21 +39,17 @@ impl<T> Store<T> {
     /// The retained extent also admits zero residents without invoking `init`.
     pub fn try_from_fn(
         capacity: capacity::Count,
-        mut init: impl FnMut(u32) -> T,
+        init: impl FnMut(u32) -> T,
     ) -> Result<Self, crate::alloc::Error> {
-        let plan = tail::Plan::try_new(capacity)?;
-        let memory = plan.try_allocate()?;
-        let mut block = memory.fill(
-            Header {
-                free: cell::Cell::new(ptr::null_mut()),
-            },
-            |_, index| pool::Entry::new(init(index)),
-        );
-        let (header, entries) = block.parts_mut();
-        // SAFETY: this constructor exclusively owns the freshly allocated block,
-        // so every entry is linked into the empty free list exactly once.
-        unsafe { pool::Entry::chain(entries, &header.free) };
-        Ok(Self { block })
+        Ok(Self {
+            block: pool::Entry::init(
+                tail::Plan::try_new(capacity)?.try_allocate()?,
+                Header {
+                    free: cell::Cell::new(ptr::null_mut()),
+                },
+                init,
+            ),
+        })
     }
 
     pub fn vacancies(&self) -> &Header<T> {

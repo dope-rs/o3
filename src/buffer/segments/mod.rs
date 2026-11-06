@@ -32,7 +32,7 @@ pub mod scatter;
 mod shape;
 
 /// A fixed metadata pool cannot admit the requested transition.
-#[repr(u8)]
+#[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
     /// No segment slot is available.
@@ -47,27 +47,19 @@ pub enum Error {
     Logical(assembly::Overflow),
     /// Resident byte length exceeded the address domain.
     Resident(assembly::Overflow),
-    /// Combined unchanged-sequence accounting exceeded its exact domain.
-    Total(total::Error),
     /// The requested byte prefix exceeds the source length.
     Boundary(consume::Error),
     /// A payload or metadata owner has no remaining reference capacity.
     Retain(rc::Error),
 }
 
-impl Error {
-    pub(in crate::buffer::segments) const fn component(error: total::Error) -> Self {
+impl From<total::Error> for Error {
+    fn from(error: total::Error) -> Self {
         match error {
             total::Error::Count(error) => Self::Count(error),
             total::Error::Logical(error) => Self::Logical(error),
             total::Error::Resident(error) => Self::Resident(error),
         }
-    }
-}
-
-impl From<total::Error> for Error {
-    fn from(error: total::Error) -> Self {
-        Self::Total(error)
     }
 }
 
@@ -85,7 +77,7 @@ impl Plan {
 }
 
 const _: () = {
-    assert!(mem::size_of::<Error>() == 4 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Error>() == 3 * mem::size_of::<usize>());
     assert!(mem::size_of::<Plan>() == 2 * mem::size_of::<usize>());
 };
 

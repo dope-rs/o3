@@ -14,20 +14,21 @@ use crate::{
     },
 };
 
-pub(in crate::depot) struct Entry<'a, T, Tag = ()> {
-    pub(in crate::depot) core: &'a mut hash::Core<T, Tag>,
-    pub(in crate::depot) index: bounded::U32<0, { u32::MAX - 1 }>,
+/// An initialized resident entry carrying its directory membership phase.
+pub struct Live<'a, T, Tag = (), P = ()> {
+    pub(super) core: &'a mut hash::Core<T, Tag>,
+    pub(super) index: bounded::U32<0, { u32::MAX - 1 }>,
     len: num::NonZero<u32>,
+    phase: marker::PhantomData<fn(P) -> P>,
 }
 
-impl<'a, T, Tag> Entry<'a, T, Tag> {
-    pub(in crate::depot) fn index(
-        staged: entry::Live<'a, T, Tag, entry::Staged>,
+impl<'a, T, Tag> Live<'a, T, Tag, entry::Staged> {
+    pub(super) fn index(
+        entry: Self,
         bucket: map::raw::Vacant,
         hash: u64,
     ) -> entry::Live<'a, T, Tag, entry::Indexed> {
         let stored = unsafe { Bucket::new(bucket.index()) };
-        let entry = staged.raw;
         unsafe { entry.core.directory.insert(bucket, hash, entry.index) };
         unsafe {
             entry.core.meta_mut(entry.index).bucket = stored;
@@ -36,10 +37,10 @@ impl<'a, T, Tag> Entry<'a, T, Tag> {
     }
 }
 
-impl<'a, T, Tag> Entry<'a, T, Tag> {
+impl<'a, T, Tag> Live<'a, T, Tag> {
     /// # Safety
     /// `index` must identify a live entry in `core`.
-    pub(in crate::depot) unsafe fn new(
+    pub(super) unsafe fn new(
         core: &'a mut hash::Core<T, Tag>,
         index: bounded::U32<0, { u32::MAX - 1 }>,
     ) -> Self {
@@ -48,10 +49,11 @@ impl<'a, T, Tag> Entry<'a, T, Tag> {
             len: unsafe { num::NonZero::<u32>::new_unchecked(core.len) },
             core,
             index,
+            phase: marker::PhantomData,
         }
     }
 
-    pub(in crate::depot) fn classify(self) -> entry::Entry<'a, T, Tag> {
+    pub(super) fn classify(self) -> entry::Entry<'a, T, Tag> {
         if unsafe { self.core.meta(self.index) }.bucket == Bucket::NONE {
             entry::Entry::Staged(self.with_phase())
         } else {
@@ -59,7 +61,7 @@ impl<'a, T, Tag> Entry<'a, T, Tag> {
         }
     }
 
-    pub(in crate::depot) fn indexed(self) -> Option<entry::Live<'a, T, Tag, entry::Indexed>> {
+    pub(super) fn indexed(self) -> Option<entry::Live<'a, T, Tag, entry::Indexed>> {
         if unsafe { self.core.meta(self.index) }.bucket == Bucket::NONE {
             None
         } else {
@@ -68,9 +70,8 @@ impl<'a, T, Tag> Entry<'a, T, Tag> {
     }
 }
 
-impl<T, Tag> Entry<'_, T, Tag> {
-    pub(in crate::depot) fn vacate(staged: &mut entry::Live<'_, T, Tag, entry::Staged>) {
-        let owner = &mut staged.raw;
+impl<T, Tag> Live<'_, T, Tag, entry::Staged> {
+    pub(super) fn vacate(owner: &mut Self) {
         let position = unsafe { owner.core.meta(owner.index) }.slot;
         owner.core.len = owner.len.get() - 1;
         let last = owner.core.len;
@@ -98,10 +99,6 @@ impl<T, Tag> Entry<'_, T, Tag> {
     }
 }
 
-const _: () = {
-    assert!(mem::size_of::<Entry<'static, (), ()>>() == 2 * mem::size_of::<usize>());
-};
-
 const VACANT: u32 = 1 << 31;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -121,8 +118,7 @@ impl Bucket {
     pub(in crate::depot) fn occupied<T, Tag>(
         indexed: &entry::Live<'_, T, Tag, entry::Indexed>,
     ) -> map::raw::Occupied {
-        let owner = &indexed.raw;
-        let bucket = unsafe { owner.core.meta(owner.index) }.bucket;
+        let bucket = unsafe { indexed.core.meta(indexed.index) }.bucket;
         unsafe { map::raw::Occupied::new(bucket.0 as usize) }
     }
 }
@@ -165,18 +161,20 @@ impl Meta {
 const _: () = assert!(mem::size_of::<Meta>() == 3 * mem::size_of::<u32>());
 const _: () = assert!(mem::size_of::<Bucket>() == mem::size_of::<u32>());
 
-impl<'a, T, Tag> Entry<'a, T, Tag> {
-    pub(in crate::depot) fn with_phase<P>(self) -> entry::Live<'a, T, Tag, P> {
+impl<'a, T, Tag, P> Live<'a, T, Tag, P> {
+    pub(super) fn with_phase<N>(self) -> entry::Live<'a, T, Tag, N> {
         entry::Live {
-            raw: self,
+            core: self.core,
+            index: self.index,
+            len: self.len,
             phase: marker::PhantomData,
         }
     }
-    pub(in crate::depot) fn slot(&mut self) -> &mut mem::MaybeUninit<T> {
+    pub(super) fn slot(&mut self) -> &mut mem::MaybeUninit<T> {
         unsafe { &mut *self.core.values.as_ptr().add(self.index.into_usize()) }
     }
 
-    pub(in crate::depot) fn into_mut(self) -> &'a mut T {
+    pub fn into_mut(self) -> &'a mut T {
         unsafe { self.core.value_mut(self.index) }
     }
 }

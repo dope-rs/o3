@@ -72,17 +72,6 @@ impl<T: buffer::raw::Segment> Item<T> {
             nonempty: self.nonempty,
         }
     }
-
-    /// Splits a prefix while preserving the remaining owner's nonempty proof.
-    pub fn try_split(mut self, limit: usize) -> Result<(T, Option<Self>), (rc::Error, Self)> {
-        let Some(tail) = segments::Tail::new(&mut self.value, limit) else {
-            return Ok((self.value, None));
-        };
-        match tail.try_commit() {
-            Ok(prefix) => Ok((prefix, Some(self))),
-            Err(error) => Err((error, self)),
-        }
-    }
 }
 
 impl<T: AsRef<[u8]>> Item<T> {
@@ -102,10 +91,7 @@ impl<'source, S: ?Sized> From<&regions::NonEmpty<'_, 'source, S>>
 {
     fn from(view: &regions::NonEmpty<'_, 'source, S>) -> Self {
         Self {
-            value: buffer::View {
-                source: view.source(),
-                bytes: view.as_slice(),
-            },
+            value: *view.view(),
             nonempty: (),
         }
     }

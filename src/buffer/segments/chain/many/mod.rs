@@ -10,7 +10,6 @@ use crate::{
         segments::{Exact, chain::edit, handles},
         storage,
     },
-    depot::arena::linked::slots,
     mem::rc,
 };
 
@@ -18,35 +17,6 @@ use crate::{
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct Many<T: buffer::raw::Segment>(pub(in crate::buffer::segments::chain) Chain<T>);
-
-struct View<'a, T: buffer::raw::Segment>(&'a Many<T>);
-
-// SAFETY: Many retains its own live multi descriptor and nonempty node partition.
-unsafe impl<'a, T: buffer::raw::Segment + 'a> buffer::raw::Linked<'a> for View<'a, T> {
-    type Item = segments::Item<T>;
-    type Metadata = handles::Descriptor;
-
-    fn parts(
-        self,
-    ) -> (
-        &'a slots::Store<Self::Item>,
-        &'a slots::Store<Self::Metadata>,
-        slots::Index,
-    ) {
-        let sequence = &self.0.0;
-        // SAFETY: Many's constructors retain the exact live multi key.
-        let index = unsafe { sequence.key.multi_index() };
-        (
-            handles::nodes(&sequence.handle),
-            handles::descriptors(&sequence.handle),
-            index,
-        )
-    }
-
-    fn head(metadata: &Self::Metadata) -> slots::Index {
-        metadata.links.head_raw()
-    }
-}
 
 impl<T: buffer::raw::Segment> From<Many<T>> for Chain<T> {
     fn from(val: Many<T>) -> Self {
@@ -99,7 +69,9 @@ impl<T: buffer::raw::Segment> Many<T> {
     }
 
     pub fn front(&self) -> &T {
-        buffer::raw::Linked::front(View(self)).as_ref()
+        let head = self.descriptor().links.head_raw();
+        // SAFETY: Many retains this descriptor's initialized head in its own node store.
+        unsafe { handles::nodes(&self.0.handle).value(head) }.as_ref()
     }
 
     /// Moves at most one physical owner's prefix, preserving the remaining chain.
@@ -123,7 +95,9 @@ impl<T: buffer::raw::Segment> Many<T> {
     }
 
     fn descriptor(&self) -> &handles::Descriptor {
-        buffer::raw::Linked::metadata(View(self))
+        let sequence = &self.0;
+        // SAFETY: Many retains the initialized descriptor selected by its exact multi key.
+        unsafe { handles::descriptors(&sequence.handle).value(sequence.key.multi_index()) }
     }
 
     pub(in crate::buffer::segments::chain) fn edit(

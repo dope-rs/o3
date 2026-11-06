@@ -42,7 +42,7 @@ impl<T, const G: usize, const N: usize, O: ops::Deref<Target = round::Lanes<T, G
         } = self.into_inner();
         // SAFETY: the proof retains the owner against which the lane was admitted.
         let track = unsafe { owner.block.tail().get_unchecked(lane.get()) };
-        let index = track.entries.first()?;
+        let index = track.first()?;
         Some(round::Location::new(owner, round::Position { lane, index }))
     }
 }

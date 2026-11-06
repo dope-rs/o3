@@ -1,7 +1,6 @@
 pub(in crate::buffer::resident) mod budget;
 pub(in crate::buffer::resident) mod errors;
 pub(in crate::buffer::resident) mod reuse;
-pub(in crate::buffer::resident) mod scope;
 
 /// One stable resident-accounting counter reused across generative regions.
 #[derive(Debug)]

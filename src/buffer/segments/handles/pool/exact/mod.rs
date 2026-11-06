@@ -100,12 +100,12 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
         let count = unsafe { NonZero::new_unchecked(total.count().into_raw()) };
         let descs = handles::descriptors(&handle);
         // SAFETY: Exact reserves one private descriptor for its admitted Sequence.
-        let claim = unsafe { slots::Vacant::reserve(descs) }.insert(handles::Descriptor::new(
+        let claim = unsafe { slots::Vacant::reserve(descs) }.insert(handles::Descriptor {
             links,
             count,
-            total.len(),
-            total.resident(),
-        ));
+            len: total.len(),
+            resident_bytes: total.resident(),
+        });
         let key = Key::multi(claim.index());
         unsafe { claim.publish() };
         let mut sequence = Chain::new(handle);

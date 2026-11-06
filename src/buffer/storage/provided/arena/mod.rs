@@ -124,13 +124,16 @@ impl<T, C, L> Arena<T, C, L> {
         let header = unsafe { &*ptr::from_ref(header).cast::<Active<'d, T, C, L>>() };
         let values = tail::View::new(&self.entries).as_slice();
         for slot in values {
-            // SAFETY: the inactive scope owns each entry's uninitialized storage;
-            // its exact layout is asserted above and the active domain stays live.
+            // SAFETY: this scope owns each complete slot for the whole generation;
+            // the asserted layout admits its Entry before linking the original slot.
             unsafe {
                 slot.entry
                     .get()
                     .cast::<arena::Entry<'d>>()
-                    .write(arena::Entry::new(&header.domain.state, resident))
+                    .write(arena::Entry::new(&header.domain.state, resident));
+                header.domain.state.push_free(arena::Empty {
+                    entry: ptr::NonNull::from(slot).cast(),
+                });
             };
         }
         // SAFETY: the exact validated tail now contains initialized typed entries.
@@ -140,11 +143,6 @@ impl<T, C, L> Arena<T, C, L> {
                 values.len(),
             )
         };
-        for slot in slots {
-            // SAFETY: every complete slot is initialized, unpublished, and
-            // retained by this exclusive arena scope for the whole generation.
-            unsafe { arena::Entry::seed(slot) };
-        }
         (
             Root { header },
             Scope {

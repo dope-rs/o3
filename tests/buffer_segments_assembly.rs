@@ -7,7 +7,7 @@ use std::num::NonZero;
 
 use common::{
     alloc::system::Tracker,
-    buffer::{Bytes as _, try_fill, try_item, try_many},
+    buffer::{try_bytes, try_fill, try_item, try_many},
 };
 use o3::{
     alloc,
@@ -208,16 +208,11 @@ fn joins_with_one_alloc() {
                     } if shortage.requested.get() == 3 && shortage.available == 0
                 ));
                 assert_eq!(
-                    left.as_chain()
-                        .try_bytes()
-                        .expect("chain bytes must allocate"),
+                    try_bytes(left.as_chain()).expect("chain bytes must allocate"),
                     values[..2].concat()
                 );
                 assert_eq!(
-                    right
-                        .as_chain()
-                        .try_bytes()
-                        .expect("chain bytes must allocate"),
+                    try_bytes(right.as_chain()).expect("chain bytes must allocate"),
                     values.concat()
                 );
                 target = left;
@@ -229,10 +224,7 @@ fn joins_with_one_alloc() {
             assert_eq!(hot[0], usize::from(free == 0));
             assert_eq!(hot[2], 0);
             assert_eq!(
-                joined
-                    .as_chain()
-                    .try_bytes()
-                    .expect("chain bytes must allocate"),
+                try_bytes(joined.as_chain()).expect("chain bytes must allocate"),
                 [values[..2].concat(), values.concat()].concat()
             );
             assert!(

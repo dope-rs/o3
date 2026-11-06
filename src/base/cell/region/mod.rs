@@ -35,11 +35,11 @@ impl<B: Brand> Token<B> {
     }
 
     pub fn borrow<'a, T>(&'a self, value: &'a region::Value<B, T>) -> &'a T {
-        self.token.borrow(&value.value)
+        self.token.borrow(value)
     }
 
     pub fn borrow_mut<'a, T: Unpin>(&'a mut self, value: &'a region::Value<B, T>) -> &'a mut T {
-        self.token.borrow_mut(&value.value)
+        self.token.borrow_mut(value)
     }
 
     /// Copies the opaque identity proof for capabilities owned by this region.

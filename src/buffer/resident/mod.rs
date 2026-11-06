@@ -5,7 +5,6 @@ pub use domain::{
     budget::{BindError, Budget, Charge},
     errors::AllocError,
     reuse::Reuse,
-    scope::Scope,
 };
 pub(in crate::buffer) use shared::state::State;
 pub use shared::{Shared, exact::Exact};

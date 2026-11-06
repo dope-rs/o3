@@ -1,4 +1,4 @@
-use std::{num, ops, ptr};
+use std::{mem, num, ops, ptr};
 
 use crate::{
     buffer,
@@ -110,15 +110,11 @@ impl<'a, P: crate::buffer::raw::Policy> Unique<'a, P> {
             (source, tail).copy_to(dst.as_ptr());
         }
         let current = self.0.capacity();
-        let slot = self.0;
-        // SAFETY: Unique transfers the sole edge out of this exclusively held
-        // slot. Publication restores the slot before any subsequent access.
-        let old = unsafe { ptr::read(slot) }.into_raw();
         // SAFETY: the growth debit carries the source policy's exact seed. The
         // fresh header is initialized once before the old region is freed.
         unsafe {
             crate::buffer::raw::Header::write(pointer, target, debit);
-            ptr::write(slot, crate::buffer::raw::Rc::from_raw(pointer));
+            let old = mem::replace(self.0, crate::buffer::raw::Rc::from_raw(pointer)).into_raw();
             crate::buffer::raw::Header::free(old, current);
         }
     }

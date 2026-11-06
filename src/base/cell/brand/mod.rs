@@ -1,10 +1,9 @@
 use std::{marker, pin};
 
-pub use value::Value;
+/// A value accessible only with the matching application [`Token`].
+pub use crate::base::cell::values::Value;
 
 use crate::base::cell::{Sealed, brand, region, values};
-
-mod value;
 
 /// One generative application identity, invariant and unforgeable.
 ///
@@ -29,9 +28,7 @@ pub struct Token<B: Brand> {
 
 impl<B: Brand> Token<B> {
     pub const fn bind<T>(&self, value: T) -> brand::Value<B, T> {
-        brand::Value {
-            value: values::Value::new(value),
-        }
+        values::Value::new(value)
     }
 }
 
@@ -57,3 +54,9 @@ impl Token<Identity<'_>> {
         )
     }
 }
+
+const _: () = {
+    assert!(size_of::<Token<Identity<'static>>>() == 0);
+    assert!(size_of::<Value<Identity<'static>, u64>>() == size_of::<u64>());
+    assert!(align_of::<Value<Identity<'static>, u64>>() == align_of::<u64>());
+};

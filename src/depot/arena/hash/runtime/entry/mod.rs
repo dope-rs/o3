@@ -1,5 +1,4 @@
-use std::marker;
-
+pub use hash::entries::Live;
 use runtime::entry;
 pub use vacancy::Vacancy;
 
@@ -15,12 +14,6 @@ use crate::{
         queue::links,
     },
 };
-
-/// An initialized resident entry carrying its directory membership phase.
-pub struct Live<'a, T, Tag = (), P = ()> {
-    pub(in crate::depot) raw: hash::Entry<'a, T, Tag>,
-    pub(in crate::depot) phase: marker::PhantomData<fn(P) -> P>,
-}
 
 mod vacancy;
 
@@ -98,7 +91,7 @@ impl<'a, T, Tag> entry::Live<'a, T, Tag, Occupied> {
         let index = bounded::U32::from_one(index.position());
         // SAFETY: the original Map loan proves this initialized indexed slot.
         (
-            unsafe { hash::Entry::new(&mut map.core, index) }.with_phase(),
+            unsafe { Live::new(&mut map.core, index) }.with_phase(),
             context,
         )
     }
@@ -107,7 +100,7 @@ impl<'a, T, Tag> entry::Live<'a, T, Tag, Occupied> {
     ) -> (key::Handle<runtime::Domain<Tag>>, &T) {
         let (owner, index) = live.into_inner();
         let index = bounded::U32::from_one(index.position());
-        let core = &owner.raw.core;
+        let core = &owner.core;
         // SAFETY: the retained indexed proof bounds this position by the core's
         // capacity, so its metadata slot is initialized.
         let key = unsafe { core.key_for(index) };
@@ -115,6 +108,7 @@ impl<'a, T, Tag> entry::Live<'a, T, Tag, Occupied> {
         let value = unsafe { core.value(index) };
         (key, value)
     }
+    #[inline]
     pub fn remove(self) -> T {
         self.with_phase::<Indexed>().remove()
     }
@@ -124,11 +118,10 @@ impl<'a, T, Tag> entry::Live<'a, T, Tag, Occupied> {
 }
 
 impl<'a, T, Tag> entry::Live<'a, T, Tag, Indexed> {
-    pub fn unindex(mut self) -> entry::Live<'a, T, Tag, Staged> {
+    pub fn unindex(self) -> entry::Live<'a, T, Tag, Staged> {
         let bucket = hash::Bucket::occupied(&self);
-        let owner = &mut self.raw;
-        unsafe { owner.core.meta_mut(owner.index).bucket = hash::Bucket::NONE };
-        unsafe { map::raw::Hole::retire(&mut *owner.core, bucket) };
+        unsafe { self.core.meta_mut(self.index).bucket = hash::Bucket::NONE };
+        unsafe { map::raw::Hole::retire(&mut *self.core, bucket) };
         self.with_phase()
     }
     pub fn remove(self) -> T {
@@ -145,13 +138,13 @@ impl<'a, T, Tag> entry::Live<'a, T, Tag, Staged> {
         unsafe { map::raw::Probe::spare(self, hash, |value| value.as_ref() == key) }
     }
     pub fn remove(mut self) -> T {
-        hash::Entry::vacate(&mut self);
-        unsafe { self.raw.slot().assume_init_read() }
+        Self::vacate(&mut self);
+        unsafe { self.slot().assume_init_read() }
     }
 
     pub(in crate::depot) fn discard(mut self) {
-        hash::Entry::vacate(&mut self);
-        unsafe { self.raw.slot().assume_init_drop() };
+        Self::vacate(&mut self);
+        unsafe { self.slot().assume_init_drop() };
     }
 }
 
@@ -173,7 +166,7 @@ impl<'a, T, Tag> map::Vacancy<entry::Live<'a, T, Tag, entry::Staged>, u64> {
     }
     pub fn commit(self) -> entry::Live<'a, T, Tag, entry::Indexed> {
         let (staged, bucket, hash) = self.into_parts();
-        hash::Entry::index(staged, bucket, hash)
+        Live::index(staged, bucket, hash)
     }
 }
 const _: () = {
@@ -184,24 +177,16 @@ const _: () = {
 };
 
 impl<'a, T, Tag, P> Live<'a, T, Tag, P> {
-    pub(in crate::depot) fn with_phase<N>(self) -> Live<'a, T, Tag, N> {
-        self.raw.with_phase()
-    }
-
     pub fn key(&self) -> key::Handle<runtime::Domain<Tag>> {
-        unsafe { self.raw.core.key_for(self.raw.index) }
+        unsafe { self.core.key_for(self.index) }
     }
 
     pub fn get(&self) -> &T {
-        unsafe { self.raw.core.value(self.raw.index) }
+        unsafe { self.core.value(self.index) }
     }
 
     pub fn get_mut(&mut self) -> &mut T {
-        unsafe { self.raw.core.value_mut(self.raw.index) }
-    }
-
-    pub fn into_mut(self) -> &'a mut T {
-        self.raw.into_mut()
+        unsafe { self.core.value_mut(self.index) }
     }
 }
 
@@ -218,15 +203,15 @@ unsafe impl<T, Tag> map::raw::Query for entry::Live<'_, T, Tag, entry::Staged> {
     type Value = T;
     type Occupied = (Self, key::Handle<runtime::Domain<Tag>>);
     fn table(&self) -> &map::raw::Table<Self::Payload> {
-        &self.raw.core.directory
+        &self.core.directory
     }
     fn value(entry: map::Found<&Self>) -> &T {
         let (owner, index) = entry.project();
-        unsafe { owner.raw.core.value(*index) }
+        unsafe { owner.core.value(*index) }
     }
     fn occupied(entry: map::Found<Self>) -> Self::Occupied {
         let (owner, index) = entry.copied();
-        let key = unsafe { owner.raw.core.key_for(index) };
+        let key = unsafe { owner.core.key_for(index) };
         (owner, key)
     }
 }

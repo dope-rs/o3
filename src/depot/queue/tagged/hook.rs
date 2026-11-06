@@ -104,7 +104,7 @@ unsafe impl depot::raw::IndexedHook for Hook {
     }
 }
 
-impl<E: crate::depot::raw::TagEntry, P: crate::depot::raw::TagFinish<E>> tagged::Linked<E, P> {
+impl<E: crate::depot::raw::TagEntry> tagged::Linked<E> {
     pub fn unlink(self) -> tagged::Vacant<E> {
         let entry = self.entry();
         let store = entry.store();

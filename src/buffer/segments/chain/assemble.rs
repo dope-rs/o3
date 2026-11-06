@@ -21,8 +21,8 @@ impl<T: buffer::raw::Segment> Many<T> {
                 &mut *handles::descriptors(&multi.sequence.handle).value_ptr(multi.index)
             };
             let current = segments::Count::new(desc.count.get());
-            let growth = match edit::Growth::try_new(current, desc.len, desc.resident_bytes, &item)
-            {
+            let resident = desc.resident_bytes;
+            let growth = match edit::Growth::try_new(current, desc.len, resident, &item) {
                 Ok(growth) => growth,
                 Err(error) => {
                     return Err(crate::mem::Rejected::new(

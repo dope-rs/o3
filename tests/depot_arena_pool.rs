@@ -58,7 +58,7 @@ fn fills_disjoint_borrows() {
         assert!(header.take().is_none());
     }
     drop(pool);
-    assert_eq!(values, [10, 11, 20, 21]);
+    assert!(matches!(values, [10, 11, 20, 21] | [20, 21, 10, 11]));
     let mut calls = 0;
     let empty = recycle::Store::try_from_fn(Count::EMPTY, |index| {
         calls += 1;

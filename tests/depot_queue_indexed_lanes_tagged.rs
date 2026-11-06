@@ -143,7 +143,7 @@ fn repairs_rollback() {
         .expect("the queue entry must be available");
 
     assert_eq!(
-        o3::depot::raw::TagEntry::index(vacant.insert::<false>(30).entry()).get(),
+        o3::depot::raw::TagEntry::index(vacant.insert::<false>(30).item().entry()).get(),
         2
     );
     assert_eq!(fifo.remove_if(0, |value| *value == 10), Some(10));

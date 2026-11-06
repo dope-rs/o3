@@ -11,7 +11,7 @@ pub(in crate::base::cell) struct Token<B: Sealed> {
 /// One cell whose access permission belongs to exactly one brand.
 #[derive(Debug)]
 #[repr(transparent)]
-pub(in crate::base::cell) struct Value<B: Sealed, T> {
+pub struct Value<B: Sealed, T> {
     value: cell::UnsafeCell<T>,
     brand: marker::PhantomData<B>,
 }
@@ -45,14 +45,14 @@ impl<B: brand::Brand> brand::Token<B> {
         value: pin::Pin<&'a brand::Value<B, T>>,
     ) -> pin::Pin<&'a mut T> {
         // SAFETY: the matching exclusive token excludes every other access.
-        // Both Value layers structurally pin their private storage and T.
-        unsafe { pin::Pin::new_unchecked(&mut *value.value.value.get()) }
+        // Value structurally pins its private storage and T.
+        unsafe { pin::Pin::new_unchecked(&mut *value.value.get()) }
     }
 
     pub fn borrow_pin<'a, T>(&'a self, value: pin::Pin<&'a brand::Value<B, T>>) -> pin::Pin<&'a T> {
-        // SAFETY: both Value layers structurally pin T. Shared token access
+        // SAFETY: Value structurally pins T. Shared token access
         // excludes mutable access throughout the returned borrow.
-        unsafe { pin::Pin::new_unchecked(self.token.borrow(&value.get_ref().value)) }
+        unsafe { pin::Pin::new_unchecked(self.token.borrow(value.get_ref())) }
     }
 }
 
@@ -67,10 +67,10 @@ impl<B: Sealed, T> Value<B, T> {
 
 impl<B: region::Brand, T> region::Value<B, T> {
     pub fn get_mut(&mut self) -> &mut T {
-        self.value.value.get_mut()
+        self.value.get_mut()
     }
 
     pub fn into_inner(self) -> T {
-        self.value.value.into_inner()
+        self.value.into_inner()
     }
 }

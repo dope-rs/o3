@@ -25,22 +25,6 @@ pub(in crate::buffer::segments) struct Descriptor {
     pub(in crate::buffer::segments) resident_bytes: usize,
 }
 
-impl Descriptor {
-    pub(in crate::buffer::segments) const fn new(
-        links: ends::Exclusive<slots::Index>,
-        count: NonZero<u32>,
-        len: usize,
-        resident: usize,
-    ) -> Self {
-        Self {
-            links,
-            count,
-            len,
-            resident_bytes: resident,
-        }
-    }
-}
-
 struct Parts<T> {
     bundle: Fields<T>,
     nodes: slots::Capacity<segments::Item<T>>,

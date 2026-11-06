@@ -7,12 +7,12 @@ use crate::{
             links, tagged,
         },
     },
-    mem::{Lease, Return, lease},
+    mem::{Lease, lease},
 };
 
 /// Retains the owner and its tree position throughout a partial drain.
 pub struct Drain<'a, V, const LANES: usize> {
-    owner: Lease<Prune<'a, LANES>, lease::Open>,
+    owner: Lease<map::Added<'a, LANES>, lease::Open>,
     entries: &'a mut slab::Slab<
         group::Entry<V>,
         group::EntryTag,
@@ -23,30 +23,6 @@ pub struct Drain<'a, V, const LANES: usize> {
     >,
     length: &'a mut u32,
     lane: Index<LANES>,
-}
-
-struct Prune<'a, const LANES: usize> {
-    branch:
-        Option<slab::Cursor<'a, map::Branch, map::BranchTag, { u32::MAX }, capacity::Count<LANES>>>,
-    root: map::Root<'a>,
-}
-
-impl<'a, const LANES: usize> Return for Prune<'a, LANES> {
-    type Item = slab::Slot<
-        'a,
-        map::Entry<LANES>,
-        map::Tag,
-        { u32::MAX },
-        links::Hook,
-        0,
-        capacity::Count<LANES>,
-    >;
-
-    fn return_item(self, owner: Self::Item) {
-        if owner.as_ref().heads.iter().all(Option::is_none) {
-            self.root.remove(owner, self.branch);
-        }
-    }
 }
 
 /// A resolved record and the exact owner links changed by its removal.
@@ -71,13 +47,9 @@ impl<'a, V, const LANES: usize> Drain<'a, V, LANES> {
         key: u64,
         lane: Index<LANES>,
     ) -> Option<Self> {
-        let map::Found {
-            owner,
-            branch,
-            root,
-        } = ledger.map.select(key, lane)?;
+        let owner = ledger.map.select(key, lane)?;
         Some(Self {
-            owner: Lease::open(Prune { branch, root }, owner),
+            owner,
             entries: &mut ledger.entries,
             length: lane.get_mut(&mut ledger.lane_lengths),
             lane,

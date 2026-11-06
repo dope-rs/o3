@@ -2,7 +2,7 @@ pub mod common;
 
 use std::io::Read as _;
 
-use common::{buffer::Bytes as _, depot::model::Lcg};
+use common::{buffer::try_bytes, depot::model::Lcg};
 use o3::buffer::{
     segments::{self, scatter},
     storage,
@@ -72,11 +72,11 @@ fn projects_boundary_owner() {
         .expect("required fixture outcome");
 
     assert_eq!(
-        target.try_bytes().expect("chain bytes must allocate"),
+        try_bytes(&target).expect("chain bytes must allocate"),
         b"abcd"
     );
     assert_eq!(
-        source.try_bytes().expect("chain bytes must allocate"),
+        try_bytes(&source).expect("chain bytes must allocate"),
         b"ef"
     );
 }
@@ -234,7 +234,7 @@ fn flattens_chain() {
 
     assert_eq!(output.as_slice(), b"abcdef");
     assert_eq!(
-        source.try_bytes().expect("chain bytes must allocate"),
+        try_bytes(&source).expect("chain bytes must allocate"),
         b"abcdef"
     );
 }
@@ -329,9 +329,9 @@ fn matches_flat_model() {
             }
         }
 
-        assert_eq!(first.try_bytes().expect("chain bytes must allocate"), want1);
+        assert_eq!(try_bytes(&first).expect("chain bytes must allocate"), want1);
         assert_eq!(
-            second.try_bytes().expect("chain bytes must allocate"),
+            try_bytes(&second).expect("chain bytes must allocate"),
             want2
         );
         assert_eq!(

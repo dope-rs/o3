@@ -49,7 +49,6 @@ fn preserves_nonempty_owner() {
     let mut bytes = NonEmpty::try_resize(bytes, num::NonZero::<usize>::MIN.saturating_add(1), 2)
         .expect("reserved extent");
     bytes.append().write_byte(3).expect("reserved suffix");
-    *bytes.first_mut() = 4;
     bytes[1] = 5;
     bytes.truncate(num::NonZero::<usize>::MIN);
     assert_eq!(bytes.len(), num::NonZero::<usize>::MIN);
@@ -60,7 +59,7 @@ fn preserves_nonempty_owner() {
         .into_inner();
     assert_eq!(
         (bytes.as_ptr(), bytes.capacity(), bytes.as_slice()),
-        (pointer, 4, &[4][..])
+        (pointer, 4, &[1][..])
     );
 }
 

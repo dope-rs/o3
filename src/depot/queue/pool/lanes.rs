@@ -35,6 +35,10 @@ impl<T, S, const TRACK: bool> Lanes<T, S, TRACK> {
         self.block.count().get()
     }
 
+    pub const fn capacity(&self) -> usize {
+        self.block.store.capacity().len()
+    }
+
     pub fn get(&self, index: usize) -> Option<pool::View<'_, T, S, TRACK>> {
         let slot = self.block.slots().get(index)?;
         Some(pool::View::new(&self.block.store, slot))

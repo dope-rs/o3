@@ -7,11 +7,7 @@ pub use lanes::Lanes;
 
 use crate::{
     base::cell::region,
-    depot::{
-        arena::{linked, linked::slots},
-        capacity,
-        queue::pool,
-    },
+    depot::{arena::linked::slots, capacity, queue::pool},
     mem::{Lease, Return, credit, lease},
 };
 
@@ -159,8 +155,8 @@ impl<'a, 'd, T, S> Binding<'a, 'd, T, S> {
             let lane = self.lane_mut(token);
             // SAFETY: the exclusive token retained this unchanged head. No lane
             // reference survived admission, so independent ledger changes remain valid.
-            let (value, vacant) = unsafe { lane.slot.queue.take(self, index) };
-            (value, Permit::new(vacant.release()))
+            let value = unsafe { lane.slot.queue.pop::<_, false>(lane.store, index) };
+            (value, Permit::new(self))
         })
     }
 }
@@ -170,17 +166,6 @@ impl<T, S> Copy for Binding<'_, '_, T, S> {}
 impl<T, S> Clone for Binding<'_, '_, T, S> {
     fn clone(&self) -> Self {
         *self
-    }
-}
-
-// SAFETY: Binding retains the same fair allocation for its complete lifetime.
-impl<T, S> linked::Sealed<T> for Binding<'_, '_, T, S> {}
-
-impl<T, S> linked::Source<T> for Binding<'_, '_, T, S> {
-    const TRACK: bool = false;
-
-    fn store(&self) -> &slots::Store<T> {
-        &self.owner.inner.store
     }
 }
 

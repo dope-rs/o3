@@ -11,7 +11,7 @@ pub struct Block<H, T, N: alloc::raw::TailExtent = usize> {
 impl<H, T, N: alloc::raw::TailExtent> Block<H, mem::MaybeUninit<T>, N> {
     /// # Safety
     /// Every tail slot contains an initialized T.
-    pub(in crate::alloc::tail) unsafe fn assume_init(self) -> Block<H, T, N> {
+    pub(crate) unsafe fn assume_init(self) -> Block<H, T, N> {
         let block = mem::ManuallyDrop::new(self);
         Block {
             pointer: block.pointer.cast(),

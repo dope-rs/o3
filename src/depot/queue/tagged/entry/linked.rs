@@ -1,31 +1,32 @@
-use std::marker;
-
 use crate::depot::{
     index::Initialized,
-    queue::{indexed::lanes, links, tagged},
+    queue::{links, tagged},
 };
 
 /// Exclusive live membership, with the original initialized entry intact.
-pub struct Linked<E: crate::depot::raw::TagEntry, P: crate::depot::raw::TagFinish<E> = ()> {
-    entry: P::Storage,
-    policy: marker::PhantomData<P>,
+pub struct Linked<E: crate::depot::raw::TagEntry> {
+    entry: E,
 }
 
 impl<E: crate::depot::raw::TagEntry> Linked<E> {
     /// # Safety
     /// The entry was obtained from its live lane or just inserted by Vacant.
     pub(in crate::depot) unsafe fn new(entry: E) -> Self {
-        Self {
-            entry,
-            policy: marker::PhantomData,
-        }
+        Self { entry }
     }
 
-    pub(in crate::depot) fn into_policy<Q: crate::depot::raw::TagFinish<E>>(self) -> Linked<E, Q> {
-        Linked {
-            entry: Q::new(self),
-            policy: marker::PhantomData,
-        }
+    pub fn entry(&self) -> &E {
+        &self.entry
+    }
+
+    pub fn into_inner(self) -> E {
+        self.entry
+    }
+
+    /// # Safety
+    /// The caller may change only the payload, preserving the exact entry and its hook.
+    pub(in crate::depot) unsafe fn entry_mut(&mut self) -> &mut E {
+        &mut self.entry
     }
 }
 
@@ -46,24 +47,7 @@ impl<'a, S: crate::depot::raw::LaneStore>
     }
 }
 
-impl<E: crate::depot::raw::TagEntry, P: crate::depot::raw::TagFinish<E>> Linked<E, P> {
-    pub fn entry(&self) -> &E {
-        P::entry(&self.entry)
-    }
-
-    pub fn into_inner(self) -> E {
-        P::into_inner(self.entry)
-    }
-
-    /// # Safety
-    /// The caller may change only the payload, preserving the exact entry and its hook.
-    pub(in crate::depot) unsafe fn entry_mut(&mut self) -> &mut E {
-        // SAFETY: the caller preserves this entry and its live membership.
-        unsafe { P::entry_mut(&mut self.entry) }
-    }
-}
-
-impl<E: crate::depot::raw::TagEntry, P: crate::depot::raw::TagFinish<E>> tagged::Linked<E, P>
+impl<E: crate::depot::raw::TagEntry> tagged::Linked<E>
 where
     E::Store: crate::depot::raw::LaneStore,
 {
@@ -80,14 +64,5 @@ where
     pub fn remove(self) -> <E::Store as crate::depot::raw::LaneStore>::Item {
         // SAFETY: unlink retains this exact initialized payload under its exclusive owner.
         unsafe { self.unlink().take() }
-    }
-}
-
-impl<E: crate::depot::raw::TagEntry> tagged::Linked<E, lanes::Rollback>
-where
-    E::Store: crate::depot::raw::LaneStore,
-{
-    pub fn commit(self) {
-        self.entry.into_parts();
     }
 }

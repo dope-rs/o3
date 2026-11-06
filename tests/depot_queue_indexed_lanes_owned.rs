@@ -143,37 +143,11 @@ fn proofs_commit_once() {
         2 * std::mem::size_of::<usize>()
     );
     assert_eq!(
-        std::mem::size_of::<
-            o3::depot::queue::tagged::Linked<
-                o3::depot::queue::indexed::lanes::Position<
-                    '_,
-                    Affine,
-                    2,
-                    0,
-                    o3::depot::capacity::Count,
-                    true,
-                >,
-                o3::depot::queue::indexed::lanes::Rollback,
-            >,
-        >(),
+        std::mem::size_of::<lanes::Rollback<'_, Affine, 2, 0, capacity::Count>>(),
         2 * std::mem::size_of::<usize>()
     );
     assert_eq!(
-        std::mem::size_of::<
-            Option<
-                o3::depot::queue::tagged::Linked<
-                    o3::depot::queue::indexed::lanes::Position<
-                        '_,
-                        Affine,
-                        2,
-                        0,
-                        o3::depot::capacity::Count,
-                        true,
-                    >,
-                    o3::depot::queue::indexed::lanes::Rollback,
-                >,
-            >,
-        >(),
+        std::mem::size_of::<Option<lanes::Rollback<'_, Affine, 2, 0, capacity::Count>>>(),
         2 * std::mem::size_of::<usize>()
     );
 

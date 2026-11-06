@@ -96,21 +96,17 @@ impl Consume for Redirect {
     }
 }
 
-pub trait Bytes {
-    fn try_bytes(&self) -> Result<Vec<u8>, collections::TryReserveError>;
-}
+pub fn try_bytes<T: buffer::raw::Segment>(
+    chain: &segments::Chain<T>,
+) -> Result<Vec<u8>, collections::TryReserveError> {
+    use o3::buffer::raw::Scatter as _;
 
-impl<T: buffer::raw::Segment> Bytes for segments::Chain<T> {
-    fn try_bytes(&self) -> Result<Vec<u8>, collections::TryReserveError> {
-        use o3::buffer::raw::Scatter as _;
-
-        let mut output = Vec::new();
-        output.try_reserve_exact(self.len())?;
-        for chunk in self.chunks().take_bytes(usize::MAX) {
-            output.extend_from_slice(chunk.bytes());
-        }
-        Ok(output)
+    let mut output = Vec::new();
+    output.try_reserve_exact(chain.len())?;
+    for chunk in chain.chunks().take_bytes(usize::MAX) {
+        output.extend_from_slice(chunk.bytes());
     }
+    Ok(output)
 }
 
 #[derive(Debug)]

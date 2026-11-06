@@ -51,7 +51,7 @@ impl<'a, T, Tag> Vacancy<'a, T, Tag> {
         self,
         value: T,
     ) -> entry::Live<'a, T, Tag, entry::Indexed> {
-        hash::Entry::index(self.value.insert(value), self.bucket, self.hash)
+        entry::Live::index(self.value.insert(value), self.bucket, self.hash)
     }
 }
 

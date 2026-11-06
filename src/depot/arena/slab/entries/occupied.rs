@@ -116,15 +116,11 @@ where
             capacity: slots.count(),
         })?;
         let actual = slot.generation.get();
-        match slot.state.get().classify(actual, key.generation()) {
-            slab::Admitted::Exact => Ok(Self { core, slot }),
-            slab::Admitted::Refused(refusal) => Err(key::Error::refused(key, actual, refusal)),
-            slab::Admitted::Borrowed(borrow) => Err(key::Error::Busy {
-                key,
-                actual,
-                borrow,
-            }),
-        }
+        slot.state
+            .get()
+            .classify(actual, key.generation())
+            .map_err(|refusal| key::Error::refused(key, actual, refusal))?;
+        Ok(Self { core, slot })
     }
 
     pub(in crate::depot) fn generation(&self) -> key::Generation<MAX> {
@@ -141,14 +137,11 @@ impl<'a, T, const MAX: u32> Occupied<'a, T, MAX, entries::Exclusive<false>, 1> {
         // SAFETY: the retained bound selects this eager owner's initialized extent.
         let slot = unsafe { slots.get_unchecked(key.as_inner().index() as usize) };
         let actual = slot.generation.get();
-        match slot
-            .state
+        slot.state
             .get()
             .classify(actual, key.as_inner().generation())
-        {
-            slab::Admitted::Exact => Ok(Self { core, slot }),
-            slab::Admitted::Refused(refusal) => Err(key::Stale::refused(key, actual, refusal)),
-        }
+            .map_err(|refusal| key::Stale::refused(key, actual, refusal))?;
+        Ok(Self { core, slot })
     }
 }
 

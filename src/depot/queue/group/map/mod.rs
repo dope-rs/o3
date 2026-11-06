@@ -122,17 +122,9 @@ pub(super) struct Rollback<'a, const LANES: usize> {
     added: Option<Added<'a, LANES>>,
 }
 
-struct Added<'a, const LANES: usize> {
+pub(super) struct Added<'a, const LANES: usize> {
     branch: Option<slab::Cursor<'a, Branch, BranchTag, { u32::MAX }, capacity::Count<LANES>>>,
     root: Root<'a>,
-}
-
-pub(super) struct Found<'a, const LANES: usize> {
-    pub(in crate::depot::queue::group) owner:
-        slab::Slot<'a, Entry<LANES>, Tag, { u32::MAX }, links::Hook, 0, capacity::Count<LANES>>,
-    pub(in crate::depot::queue::group) branch:
-        Option<slab::Cursor<'a, Branch, BranchTag, { u32::MAX }, capacity::Count<LANES>>>,
-    pub(in crate::depot::queue::group) root: Root<'a>,
 }
 
 impl<const LANES: usize> Tree<LANES> {
@@ -194,7 +186,7 @@ impl<const LANES: usize> Tree<LANES> {
         &mut self,
         key: u64,
         lane: Index<LANES>,
-    ) -> Option<Found<'_, LANES>> {
+    ) -> Option<Lease<Added<'_, LANES>, lease::Open>> {
         let (map, branches, Start::Occupied(root)) = self.parts_mut() else {
             return None;
         };
@@ -209,11 +201,7 @@ impl<const LANES: usize> Tree<LANES> {
         if owner.as_ref().key != key || lane.get(&owner.as_ref().heads).is_none() {
             return None;
         }
-        Some(Found {
-            owner,
-            branch,
-            root,
-        })
+        Some(Lease::open(Added { branch, root }, owner))
     }
 
     pub(in crate::depot::queue::group) fn entry(
@@ -336,6 +324,17 @@ impl<'a, const LANES: usize> Return for Rollback<'a, LANES> {
     fn return_item(self, owner: Self::Item) {
         if let Some(Added { branch, root }) = self.added {
             root.remove(owner, branch);
+        }
+    }
+}
+
+impl<'a, const LANES: usize> Return for Added<'a, LANES> {
+    type Item =
+        slab::Slot<'a, Entry<LANES>, Tag, { u32::MAX }, links::Hook, 0, capacity::Count<LANES>>;
+
+    fn return_item(self, owner: Self::Item) {
+        if owner.as_ref().heads.iter().all(Option::is_none) {
+            self.root.remove(owner, self.branch);
         }
     }
 }
