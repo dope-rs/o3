@@ -191,6 +191,12 @@ impl Residency for Vec<u8> {
     }
 }
 
+impl<const CAP: usize, L> Residency for storage::inline::Bytes<CAP, L> {
+    fn resident(&self) -> usize {
+        CAP
+    }
+}
+
 impl Residency for &[u8] {
     /// A borrowed slice retains no complete backing allocation of its own.
     fn resident(&self) -> usize {
