@@ -7,7 +7,6 @@ use crate::{
             linked,
             linked::{fifo, head, slots},
         },
-        capacity,
         queue::pool::fifo::Fifo,
     },
 };
@@ -19,7 +18,7 @@ pub struct Arena<T, Tag = (), const TRACK: bool = true> {
 }
 
 impl<T, Tag, const TRACK: bool> Arena<T, Tag, TRACK> {
-    pub fn try_new<N: capacity::Extent>(capacity: N) -> Result<Self, alloc::Error> {
+    pub fn try_new(capacity: usize) -> Result<Self, alloc::Error> {
         let capacity = slots::Capacity::new(capacity)?;
         let bundle = capacity.bundle();
         let nodes = bundle.try_allocate()?.root();

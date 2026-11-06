@@ -136,10 +136,10 @@ fn publishes_exact_region() {
     }
     assert_eq!(bytes.as_ref(), b"ab");
 
-    let mut append = bytes.try_reserve(2).expect("the committed region must fit");
-    append.as_mut().copy_from_slice(b"cd");
+    let mut append = bytes.fit(hint::black_box(usize::MAX));
+    append.as_mut().copy_from_slice(b"cdefgh");
     append.commit();
-    assert_eq!(bytes.as_ref(), b"abcd");
+    assert_eq!(bytes.as_ref(), b"abcdefgh");
 }
 
 #[test]

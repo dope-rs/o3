@@ -42,7 +42,7 @@ impl<const MAX: u32> Generation for num::Generation<MAX> {
     const INITIAL: Self = Self::INITIAL;
 
     fn next(self) -> Option<Self> {
-        self.checked_add(1)
+        num::Generation::next(self)
     }
 }
 

@@ -53,25 +53,14 @@ impl Plan {
 }
 
 pub struct State<S> {
-    value: cell::UnsafeCell<S>,
+    value: S,
     held: cell::Cell<capacity::Count>,
     index: capacity::Count,
 }
 
-impl<S: Default> Default for State<S> {
-    fn default() -> Self {
-        Self {
-            value: cell::UnsafeCell::new(S::default()),
-            held: cell::Cell::new(capacity::Count::EMPTY),
-            index: capacity::Count::EMPTY,
-        }
-    }
-}
-
 impl<S> State<S> {
     pub const fn value(&self) -> &S {
-        // SAFETY: Lane retains the shared region borrow that excludes exclusive value access.
-        unsafe { &*self.value.get() }
+        &self.value
     }
 }
 
@@ -121,15 +110,15 @@ impl<'a, 'd, T, S> Binding<'a, 'd, T, S> {
         unsafe { pool::Lane::new(&self.owner.inner.store, &mut *self.slot.get()) }
     }
 
-    fn state(self) -> &'a State<S> {
-        // SAFETY: fair admission touches only the Cell ledger; value loans stay
-        // inside its disjoint UnsafeCell and require the matching region token.
-        unsafe { &(*self.slot.get()).state }
+    fn held(self) -> &'a cell::Cell<capacity::Count> {
+        // SAFETY: this field is disjoint from value loans protected by the
+        // matching region token; no shared borrow of the whole state is formed.
+        unsafe { &(*self.slot.get()).state.held }
     }
 
     pub fn reserve(self) -> Result<Permit<'a, 'd, T, S>, fair::Cause<usize>> {
-        let state = self.state();
-        let held = state.held.get();
+        let state = self.held();
+        let held = state.get();
         let shared = self.owner.inner.store.available.get();
         let balance = crate::mem::raw::Balance::new([held.raw()], [shared]);
         let [required] = balance.demand([1], [1]);
@@ -145,7 +134,7 @@ impl<'a, 'd, T, S> Binding<'a, 'd, T, S> {
         // overflow held; both counters still describe the original allocation.
         let balance = unsafe { balance.acquire_raw([1], [1]) };
         let ([held], [shared]) = balance.into_parts();
-        state.held.set(capacity::Count::new(held));
+        state.set(capacity::Count::new(held));
         self.owner.inner.store.available.set(shared);
         Ok(Permit::new(self))
     }
@@ -216,13 +205,7 @@ impl<'a, 'd, T, S> Permit<'a, 'd, T, S> {
         &'b self,
         token: &'b mut region::Token<region::Identity<'d>>,
     ) -> &'b mut S {
-        self.lease
-            .sink()
-            .binding
-            .lane_mut(token)
-            .into_state()
-            .value
-            .get_mut()
+        &mut self.lease.sink().binding.lane_mut(token).into_state().value
     }
 
     pub fn push_back(self, token: &mut region::Token<region::Identity<'d>>, value: T) {
@@ -256,15 +239,15 @@ impl<T, S> Return for Refund<'_, '_, T, S> {
 
     fn return_item(self, (): ()) {
         let binding = self.binding;
-        let state = binding.state();
-        let held = state.held.get();
+        let state = binding.held();
+        let held = state.get();
         let shared = binding.owner.inner.store.available.get();
         // SAFETY: this affine refund owns exactly one held unit in the original
         // lane. Returning it cannot exceed the allocation's shared capacity.
         let balance =
             unsafe { crate::mem::raw::Balance::new([held.raw()], [shared]).release_raw([1], [1]) };
         let ([held], [shared]) = balance.into_parts();
-        state.held.set(capacity::Count::new(held));
+        state.set(capacity::Count::new(held));
         binding.owner.inner.store.available.set(shared);
     }
 }

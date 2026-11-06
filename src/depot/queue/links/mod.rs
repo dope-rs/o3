@@ -1,9 +1,7 @@
 mod detached;
-mod edge;
 mod list;
 
 pub use detached::Detached;
-pub use edge::Edge;
 pub use list::List;
 
 mod index;

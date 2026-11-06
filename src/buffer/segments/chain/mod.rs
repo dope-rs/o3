@@ -20,12 +20,6 @@ pub(in crate::buffer::segments) mod front;
 pub(in crate::buffer::segments) mod many;
 pub(in crate::buffer::segments) mod single;
 
-impl<T: buffer::raw::Segment> buffer::raw::Assemble<T> for Chain<T> {
-    fn finish<S: buffer::raw::Sequence<T, Output = Self>>(input: segments::Built<T, S>) -> Self {
-        input.chain
-    }
-}
-
 impl<T: buffer::raw::Segment> Chain<T> {
     pub fn try_flatten(&self) -> Result<storage::Shared, storage::AllocError> {
         use storage::AllocError;
@@ -226,7 +220,7 @@ impl<T: buffer::raw::Segment, H: segments::Handle<T>> Chain<T, H> {
         use buffer::raw::SliceExt as _;
 
         let len = self.len();
-        let mut cursor = write::spans::Writer::<false>::try_new(target, len)?;
+        let mut cursor = write::spans::Writer::try_new(target, len)?;
         let (pointer, start) = cursor.suffix();
         // SAFETY: admission covers the retained chain's exact byte sum and
         // disjoint exclusive suffix; traversal retains every source until copying ends.

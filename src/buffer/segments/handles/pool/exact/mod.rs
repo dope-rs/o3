@@ -1,6 +1,4 @@
-use std::mem;
-
-pub(in crate::buffer) use built::Built;
+use std::{mem, num::NonZero};
 
 use crate::{
     buffer,
@@ -11,8 +9,6 @@ use crate::{
     },
     depot::arena::linked::{fifo::ends, slots},
 };
-
-mod built;
 
 /// Fresh, unaliased metadata capacity owned by one prepared build.
 pub struct Exact<T, S> {
@@ -28,11 +24,11 @@ pub(in crate::buffer) struct Writer<'a, T> {
 impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
     pub fn try_new(source: S) -> Result<Self, S::Error> {
         let count = source.count();
-        let handle = Pool::try_new(segments::Plan {
+        let parts = handles::Parts::<T>::try_new(segments::Plan {
             segments: count.into_raw() as usize,
-            chains: usize::from(count.is_many()),
+            chains: 1,
         });
-        Self::try_build(source, handle)
+        Self::try_build(source, parts)
     }
 
     #[inline(always)]
@@ -40,17 +36,19 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
         source: S,
         current: segments::Count,
     ) -> Result<Self, S::Error> {
-        let handle = handles::Parts::<T>::try_reserve(current, source.count())
-            .map_err(crate::alloc::Error::from)
-            .and_then(Pool::allocate);
-        Self::try_build(source, handle)
+        let parts = handles::Parts::<T>::try_reserve(current, source.count());
+        Self::try_build(source, parts)
     }
 
+    #[inline(always)]
     fn try_build(
         source: S,
-        handle: Result<Pool<T>, crate::alloc::Error>,
+        parts: Result<handles::Parts<T>, crate::alloc::Overflow>,
     ) -> Result<Self, S::Error> {
-        let handle = match handle {
+        let handle = match parts
+            .map_err(crate::alloc::Error::from)
+            .and_then(Pool::allocate)
+        {
             Ok(handle) => handle,
             Err(error) => return Err(source.reject(error)),
         };
@@ -60,7 +58,7 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
 
 impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
     #[inline(always)]
-    pub fn collect(self) -> S::Output
+    pub fn collect(self) -> segments::Many<T>
     where
         S: buffer::raw::Sequence<T, Item = segments::Item<T>>,
     {
@@ -76,7 +74,7 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
         Self::finish(handle, links, &source.1)
     }
 
-    pub fn try_collect<E>(self) -> Result<S::Output, E>
+    pub fn try_collect<E>(self) -> Result<segments::Many<T>, E>
     where
         S: buffer::raw::Sequence<T, Item = Result<segments::Item<T>, E>>,
     {
@@ -97,30 +95,23 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
         handle: Pool<T>,
         links: ends::Exclusive<slots::Index>,
         total: &impl buffer::raw::Total,
-    ) -> S::Output {
-        let key = match buffer::raw::Total::count(total).kind() {
-            segments::Kind::Empty => Key::EMPTY,
-            segments::Kind::One => Key::single(links.head_raw()),
-            segments::Kind::Many(count) => {
-                let descs = handles::descriptors(&handle);
-                // SAFETY: `Exact` is constructed with one private descriptor
-                // whenever its admitted source contains at least two owners;
-                // Sequence preserves that total throughout iteration.
-                let claim =
-                    unsafe { slots::Vacant::reserve(descs) }.insert(handles::Descriptor::new(
-                        links,
-                        count.nonzero(),
-                        buffer::raw::Total::len(total),
-                        buffer::raw::Total::resident(total),
-                    ));
-                let key = Key::multi(claim.index());
-                unsafe { claim.publish() };
-                key
-            }
-        };
+    ) -> segments::Many<T> {
+        // SAFETY: Sequence preserves its admitted count of at least two owners.
+        let count = unsafe { NonZero::new_unchecked(total.count().into_raw()) };
+        let descs = handles::descriptors(&handle);
+        // SAFETY: Exact reserves one private descriptor for its admitted Sequence.
+        let claim = unsafe { slots::Vacant::reserve(descs) }.insert(handles::Descriptor::new(
+            links,
+            count,
+            total.len(),
+            total.resident(),
+        ));
+        let key = Key::multi(claim.index());
+        unsafe { claim.publish() };
         let mut sequence = Chain::new(handle);
         sequence.key = key;
-        buffer::raw::Assemble::finish::<S>(Built::new(sequence))
+        // SAFETY: the published descriptor owns the Sequence's at least two owners.
+        unsafe { segments::Many::new(sequence) }
     }
 }
 

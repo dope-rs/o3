@@ -13,24 +13,6 @@ use o3::buffer::{
 };
 
 #[test]
-fn keeps_exact_group() {
-    let mut owner = (Owned::try_with(7)).expect("the seven-byte staged owner must allocate");
-    let mut writer = owner.spare();
-    write::Sink::write_slice(&mut writer, b"ab")
-        .as_ref()
-        .expect("required fixture outcome");
-    let mut exact = writer.exact();
-    append(&mut exact);
-    assert_eq!(exact.as_mut(), b"cdefg");
-    exact
-        .try_commit()
-        .as_ref()
-        .expect("required fixture outcome");
-    writer.commit();
-    assert_eq!(owner.as_slice(), b"abcdefg");
-}
-
-#[test]
 fn keeps_bounded_group() {
     let mut owner = (Owned::try_with(7)).expect("the seven-byte staged owner must allocate");
     let mut writer = owner.spare();
@@ -195,15 +177,16 @@ fn admission_then_init() {
     let mut spare = owner.spare();
     spare.write_slice(b"hi").expect("admitted");
     {
-        let mut short = spare.try_exact(3).expect("admitted");
+        let mut short = spare.bounded();
+        short.write_byte(0).expect("staged prefix");
         let error = short.try_init(&source).expect_err("shortfall").into_parts();
         assert_eq!((error.0.get(), error.1), (4, 3));
         assert_eq!(calls.get(), Some(0));
     }
-    let mut exact = spare.exact();
-    exact.try_init(&source).expect("admitted");
-    exact.try_commit().expect("admitted");
-    spare.commit();
+    let mut writer = spare.bounded();
+    writer.try_init(&source).expect("admitted");
+    writer.commit();
+    spare.try_complete().expect("admitted");
     assert_eq!(calls.get(), Some(1));
     assert_eq!(owner.as_slice(), b"hibody");
 }

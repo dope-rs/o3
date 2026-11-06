@@ -50,7 +50,7 @@ impl Owned {
 
     pub fn try_build<E>(
         capacity: usize,
-        build: impl FnOnce(&mut spans::Writer<'_, '_, false>) -> Result<(), E>,
+        build: impl FnOnce(&mut spans::Writer<'_, '_>) -> Result<(), E>,
     ) -> Result<Self, storage::BuildError<E>> {
         use storage::BuildError;
         let mut value = Self::try_with(capacity)?;

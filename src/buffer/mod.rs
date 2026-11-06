@@ -28,22 +28,15 @@ pub struct View<'source, S: ?Sized> {
     bytes: &'source [u8],
 }
 
-impl Copy for View<'_, storage::Shared> {}
+impl<S: ?Sized> Copy for View<'_, S> {}
 
-impl Clone for View<'_, storage::Shared> {
+impl<S: ?Sized> Clone for View<'_, S> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
 impl<'source, S: ?Sized> View<'source, S> {
-    pub const fn reborrow(&self) -> View<'source, S> {
-        View {
-            source: self.source,
-            bytes: self.bytes,
-        }
-    }
-
     pub fn as_slice(&self) -> &'source [u8] {
         self.bytes
     }
@@ -275,6 +268,7 @@ impl Source for [u8] {
 }
 
 impl Cursor for [u8] {
+    #[inline]
     fn try_get<'input>(
         &'input self,
         range: ops::Range<usize>,

@@ -1,4 +1,4 @@
-use std::{marker, num::NonZero};
+use std::{cell::Cell, marker, num::NonZero};
 
 use crate::{
     alloc,
@@ -21,7 +21,8 @@ impl<'d, T, S> Lanes<'d, T, S> {
     {
         let inner = QueueBlock::try_with(plan.slots, plan.lanes, |index| fair::State {
             index: capacity::Count::new(index.raw()),
-            ..fair::State::default()
+            value: S::default(),
+            held: Cell::new(capacity::Count::EMPTY),
         })?;
         inner
             .store

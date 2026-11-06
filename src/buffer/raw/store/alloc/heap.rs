@@ -16,14 +16,14 @@ impl<P: crate::buffer::raw::Policy> Heap<P> {
         capacity: num::NonZero<u32>,
     ) -> Result<Self, alloc::Error<P::Failure>> {
         let debit =
-            crate::buffer::raw::Debit::try_new(seed, capacity).map_err(alloc::Error::Policy)?;
+            crate::buffer::raw::Debit::try_new(seed, capacity).map_err(alloc::Error::Budget)?;
         Self::try_charged(debit).map_err(alloc::Error::Allocation)
     }
 
     pub(in crate::buffer) fn try_charged(
         debit: crate::buffer::raw::Debit<P>,
     ) -> Result<Self, crate::alloc::Exhausted> {
-        let capacity = debit.amount();
+        let capacity = *debit.item();
         let layout = crate::buffer::raw::Header::<P>::layout(capacity);
         // SAFETY: this admitted header includes a nonzero byte capacity.
         let pointer = unsafe { crate::alloc::raw::try_new(layout, false)? };
@@ -51,7 +51,7 @@ impl<P: crate::buffer::raw::Policy> Heap<P> {
             return Ok(());
         };
         let debit = crate::buffer::raw::Debit::try_new(header.policy, amount)
-            .map_err(alloc::Error::Policy)?;
+            .map_err(alloc::Error::Budget)?;
         // SAFETY: this sole owner retains the source policy's exact admitted delta.
         self.pointer =
             unsafe { crate::buffer::raw::Header::try_resize(self.pointer, target, debit) }

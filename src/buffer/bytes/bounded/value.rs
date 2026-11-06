@@ -41,8 +41,7 @@ impl<'a> TryFrom<&'a mut [MaybeUninit<u8>]> for Value<&'a mut [MaybeUninit<u8>]>
     type Error = bounded::Overflow;
 
     fn try_from(value: &'a mut [MaybeUninit<u8>]) -> Result<Self, Self::Error> {
-        U32::<0, { bounded::MAX as u32 }>::try_usize(value.len())
-            .map_err(bounded::Overflow::from_num)?;
+        U32::<0, { bounded::MAX as u32 }>::try_usize(value.len())?;
         Ok(Self(value))
     }
 }
@@ -108,14 +107,15 @@ impl<T: buffer::Residency> buffer::Residency for Value<T> {
     }
 }
 
-impl<'d> Value<storage::Shared<provided::Owner<'d>>> {
-    pub fn try_account(
-        &self,
-        budget: &resident::Budget<'d>,
-    ) -> Result<Value<storage::Shared<Option<provided::Account<'d>>>>, account::Cause> {
+impl<'d> provided::Frozen<'d> for Value<storage::Shared<provided::Owner<'d>>> {
+    type Account = Value<storage::Shared<Option<provided::Account<'d>>>>;
+
+    fn try_account(&self, budget: &resident::Budget<'d>) -> Result<Self::Account, account::Cause> {
         Ok(Value(self.0.try_account(budget)?))
     }
+}
 
+impl<'d> Value<storage::Shared<provided::Owner<'d>>> {
     pub fn try_get(
         &self,
         range: ops::Range<usize>,
@@ -293,7 +293,7 @@ impl<S: ?Sized> bounded::Source for Value<buffer::View<'_, S>> {}
 
 impl<S: ?Sized> Clone for Value<buffer::View<'_, S>> {
     fn clone(&self) -> Self {
-        Self(self.0.reborrow())
+        Self(self.0)
     }
 }
 

@@ -2,7 +2,7 @@ use std::{marker, num::NonZero, ptr::NonNull};
 
 pub(in crate::buffer) use account::{Account, Accounts, Registered};
 pub use edge::Edge;
-pub(in crate::buffer) use edge::{Input, Measured};
+pub(in crate::buffer) use edge::Measured;
 use free::Free;
 pub(in crate::buffer::pool) use header::Header;
 use header::Shape;

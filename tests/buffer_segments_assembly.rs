@@ -7,7 +7,7 @@ use std::num::NonZero;
 
 use common::{
     alloc::system::Tracker,
-    buffer::{Bytes as _, Fill as _, try_item, try_many},
+    buffer::{Bytes as _, try_fill, try_item, try_many},
 };
 use o3::{
     alloc,
@@ -183,8 +183,8 @@ fn joins_with_one_alloc() {
         {
             let mut target = (first.try_chain()).expect("target chain edge");
             let mut source = (second.try_chain()).expect("source chain edge");
-            target.try_fill(&values[..2]).expect("fixture segments fit");
-            source.try_fill(&values).expect("fixture segments fit");
+            try_fill(&mut target, &values[..2]).expect("fixture segments fit");
+            try_fill(&mut source, &values).expect("fixture segments fit");
             let mut target = match target.into_shape() {
                 segments::Shape::Many(many) => Some(many),
                 _ => None,

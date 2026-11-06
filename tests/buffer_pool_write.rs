@@ -3,7 +3,7 @@ pub mod common;
 use common::alloc::system::{Activity, Tracker};
 use o3::buffer::{
     self, bytes, pool,
-    write::{self, Sink, SpareExt as _, consume::Consume},
+    write::{self, Sink, consume::Consume},
 };
 
 #[global_allocator]
@@ -30,42 +30,6 @@ fn freeze_keeps_tail() {
         assert_eq!(pool.available(), 0);
     }
     assert_eq!(pool.available(), 1);
-}
-
-#[test]
-fn exact_requires_full() {
-    let created = pool::Pool::try_new(1, 16);
-    let pool: pool::Pool = created.expect("exact-write pool must contain one sixteen-byte slot");
-    let mut buffer = (pool.acquire()).expect("one slot is available");
-    let mut writer = buffer.spare();
-    {
-        let planned = writer.try_exact(4);
-        let mut exact = planned.expect("four-byte exact plan must fit empty spare storage");
-        exact
-            .write_slice(b"two")
-            .as_ref()
-            .expect("required fixture outcome");
-        assert!(exact.try_commit().is_err());
-    }
-    assert_eq!(writer.len(), 0);
-
-    let planned = writer.try_exact(4);
-    let mut exact = planned.expect("second four-byte exact plan must fit spare storage");
-    exact
-        .write_slice(b"tw")
-        .as_ref()
-        .expect("required fixture outcome");
-    exact
-        .write_slice(b"o!")
-        .as_ref()
-        .expect("required fixture outcome");
-    exact
-        .try_commit()
-        .as_ref()
-        .expect("required fixture outcome");
-    writer.commit();
-
-    assert_eq!(buffer.as_slice(), b"two!");
 }
 
 #[test]

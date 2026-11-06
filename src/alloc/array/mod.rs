@@ -69,21 +69,14 @@ impl<T, E: alloc::raw::Extent, S> array::Block<mem::MaybeUninit<T>, E, S> {
         self,
         mut make: impl FnMut(ptr::NonNull<T>) -> Result<T, F>,
     ) -> Result<array::Block<T, E, S>, F> {
-        self.try_fill(move |slot| {
-            let value = make(slot.pointer)?;
-            Ok(slot.insert(value))
-        })
-    }
-
-    /// Initializes each final slot through one consuming write capability.
-    /// An error releases the committed prefix, factory, backing, and state.
-    pub fn try_fill<F>(
-        self,
-        mut make: impl for<'slot> FnMut(Slot<'slot, T>) -> Result<Written<'slot>, F>,
-    ) -> Result<array::Block<T, E, S>, F> {
         let source = iter::repeat_n((), self.plan.extent().len());
         // SAFETY: this source yields exactly the retained allocation's extent.
-        unsafe { alloc::raw::try_map(self, source, move |slot, ()| make(slot)) }
+        unsafe {
+            alloc::raw::try_map(self, source, move |slot, ()| {
+                let value = make(slot.pointer)?;
+                Ok(slot.insert(value))
+            })
+        }
     }
 
     /// Initializes every element without requiring its storage index.

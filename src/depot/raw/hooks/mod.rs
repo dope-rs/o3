@@ -31,11 +31,10 @@ pub unsafe trait Hooks {
         &'a self,
         chain: &'a links::Chain<C>,
         index: links::Index,
-    ) -> (links::Edge, links::Detached<'a>) {
+    ) -> links::Detached<'a> {
         // SAFETY: the caller retains this exact front, chain, and hook store.
         let change = unsafe { crate::depot::raw::Pop::at(chain, self, index) };
-        let edge = change.edge();
-        (edge, crate::depot::raw::Removal::commit(change))
+        crate::depot::raw::Removal::commit(change)
     }
 
     /// # Safety

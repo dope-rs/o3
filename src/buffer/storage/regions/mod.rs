@@ -61,14 +61,7 @@ pub struct Extent(ptr::NonNull<[u8]>);
 #[repr(C)]
 pub struct Shared<O = Option<regions::Tag>> {
     owner: O,
-    bytes: Bytes,
-}
-
-/// An immutable view borrowed from the owner retaining its initialized extent.
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct Bytes {
-    extent: regions::Extent,
+    bytes: Extent,
 }
 
 /// Completes consumption according to the actual backing's empty-owner policy.
@@ -121,7 +114,6 @@ impl regions::Extent {
 const _: () = assert!(size_of::<regions::Extent>() == 2 * size_of::<usize>());
 
 const _: () = {
-    assert!(size_of::<regions::Bytes>() == 2 * size_of::<usize>());
     assert!(size_of::<regions::Shared<Option<regions::Tag>>>() == 3 * size_of::<usize>());
     assert!(size_of::<Option<regions::Shared<Option<regions::Tag>>>>() == 3 * size_of::<usize>());
     assert!(
@@ -140,9 +132,7 @@ impl<O> regions::Shared<O> {
     pub(in crate::buffer) const fn empty(owner: O) -> Self {
         Self {
             owner,
-            bytes: regions::Bytes {
-                extent: regions::Extent::EMPTY,
-            },
+            bytes: regions::Extent::EMPTY,
         }
     }
     /// # Safety
@@ -151,30 +141,35 @@ impl<O> regions::Shared<O> {
     pub(in crate::buffer) const unsafe fn from_extent(owner: O, extent: regions::Extent) -> Self {
         Self {
             owner,
-            bytes: regions::Bytes { extent },
+            bytes: extent,
         }
     }
     pub(in crate::buffer) const fn owner(&self) -> &O {
         &self.owner
     }
 
+    pub fn as_slice(&self) -> &[u8] {
+        // SAFETY: this owner borrow retains the unchanged initialized extent.
+        unsafe { slice::from_raw_parts(self.bytes.as_ptr(), self.bytes.len()) }
+    }
+
     /// # Safety
     /// Every replacement must remain an initialized subrange of this exact
     /// owner's backing; the owner and its lifetime must remain unchanged.
     pub(in crate::buffer) unsafe fn extent_mut(&mut self) -> &mut regions::Extent {
-        &mut self.bytes.extent
+        &mut self.bytes
     }
     /// # Safety
     /// The bounds must select a subrange of the unchanged current extent.
     pub(in crate::buffer) unsafe fn restrict(&mut self, bounds: ops::Range<usize>) {
         // SAFETY: the caller proves the range; the paired owner remains unchanged.
-        self.bytes.extent = unsafe { self.bytes.extent.restrict(bounds) };
+        self.bytes = unsafe { self.bytes.restrict(bounds) };
     }
     pub fn try_restrict(&mut self, visible: ops::Range<usize>) -> Result<(), range::Error>
     where
         O: regions::End,
     {
-        self.bytes.extent = self
+        self.bytes = self
             .as_slice()
             .get(visible.clone())
             .map(regions::Extent::from_bytes)
@@ -190,10 +185,10 @@ impl<O> regions::Shared<O> {
 
 impl<O: buffer::raw::Retain> regions::Shared<O> {
     pub fn try_clone(&self) -> Result<Self, rc::Error> {
-        let extent = regions::Extent(self.bytes.extent.0);
+        let extent = regions::Extent(self.bytes.0);
         Ok(Self {
             owner: self.owner.try_retain()?,
-            bytes: regions::Bytes { extent },
+            bytes: extent,
         })
     }
     /// # Safety
@@ -202,9 +197,7 @@ impl<O: buffer::raw::Retain> regions::Shared<O> {
     pub(in crate::buffer) unsafe fn try_view(&self, bytes: &[u8]) -> Result<Self, rc::Error> {
         Ok(Self {
             owner: self.owner.try_retain()?,
-            bytes: regions::Bytes {
-                extent: regions::Extent::from_bytes(bytes),
-            },
+            bytes: regions::Extent::from_bytes(bytes),
         })
     }
 }
@@ -229,9 +222,9 @@ impl regions::Shared<Option<regions::Tag>> {
 }
 
 impl<O> ops::Deref for regions::Shared<O> {
-    type Target = regions::Bytes;
+    type Target = [u8];
     fn deref(&self) -> &Self::Target {
-        &self.bytes
+        self.as_slice()
     }
 }
 
@@ -271,9 +264,7 @@ impl<'a: 'd, 'd> From<&'a [u8]> for resident::Shared<'d> {
         Self {
             region: regions::Shared {
                 owner: resident::State::Slice,
-                bytes: regions::Bytes {
-                    extent: regions::Extent::from_bytes(bytes),
-                },
+                bytes: regions::Extent::from_bytes(bytes),
             },
         }
     }
@@ -360,25 +351,5 @@ impl<'d> regions::Shared<resident::State<'d>> {
                 bytes: self.bytes,
             }),
         }
-    }
-}
-
-impl regions::Bytes {
-    pub const fn len(&self) -> usize {
-        self.extent.len()
-    }
-    pub const fn is_empty(&self) -> bool {
-        self.extent.len() == 0
-    }
-    pub fn as_slice(&self) -> &[u8] {
-        // SAFETY: regions::Bytes can only be borrowed from its paired retaining regions::Shared.
-        unsafe { slice::from_raw_parts(self.extent.as_ptr(), self.extent.len()) }
-    }
-}
-
-impl ops::Deref for regions::Bytes {
-    type Target = [u8];
-    fn deref(&self) -> &Self::Target {
-        self.as_slice()
     }
 }

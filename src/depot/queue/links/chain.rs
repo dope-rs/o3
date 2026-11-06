@@ -57,7 +57,7 @@ impl<C: crate::depot::raw::ChainCount> Chain<C> {
         use crate::depot::raw::Insert;
 
         // SAFETY: caller supplies this chain's vacant-hook and reciprocal-endpoint proof.
-        let change = unsafe { Insert::<C, false>::new(self, hooks, index) };
+        let change = unsafe { Insert::<C>::new(self, hooks, index) };
         Insert::commit(change);
     }
 

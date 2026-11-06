@@ -150,7 +150,11 @@ impl<Q: map::raw::Query> Probe<Q> {
         let mut scan = Scan::<_, true>::new(owner.table(), hash);
         loop {
             if let map::Entry::Vacant(bucket) = scan.next() {
-                return map::Vacancy::new(map::raw::Bucket { owner, bucket }).with_phase(hash);
+                return map::Vacancy {
+                    owner,
+                    bucket,
+                    phase: hash,
+                };
             }
         }
     }
@@ -167,20 +171,19 @@ impl<Q: map::raw::Query> Probe<Q> {
             let bucket = match scan.next() {
                 map::Entry::Occupied(bucket) => bucket,
                 map::Entry::Vacant(bucket) => {
-                    return Ok(
-                        map::Vacancy::new(map::raw::Bucket { owner, bucket }).with_phase(hash)
-                    );
+                    return Ok(map::Vacancy {
+                        owner,
+                        bucket,
+                        phase: hash,
+                    });
                 }
             };
-            if matches(Q::value(map::Found::new(map::raw::Bucket {
+            if matches(Q::value(map::Found {
                 owner: &owner,
                 bucket,
-            }))) {
+            })) {
                 drop(matches);
-                return Err(Q::occupied(map::Found::new(map::raw::Bucket {
-                    owner,
-                    bucket,
-                })));
+                return Err(Q::occupied(map::Found { owner, bucket }));
             }
         }
     }
@@ -194,13 +197,13 @@ impl<Q: map::raw::Query> Probe<Q> {
     ) -> map::Found<Q> {
         let bucket = unsafe {
             map::raw::member(owner.table(), hash, |bucket| {
-                matches(Q::value(map::Found::new(map::raw::Bucket {
+                matches(Q::value(map::Found {
                     owner: &owner,
                     bucket,
-                })))
+                }))
             })
         };
-        map::Found::new(map::raw::Bucket { owner, bucket })
+        map::Found { owner, bucket }
     }
 
     pub(crate) fn new(owner: Q, hash: u64, matches: impl Fn(&Q::Value) -> bool) -> Self {
@@ -229,12 +232,7 @@ impl<Q: map::raw::Query> Probe<Q> {
         hash: u64,
         matches: &impl Fn(&Q::Value) -> Result<bool, E>,
     ) -> Result<State, E> {
-        let matches = |bucket| {
-            matches(Q::value(map::Found::new(map::raw::Bucket {
-                owner,
-                bucket,
-            })))
-        };
+        let matches = |bucket| matches(Q::value(map::Found { owner, bucket }));
         if Q::SPARE {
             map::raw::scan::<_, _, true>(owner.table(), hash, matches)
         } else {
@@ -246,10 +244,7 @@ impl<Q: map::raw::Query> Probe<Q> {
         let State::Occupied(bucket) = Self::scan(&owner, hash, &matches) else {
             return None;
         };
-        Some(Q::occupied(map::Found::new(map::raw::Bucket {
-            owner,
-            bucket,
-        })))
+        Some(Q::occupied(map::Found { owner, bucket }))
     }
 
     pub(crate) fn try_find<E>(
@@ -260,27 +255,23 @@ impl<Q: map::raw::Query> Probe<Q> {
         let State::Occupied(bucket) = Self::try_scan(&owner, hash, &matches)? else {
             return Ok(None);
         };
-        Ok(Some(Q::occupied(map::Found::new(map::raw::Bucket {
-            owner,
-            bucket,
-        }))))
+        Ok(Some(Q::occupied(map::Found { owner, bucket })))
     }
 }
 
 impl<Q: map::raw::Insertion> Probe<Q> {
     pub(crate) fn entry(self) -> map::Entry<Q::Occupied, Option<Q::Vacant>> {
         match self.state {
-            State::Occupied(bucket) => {
-                map::Entry::Occupied(Q::occupied(map::Found::new(map::raw::Bucket {
-                    owner: self.owner,
-                    bucket,
-                })))
-            }
+            State::Occupied(bucket) => map::Entry::Occupied(Q::occupied(map::Found {
+                owner: self.owner,
+                bucket,
+            })),
             State::Vacant(bucket) => map::Entry::Vacant(Q::vacant(
-                map::Vacancy::new(map::raw::Bucket {
+                map::Vacancy {
                     owner: self.owner,
                     bucket,
-                }),
+                    phase: (),
+                },
                 self.hash,
             )),
             State::Full => map::Entry::Vacant(None),
@@ -295,7 +286,11 @@ impl<Q: map::raw::Insertion> Probe<Q> {
         match Self::scan(&owner, hash, &matches) {
             State::Occupied(_) => map::Entry::Occupied(()),
             State::Vacant(bucket) => map::Entry::Vacant(Q::vacant(
-                map::Vacancy::new(map::raw::Bucket { owner, bucket }),
+                map::Vacancy {
+                    owner,
+                    bucket,
+                    phase: (),
+                },
                 hash,
             )),
             State::Full => map::Entry::Vacant(None),

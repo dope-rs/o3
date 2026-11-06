@@ -46,18 +46,12 @@ impl<const MAX: u32> Generation<MAX> {
     }
 
     #[must_use]
-    pub const fn checked_add(self, value: u32) -> Option<Self> {
-        let (raw, overflow) = self.0.overflowing_add(value);
-        if overflow || raw > MAX {
-            None
-        } else {
-            Some(Self(raw))
-        }
-    }
-
-    #[must_use]
     pub const fn next(self) -> Option<Self> {
-        self.checked_add(1)
+        if self.0 < MAX {
+            Some(Self(self.0 + 1))
+        } else {
+            None
+        }
     }
 }
 

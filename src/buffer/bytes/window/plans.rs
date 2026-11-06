@@ -41,7 +41,7 @@ impl<'a, P: crate::buffer::raw::Policy, const MAX: usize, I: buffer::raw::SliceE
             let amount = growth.amount();
             let error = {
                 let debit = crate::buffer::raw::Debit::try_new(*source.policy(), amount)
-                    .map_err(alloc::Error::Policy)?;
+                    .map_err(alloc::Error::Budget)?;
                 if at_start {
                     match source.try_resize(target, debit) {
                         Ok(()) => {

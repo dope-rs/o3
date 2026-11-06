@@ -305,11 +305,8 @@ impl<T, const REVERSE: bool> Iterator for IntoIter<'_, T, REVERSE> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let entries = mem::take(&mut self.entries);
-        let (entry, rest) = entries.split_first_mut()?;
-        self.entries = rest;
         // SAFETY: advancement transfers this initialized position exactly once.
-        Some(unsafe { entry.assume_init_read() })
+        Some(unsafe { self.entries.split_off_first_mut()?.assume_init_read() })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

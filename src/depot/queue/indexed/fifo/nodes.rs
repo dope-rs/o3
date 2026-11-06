@@ -118,12 +118,10 @@ impl<T: Copy + Eq> NodeEntry<'_, T> {
             }
             // SAFETY: the exclusive owner keeps occupancy stable across Eq.
             let vacant = unsafe { store.state().unlink(store, index) };
-            unsafe {
-                crate::depot::raw::Insert::<u32, false>::from_vacant(store.state(), store, vacant)
-            }
+            unsafe { crate::depot::raw::Insert::<u32>::from_vacant(store.state(), store, vacant) }
         } else {
             // SAFETY: this exclusive resident is idle in its original store.
-            unsafe { crate::depot::raw::Insert::<u32, false>::new(store.state(), store, index) }
+            unsafe { crate::depot::raw::Insert::<u32>::new(store.state(), store, index) }
         };
         unsafe { *node.value.get() = mem::MaybeUninit::new(value) };
         crate::depot::raw::Insert::commit(change);

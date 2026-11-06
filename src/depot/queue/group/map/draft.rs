@@ -122,7 +122,7 @@ impl<const LANES: usize, const N: usize> Draft<'_, '_, '_, LANES, N> {
                             None => match draft.intern(key, &slot) {
                                 Ok(key) => key,
                                 Err(cause) => {
-                                    return Err((group::Error::owner(lane, cause), input));
+                                    return Err((group::Error::owner(lane, key, cause), input));
                                 }
                             },
                         };
@@ -165,10 +165,7 @@ impl<'id, const LANES: usize, const N: usize> Draft<'_, 'id, '_, LANES, N> {
         let owner = self
             .entries
             .try_insert(empty)
-            .map_err(|rejected| map::Error::Owners {
-                capacity: *rejected.error(),
-                key: rejected.value().key,
-            })?;
+            .map_err(|rejected| map::Error::Owners(*rejected.error()))?;
         let parent = path.and_then(|mut path| path.rewind(mask));
         let edit = undo
             .scope
@@ -182,7 +179,7 @@ impl<'id, const LANES: usize, const N: usize> Draft<'_, 'id, '_, LANES, N> {
                     key,
                 )
             })
-            .map_err(|slab::Full { capacity }| map::Error::Branches { capacity, key })?;
+            .map_err(|slab::Full { capacity }| map::Error::Branches(capacity))?;
         *slot.get_mut(journal) = Some(Added { edit, key });
         Ok(owner)
     }

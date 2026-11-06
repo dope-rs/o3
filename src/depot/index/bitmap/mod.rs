@@ -88,7 +88,9 @@ pub(in crate::depot::index) fn pop_from<W: Width, S: crate::depot::raw::Words<W>
     start: usize,
 ) -> Option<Row<S, S::Plane, Removed, W>> {
     let level = bitmap::Level::new(&source, plane);
-    let (row, current) = level.find(start).or_else(|| level.find(0))?;
+    let (row, current) = level
+        .find(start)
+        .or_else(|| if start == 0 { None } else { level.find(0) })?;
     let index = row.position();
     // SAFETY: this exact leaf was just selected; no projection or callback
     // can mutate its retained word before this immediate consumption.

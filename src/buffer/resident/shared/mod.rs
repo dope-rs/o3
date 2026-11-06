@@ -52,6 +52,10 @@ impl<'d> Shared<'d> {
             .into())
     }
 
+    pub fn as_slice(&self) -> &[u8] {
+        self.region.as_slice()
+    }
+
     pub fn get(&self, range: ops::Range<usize>) -> Option<buffer::View<'_, Self>> {
         Some(buffer::View {
             source: self,
@@ -132,7 +136,7 @@ impl AsRef<[u8]> for Shared<'_> {
     }
 }
 impl ops::Deref for Shared<'_> {
-    type Target = regions::Bytes;
+    type Target = [u8];
     fn deref(&self) -> &Self::Target {
         &self.region
     }

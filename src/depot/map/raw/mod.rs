@@ -448,16 +448,3 @@ const _: () = {
     assert!(mem::size_of::<Table<u64>>() == 4 * mem::size_of::<usize>());
     assert!(mem::size_of::<Hole<&mut map::flat::Table<u64>>>() == mem::size_of::<usize>());
 };
-
-/// Retains the exact query owner with the bucket proven by its directory scan.
-/// Construction is restricted to the shared map kernel; consuming it preserves that pairing.
-pub(crate) struct Bucket<Q, B> {
-    owner: Q,
-    bucket: B,
-}
-
-impl<Q, B> Bucket<Q, B> {
-    pub(crate) fn into_parts(self) -> (Q, B) {
-        (self.owner, self.bucket)
-    }
-}

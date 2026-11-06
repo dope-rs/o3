@@ -8,12 +8,6 @@ use crate::{alloc, depot, depot::capacity};
 mod domain;
 mod key;
 
-/// An exact collection capacity retained in its owning type until allocation.
-pub trait Extent: Copy {
-    #[doc(hidden)]
-    fn get(self) -> usize;
-}
-
 /// A count representable by every u32-indexed collection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -97,18 +91,6 @@ impl TryFrom<usize> for Count {
 
     fn try_from(count: usize) -> Result<Self, Self::Error> {
         Self::try_count(count, Error::new(count))
-    }
-}
-
-impl Extent for Count {
-    fn get(self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl Extent for usize {
-    fn get(self) -> usize {
-        self
     }
 }
 

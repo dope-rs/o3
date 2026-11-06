@@ -25,6 +25,9 @@ pub struct Pool<T> {
 
 impl<T> Pool<T> {
     pub fn try_new(plan: segments::Plan) -> Result<Self, crate::alloc::Error> {
+        if plan.chains > plan.segments / 2 {
+            return Err(crate::alloc::Overflow.into());
+        }
         let layout = Parts::<T>::try_new(plan)?;
         Self::allocate(layout)
     }

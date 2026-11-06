@@ -2,11 +2,7 @@ pub mod common;
 
 use std::{cell::Cell, mem};
 
-use common::{
-    Counted,
-    alloc::system::Tracker,
-    depot::{Fault, model::drops},
-};
+use common::{Counted, Order, alloc::system::Tracker, depot::Fault};
 use o3::depot::array::{self, IntoIter, Len, init};
 
 #[global_allocator]
@@ -43,7 +39,7 @@ fn guard_drains_prefix() {
             .next()
             .continue_value()
             .expect("remaining position")
-            .insert(drops::Order(&order, value));
+            .insert(Order(&order, value));
     }
     let mut values = guard.into_iter();
     let first = values.next().expect("initialized prefix");
@@ -61,7 +57,7 @@ fn guard_drains_prefix() {
             .next()
             .continue_value()
             .expect("remaining position")
-            .insert(drops::Order(&order, value));
+            .insert(Order(&order, value));
     }
     let mut values = guard.into_iter();
     let first = values.next().expect("initialized prefix");
@@ -74,35 +70,34 @@ fn guard_drains_prefix() {
 
 #[test]
 fn prefix_reuses_backing() {
-    use common::alloc::Owner;
     use o3::alloc::BoxArrayExt as _;
 
     let orders = [const { Cell::new(Some(0)) }; 2];
-    let mut backing = Box::<[mem::MaybeUninit<Owner<'static>>; 3]>::try_uninit()
+    let mut backing = Box::<[mem::MaybeUninit<Order<'static>>; 3]>::try_uninit()
         .expect("reusable prefix backing");
     let pointer = backing.as_ptr().cast::<()>();
     for (index, order) in orders.iter().enumerate() {
         let (result, activity) = Tracker::measure(|| {
-            init::Prefix::<Owner<'_>, 3>::with(&mut backing, |prefix| {
+            init::Prefix::<Order<'_>, 3>::with(&mut backing, |prefix| {
                 assert!(prefix.as_slice().is_empty());
-                let first = prefix.vacancy().expect("first position").insert(Owner {
-                    drops: order,
-                    digit: 1,
-                });
-                let second = prefix.vacancy().expect("second position").insert(Owner {
-                    drops: order,
-                    digit: 2,
-                });
-                assert_eq!(prefix.get(first).digit, 1);
-                prefix.get_mut(second).digit = 3;
+                let first = prefix
+                    .vacancy()
+                    .expect("first position")
+                    .insert(Order(order, 1));
+                let second = prefix
+                    .vacancy()
+                    .expect("second position")
+                    .insert(Order(order, 2));
+                assert_eq!(prefix.get(first).1, 1);
+                prefix.get_mut(second).1 = 3;
                 assert_eq!(prefix.as_slice().as_ptr().cast::<()>(), pointer);
                 if index == 0 {
                     return Err(Fault::Element(2));
                 }
-                prefix.vacancy().expect("last position").insert(Owner {
-                    drops: order,
-                    digit: 4,
-                });
+                prefix
+                    .vacancy()
+                    .expect("last position")
+                    .insert(Order(order, 4));
                 assert!(prefix.vacancy().is_none());
                 Ok(prefix.as_slice().len())
             })

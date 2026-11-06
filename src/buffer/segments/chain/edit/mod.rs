@@ -158,10 +158,10 @@ impl<A, B> buffer::raw::Total for (A, B, Growth) {
     }
 }
 
+// SAFETY: Growth::try_pair admitted these two nonempty owners and their exact totals.
 unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
     for (segments::Item<T>, segments::Item<T>, Growth)
 {
-    type Output = segments::Many<T>;
     type Item = segments::Item<T>;
     type Error = crate::mem::Rejected<(segments::Item<T>, segments::Item<T>), assembly::Error>;
 
@@ -179,10 +179,10 @@ unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
     }
 }
 
+// SAFETY: this Many and nonempty item retain at least three owners with checked growth.
 unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
     for (segments::Many<T>, segments::Item<T>, Growth)
 {
-    type Output = segments::Many<T>;
     type Item = segments::Item<T>;
     type Error = crate::mem::Rejected<(segments::Many<T>, segments::Item<T>), assembly::Error>;
 
@@ -204,11 +204,10 @@ unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
     }
 }
 
-// SAFETY: this prepared input owns the original source and its checked growth.
+// SAFETY: this nonempty item and Many retain at least three owners with checked growth.
 unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
     for (segments::Item<T>, segments::Many<T>, Growth)
 {
-    type Output = segments::Many<T>;
     type Item = segments::Item<T>;
     type Error = crate::mem::Rejected<(segments::Many<T>, segments::Item<T>), assembly::Error>;
 

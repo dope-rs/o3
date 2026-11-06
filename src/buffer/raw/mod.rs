@@ -97,19 +97,14 @@ pub trait Unary<T> {
 
 /// # Safety
 /// Source and returned totals remain equal and unchanged through exhaustion: exact nonoverflowing owner count, visible byte sum and resident charge sum.
-/// Success yields exactly that many nonempty owners, never more on failure; preserve backing, borrows and `Output` cardinality (`Many` requires at least two).
+/// The count is at least two. Success yields exactly that many nonempty owners, never more on failure; preserve backing and borrows.
 /// The returned iterator and totals remain valid when either is dropped first.
 pub unsafe trait Sequence<T: buffer::raw::Segment>: Sized + Total {
     type Item;
     type Error;
-    type Output: Assemble<T>;
     fn owners(self) -> (impl Iterator<Item = Self::Item>, impl Total);
 
     fn reject(self, error: crate::alloc::Error) -> Self::Error;
-}
-
-pub trait Assemble<T: buffer::raw::Segment>: Sized {
-    fn finish<S: Sequence<T, Output = Self>>(input: segments::Built<T, S>) -> Self;
 }
 
 pub trait Total {

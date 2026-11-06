@@ -2,14 +2,15 @@ use std::{cell, mem};
 
 use crate::depot::queue::links;
 
-pub(in crate::depot) struct Insert<'a, C: crate::depot::raw::ChainCount, const FRONT: bool> {
+pub(in crate::depot) struct Insert<'a, C: crate::depot::raw::ChainCount> {
     pub(in crate::depot::raw) links: &'a links::Chain<C>,
-    edge: links::Edge,
+    index: links::Index,
+    previous: u32,
     hook: &'a links::Hook,
     neighbor: &'a cell::Cell<u32>,
 }
 
-impl<'a, C: crate::depot::raw::ChainCount, const FRONT: bool> Insert<'a, C, FRONT> {
+impl<'a, C: crate::depot::raw::ChainCount> Insert<'a, C> {
     /// # Safety
     /// `index` is exclusively held outside all chains; this chain's endpoint is reciprocal in `hooks`.
     pub(in crate::depot) unsafe fn new<H: crate::depot::raw::Hooks + ?Sized>(
@@ -33,28 +34,15 @@ impl<'a, C: crate::depot::raw::ChainCount, const FRONT: bool> Insert<'a, C, FRON
         vacant: links::Detached<'a>,
     ) -> Self {
         let (hook, index) = vacant.into_parts();
-        let adjacent = if FRONT {
-            (unsafe { links.parts() }).0.get()
-        } else {
-            (unsafe { links.parts() }).1.get()
-        };
-        let end = if FRONT {
-            (unsafe { links.parts() }).1
-        } else {
-            (unsafe { links.parts() }).0
-        };
-        let neighbor = links::Index::decode(adjacent).map_or(end, |index| {
-            let hook = unsafe { hooks.hook_raw(index) };
-            if FRONT { &hook.previous } else { &hook.next }
-        });
-        let edge = if FRONT {
-            links::Edge::new(index, links::Index::END, adjacent)
-        } else {
-            links::Edge::new(index, adjacent, links::Index::END)
-        };
+        let previous = (unsafe { links.parts() }).1.get();
+        let neighbor = links::Index::decode(previous)
+            .map_or((unsafe { links.parts() }).0, |index| {
+                &unsafe { hooks.hook_raw(index) }.next
+            });
         Self {
             links,
-            edge,
+            index,
+            previous,
             hook,
             neighbor,
         }
@@ -67,20 +55,14 @@ impl<'a, C: crate::depot::raw::ChainCount, const FRONT: bool> Insert<'a, C, FRON
         // chain; committing its reciprocal links and count preserves that chain.
         let count =
             C::storage(unsafe { self.links.parts() }.2).map(|count| (count, count.get() + 1));
-        self.neighbor.set(self.edge.key().raw());
-        if FRONT {
-            self.hook.previous.set(links::Index::END);
-            self.hook.next.set(self.edge.links().1);
-            (unsafe { self.links.parts() }).0.set(self.edge.key().raw());
-        } else {
-            self.hook.previous.set(self.edge.links().0);
-            self.hook.next.set(links::Index::END);
-            (unsafe { self.links.parts() }).1.set(self.edge.key().raw());
-        }
+        self.neighbor.set(self.index.raw());
+        self.hook.previous.set(self.previous);
+        self.hook.next.set(links::Index::END);
+        (unsafe { self.links.parts() }).1.set(self.index.raw());
         if let Some((count, next)) = count {
             count.set(next);
         }
     }
 }
 
-const _: () = assert!(mem::size_of::<Insert<'static, (), false>>() == 5 * mem::size_of::<usize>());
+const _: () = assert!(mem::size_of::<Insert<'static, ()>>() == 4 * mem::size_of::<usize>());

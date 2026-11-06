@@ -59,11 +59,6 @@ pub(in crate::buffer::segments::chain::edit::join) enum Input {
     },
 }
 
-enum Output<'a> {
-    Single,
-    Multi(slots::Vacant<Descriptor, &'a slots::Store<Descriptor>>),
-}
-
 pub(in crate::buffer::segments) enum Rejected<P> {
     Total(total::Error),
     Capacity(Capacity<P>),
@@ -224,7 +219,7 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                         let (mut links, output) = match target.key.state() {
                             handles::State::Empty => {
                                 let output = if sum.count.get() == 1 {
-                                    Output::Single
+                                    None
                                 } else {
                                     let claim = table.vacant().ok_or(Cause::Descriptors(
                                         capacity::Shortage {
@@ -232,7 +227,7 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                                             available: 0,
                                         },
                                     ))?;
-                                    Output::Multi(claim)
+                                    Some(claim)
                                 };
                                 (ends::Exclusive::empty(), output)
                             }
@@ -245,11 +240,11 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                                 ))?;
                                 let mut links = ends::Exclusive::empty();
                                 unsafe { links.append_end(store, index) };
-                                (links, Output::Multi(claim))
+                                (links, Some(claim))
                             }
                             handles::State::Multi(index) => {
                                 let (desc, claim) = unsafe { table.detached(index) }.take();
-                                (desc.links, Output::Multi(claim))
+                                (desc.links, Some(claim))
                             }
                         };
                         target.key = Key::EMPTY;
@@ -257,8 +252,8 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                             unsafe { claim.insert(value).append(&mut links) };
                         });
                         match output {
-                            Output::Single => target.key = Key::single(links.head_raw()),
-                            Output::Multi(claim) => {
+                            None => target.key = Key::single(links.head_raw()),
+                            Some(claim) => {
                                 let claim = claim.insert(Descriptor::new(
                                     links,
                                     sum.count,
@@ -312,11 +307,10 @@ impl<T> Rejected<(&mut segments::Chain<T>, &mut segments::Chain<T>)> {
     }
 }
 
-// SAFETY: this total owns both unchanged chains and their checked cardinality.
+// SAFETY: both retained Many chains own at least four owners with their checked exact sum.
 unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
     for Capacity<(segments::Many<T>, segments::Many<T>)>
 {
-    type Output = segments::Many<T>;
     type Item = segments::Item<T>;
     type Error = crate::mem::Rejected<(segments::Many<T>, segments::Many<T>), assembly::Error>;
 

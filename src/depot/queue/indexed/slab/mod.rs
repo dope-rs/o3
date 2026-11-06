@@ -143,7 +143,7 @@ impl<T, Tag, const MAX: u32, C: crate::depot::raw::Count> Slab<T, Tag, MAX, link
         let index = self.chain.first()?;
         // SAFETY: this exclusive owner retains the selected reciprocal front
         // in its original chain and initialized hook allocation through commit.
-        let (_, detached) =
+        let detached =
             unsafe { crate::depot::raw::Hooks::chain_pop(&self.block, &self.chain, index) };
         detached.idle();
         Some(

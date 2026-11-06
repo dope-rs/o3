@@ -28,12 +28,7 @@ pub trait BoxExt<T>: Sized {
 
 impl<T> BoxExt<T> for Box<T> {
     fn try_new(value: T) -> Result<Self, Exhausted> {
-        let entry =
-            crate::alloc::raw::LayoutExt::try_allocate::<mem::MaybeUninit<T>>(Layout::new::<T>())?;
-        // SAFETY: this uniquely owned allocation has the exact layout of
-        // MaybeUninit<T>, including its aligned dangling pointer for a ZST.
-        let entry = unsafe { Box::from_raw(entry.as_ptr()) };
-        Ok(Box::write(entry, value))
+        Box::try_new(value).map_err(|_| Exhausted)
     }
 }
 

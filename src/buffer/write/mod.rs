@@ -34,25 +34,20 @@ pub trait Sink {
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error>;
 }
 
-/// Checked transfers of a stable contiguous owner, fixed by the blanket implementation.
-pub trait SourceExt: buffer::raw::Source + Sized {
-    /// Copies exactly `source` into an empty owner, returning that owner on either outcome.
-    /// Rejects its existing prefix before writing, or propagates the exact write failure.
-    fn try_copy(mut self, source: &[u8]) -> Result<Self, (Self, CopyError<Self::Error>)>
-    where
-        Self: Sink,
-    {
-        if let Some(len) = NonZero::new(self.as_ref().len()) {
-            return Err((self, CopyError::Prefix(len)));
-        }
-        if let Err(error) = self.write_slice(source) {
-            return Err((self, CopyError::Write(error)));
-        }
-        Ok(self)
+/// Copies exactly `source` into an empty owner, returning that owner on either outcome.
+/// Rejects its existing prefix before writing, or propagates the exact write failure.
+pub fn try_copy<S: buffer::raw::Source + Sink>(
+    mut target: S,
+    source: &[u8],
+) -> Result<S, (S, CopyError<S::Error>)> {
+    if let Some(len) = NonZero::new(target.as_ref().len()) {
+        return Err((target, CopyError::Prefix(len)));
     }
+    if let Err(error) = target.write_slice(source) {
+        return Err((target, CopyError::Write(error)));
+    }
+    Ok(target)
 }
-
-impl<T: buffer::raw::Source> SourceExt for T {}
 
 /// Failure to copy an exact source into an empty destination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -302,19 +297,8 @@ impl<'a> Spare<'a> {
         *source = tail;
     }
 
-    pub fn bounded(&mut self) -> spans::Writer<'_, 'a, false> {
+    pub fn bounded(&mut self) -> spans::Writer<'_, 'a> {
         spans::Writer::new(self)
-    }
-
-    pub fn exact(&mut self) -> spans::Writer<'_, 'a, true> {
-        spans::Writer::new(self)
-    }
-
-    pub fn try_exact<'writer>(
-        &'writer mut self,
-        len: usize,
-    ) -> Result<spans::Writer<'writer, 'a, true>, consume::Error> {
-        spans::Writer::try_new(self, len)
     }
 
     /// Admits the exact source before dependent work, then copies only on success.

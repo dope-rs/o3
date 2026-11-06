@@ -50,7 +50,7 @@ impl<'a, V, const LANES: usize> Entry<'a, V, LANES> {
     ) -> Result<Self, group::Error<LANES>> {
         let owner = map
             .intern(key)
-            .map_err(|cause| group::Error::owner(lane, cause))?;
+            .map_err(|cause| group::Error::owner(lane, key, cause))?;
         let slot = Slot::new(slot, lane.get(&owner.item().as_ref().tails).as_ref());
         Ok(Self {
             slot,

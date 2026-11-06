@@ -9,8 +9,8 @@ use crate::{
 
 /// Views over one completely validated compact range sequence.
 pub struct Iter<'plan, 'source, 'ranges, S: ?Sized, N = u32> {
-    pub(super) plan: &'plan ranges::Set<'source, 'ranges, S, N>,
-    pub(super) remaining: segments::Count,
+    plan: &'plan ranges::Set<'source, 'ranges, S, N>,
+    remaining: segments::Count,
 }
 
 impl<'plan, 'source, 'ranges, S: buffer::raw::Source + ?Sized, N: buffer::raw::Length>
@@ -30,8 +30,16 @@ impl<'source, S: buffer::raw::Source + ?Sized, N: buffer::raw::Length> Iterator
     type Item = buffer::View<'source, S>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let left = NonZero::new(self.remaining.into_raw())?;
-        Some(ranges::Set::advance(self, left))
+        let left = NonZero::new(self.remaining.into_raw())?.get();
+        let plan = self.plan;
+        let total = plan.count().into_raw();
+        let index = (total - left) as usize;
+        // SAFETY: `Iter::new` binds this private cursor to `plan` and its exact
+        // validated count. Every yielded item decrements it once, so nonzero
+        // `left` proves both the range index and the successor count.
+        let (start, end) = unsafe { *plan.ranges.as_ptr().add(index) };
+        self.remaining = segments::Count::new(left - 1);
+        Some(plan.view(start, end))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

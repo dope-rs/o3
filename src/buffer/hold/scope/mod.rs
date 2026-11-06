@@ -90,20 +90,6 @@ impl<'input, 'd, R: buffer::Complete, B> Input<'input, 'd, R, B> {
     }
 }
 
-impl<'input, 'd, R: buffer::Cursor, B> ops::Deref for Input<'input, 'd, R, B> {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        self.source.as_slice()
-    }
-}
-
-impl<'input, 'd, R: buffer::Cursor, B> AsRef<[u8]> for Input<'input, 'd, R, B> {
-    fn as_ref(&self) -> &[u8] {
-        self.source.as_slice()
-    }
-}
-
 const _: () = {
     let word = mem::size_of::<usize>();
     assert!(mem::size_of::<Deferred<'static, 'static, storage::Shared>>() == 4 * word);

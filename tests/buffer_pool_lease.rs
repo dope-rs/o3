@@ -4,7 +4,7 @@ use std::num::NonZero;
 
 use common::{
     alloc::system::{Activity, Tracker},
-    buffer::pool::Fill as _,
+    buffer::pool::try_fill,
 };
 use o3::buffer::pool::{self, owners, state};
 
@@ -114,14 +114,10 @@ fn retains_exact_output() {
     let pool =
         (pool::Pool::<state::Initialized>::try_new(1, 8)).expect("allocate initialized output");
     let mut lease = (pool.acquire()).expect("acquire the initialized slot");
-    lease
-        .output()
-        .try_fill::<4>(|bytes| bytes.copy_from_slice(b"comp"))
+    try_fill::<4, _>(lease.output(), |bytes| bytes.copy_from_slice(b"comp"))
         .expect("fixture write fits")
         .commit();
-    let done = lease
-        .output()
-        .try_fill::<4>(|bytes| bytes.copy_from_slice(b"lete"))
+    let done = try_fill::<4, _>(lease.output(), |bytes| bytes.copy_from_slice(b"lete"))
         .expect("fixture write fits");
     let (lease, activity) = Tracker::activity(|| done.commit());
     assert!(activity == Activity::default());
@@ -139,9 +135,7 @@ fn lease_outlives_pool() {
 
         (pool.acquire()).expect("acquire the initialized slot")
     };
-    lease
-        .output()
-        .try_fill::<4>(|bytes| bytes.copy_from_slice(b"body"))
+    try_fill::<4, _>(lease.output(), |bytes| bytes.copy_from_slice(b"body"))
         .expect("fixture write fits")
         .commit();
     assert_eq!(lease.as_slice(), b"body");
@@ -158,22 +152,18 @@ fn keeps_initialized_bytes() {
     {
         let mut lease = (pool.acquire()).expect("acquire the initialized slot");
         assert_eq!(lease.output().as_mut_slice(), &[0; 8]);
-        lease
-            .output()
-            .try_fill::<4>(|bytes| {
-                bytes.copy_from_slice(b"body");
-                bytes.make_ascii_uppercase();
-            })
-            .expect("fixture write fits")
-            .commit();
+        try_fill::<4, _>(lease.output(), |bytes| {
+            bytes.copy_from_slice(b"body");
+            bytes.make_ascii_uppercase();
+        })
+        .expect("fixture write fits")
+        .commit();
         assert_eq!(lease.as_slice(), b"BODY");
     }
 
     let mut reused = (pool.acquire()).expect("reacquire the initialized slot");
     assert_eq!(&reused.output().as_mut_slice()[..4], b"BODY");
-    reused
-        .output()
-        .try_fill::<3>(|bytes| bytes.copy_from_slice(b"new"))
+    try_fill::<3, _>(reused.output(), |bytes| bytes.copy_from_slice(b"new"))
         .expect("fixture write fits")
         .commit();
     let frozen = reused.freeze();

@@ -21,7 +21,7 @@ impl<'a, I, L, M> Append<'a, I, pool::Cursor<L, M>> {
 
     pub(in crate::buffer::pool) fn copy(self)
     where
-        I: owners::Input,
+        I: crate::buffer::raw::SliceExt,
     {
         Append {
             target: &mut self.target.lease,
@@ -61,7 +61,7 @@ const _: () = {
 impl<'a, I, L, M> Append<'a, I, pool::Span<owners::Plain<L>, M, state::Uninit>> {
     pub(in crate::buffer::pool) fn copy(self) -> &'a mut pool::Span<owners::Plain<L>, M>
     where
-        I: owners::Input,
+        I: crate::buffer::raw::SliceExt,
     {
         let target = self.target.entry().data();
         let start = self.target.len();
@@ -105,7 +105,7 @@ impl<'a, 'source, L, M, const P: usize, const N: usize>
         prefix: [u8; P],
         sources: [&'source [u8]; N],
     ) -> Result<Self, Error> {
-        let input = owners::Input::try_measure((prefix, sources))?;
+        let input = owners::Measured::try_prefixed((prefix, sources))?;
         Self::try_lease(target, input)
     }
 

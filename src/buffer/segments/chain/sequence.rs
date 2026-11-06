@@ -5,16 +5,13 @@ use crate::{
     buffer::{
         segments,
         segments::{
-            Chain, Handle, Key, Pool,
+            Chain, Handle, Key,
             chain::{view, view::iter::Iter},
             handles,
         },
     },
     depot::arena::linked::{self, slots},
 };
-
-/// The complete state of one compact chain handle.
-pub type Sequence<T, H = Pool<T>> = Chain<T, H>;
 
 impl<T, H: Handle<T>> Chain<T, H> {
     pub fn clear(&mut self) {

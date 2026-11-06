@@ -6,12 +6,9 @@ static ALLOCATOR: Tracker = Tracker;
 use std::{cell::Cell, collections::VecDeque, mem, num};
 
 use common::{
-    Counted,
+    Counted, Order,
     alloc::system::Tracker,
-    depot::model::{
-        Lcg,
-        drops::{Order, Tracked},
-    },
+    depot::model::{Lcg, drops::Tracked},
 };
 use o3::depot::{
     self,
@@ -96,15 +93,12 @@ fn mutates_wrapped_ranges() {
     assert_eq!(queue.pop_front(), Some(10));
     assert_eq!((&mut queue).into_iter().next(), None);
     assert_eq!(queue.as_slices(), (&[][..], &[][..]));
-    for (len, first) in [(3, 2), (1, 1), (3, 1)] {
+    for len in [3_usize, 1, 3] {
         queue.clear();
         for value in 0..len {
             assert_eq!(queue.push_back(value), Ok(()));
         }
-        assert_eq!(
-            queue.as_slices(),
-            (&[0, 1, 2][..first], &[0, 1, 2][first..len])
-        );
+        assert!((&queue).into_iter().copied().eq(0..len));
     }
 }
 

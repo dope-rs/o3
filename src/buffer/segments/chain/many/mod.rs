@@ -54,12 +54,6 @@ impl<T: buffer::raw::Segment> From<Many<T>> for Chain<T> {
     }
 }
 
-impl<T: buffer::raw::Segment> buffer::raw::Assemble<T> for Many<T> {
-    fn finish<S: buffer::raw::Sequence<T, Output = Self>>(input: segments::Built<T, S>) -> Self {
-        Self(input.chain)
-    }
-}
-
 impl<T: buffer::raw::Segment> Many<T> {
     /// # Safety
     /// The chain owns a live multi-descriptor containing at least two owners.
@@ -189,8 +183,8 @@ impl<T: buffer::raw::Segment> buffer::raw::Total for &Many<T> {
     }
 }
 
+// SAFETY: this borrow retains at least two owners and their exact checked totals.
 unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T> for &Many<T> {
-    type Output = Many<T>;
     type Item = Result<segments::Item<T>, rc::Error>;
     type Error = crate::alloc::Error;
     fn owners(self) -> (impl Iterator<Item = Self::Item>, impl buffer::raw::Total) {

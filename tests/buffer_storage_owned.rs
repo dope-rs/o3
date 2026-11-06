@@ -225,6 +225,20 @@ fn commits_built_prefix() {
 }
 
 #[test]
+fn rejects_foreign_exact_writer() {
+    let result = storage::Exact::try_build(1, |out| {
+        let owner = Box::leak(alloc::BoxExt::try_new(Owned::new()).expect("foreign owner"));
+        let spare = Box::leak(alloc::BoxExt::try_new(owner.spare()).expect("foreign spare"));
+        *out = spare.bounded();
+        Ok::<_, consume::Error>(())
+    });
+    assert!(matches!(
+        result,
+        Err(storage::BuildError::Length(error)) if error.into_parts() == (num::NonZero::<usize>::MIN, 0)
+    ));
+}
+
+#[test]
 fn empty_owners_skip_alloc() {
     let (built, allocs) = Tracker::count(|| -> Result<_, storage::AllocError> {
         let empty = storage::Owned::new();

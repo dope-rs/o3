@@ -138,6 +138,7 @@ pub(in crate::depot) struct Meta {
 impl Meta {
     const FREE: u32 = (1 << 31) - 1;
 
+    #[inline]
     pub(in crate::depot) fn vacant(next: Option<links::Index>) -> Self {
         Self {
             generation: key::Generation::MIN,

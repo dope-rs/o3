@@ -239,14 +239,6 @@ impl<T> Node<T> {
             next: cell::Cell::new(index),
         }
     }
-
-    /// # Safety
-    /// The caller solely owns this detached initialized node at `index`.
-    pub(super) unsafe fn clear(&self, index: u32) {
-        // SAFETY: the caller consumes this node's initialized value once.
-        unsafe { (&mut *self.value.get()).assume_init_drop() };
-        self.next.set(index);
-    }
 }
 
 /// A slot count whose exact allocation layout has been validated.
@@ -259,9 +251,8 @@ pub(crate) struct Capacity<T> {
 }
 
 impl<T> Capacity<T> {
-    pub(crate) fn new<N: capacity::Extent>(capacity: N) -> Result<Self, alloc::Overflow> {
-        let raw =
-            bounded::U32::from_usize(capacity::Extent::get(capacity)).ok_or(alloc::Overflow)?;
+    pub(crate) fn new(capacity: usize) -> Result<Self, alloc::Overflow> {
+        let raw = bounded::U32::from_usize(capacity).ok_or(alloc::Overflow)?;
         alloc::raw::Layout::<Node<T>>::try_layout(raw.into_usize())?;
         Ok(Self {
             raw,

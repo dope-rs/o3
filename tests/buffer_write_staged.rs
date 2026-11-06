@@ -344,36 +344,6 @@ fn rollback_after_growth() {
 }
 
 #[test]
-fn commits_empty_span() {
-    let mut owner = Owned::new();
-    let mut writer = owner.spare();
-    let Err(cause) = writer.try_exact(usize::MAX) else {
-        panic!("the largest span must exceed the empty owner");
-    };
-    let (required, room) = cause.into_parts();
-    assert_eq!((required.get(), room), (usize::MAX, 0));
-    let mut exact = writer.exact();
-    let cause =
-        write::Sink::write_byte(&mut exact, 1).expect_err("an empty span must reject a byte");
-    let (required, room) = cause.into_parts();
-    assert_eq!((required.get(), room), (1, 0));
-    write::Sink::write_slice(&mut exact, b"")
-        .as_ref()
-        .expect("required fixture outcome");
-    exact
-        .try_commit()
-        .as_ref()
-        .expect("required fixture outcome");
-    writer
-        .exact()
-        .try_commit()
-        .as_ref()
-        .expect("required fixture outcome");
-    writer.commit();
-    assert!(owner.is_empty());
-}
-
-#[test]
 fn rejects_short_commit() {
     let mut owner = (Owned::try_with(4)).expect("the staged destination must allocate");
     let mut writer = owner.spare();

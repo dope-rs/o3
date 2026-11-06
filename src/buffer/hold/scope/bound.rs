@@ -49,16 +49,8 @@ impl<'input, 'd, R: hold::raw::Retain<'d> + 'input> Bound<'input, 'd, R> {
     }
 
     pub fn try_retain(self) -> Result<resident::Shared<'d>, (Self, hold::Error)> {
-        let budget = self.input.1;
-        self.try_admit(budget)
-    }
-
-    pub fn try_admit(
-        self,
-        budget: &resident::Budget<'d>,
-    ) -> Result<resident::Shared<'d>, (Self, hold::Error)> {
         self.choice
-            .try_retain::<R>(&self.input.0, budget)
+            .try_retain::<R>(&self.input.0, self.input.1)
             .map_err(|error| (self, error))
     }
 

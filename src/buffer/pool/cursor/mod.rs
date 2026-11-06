@@ -155,7 +155,7 @@ impl<L, M> write::Sink for Cursor<L, M> {
     }
 
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
-        let input = owners::Input::try_measure(slices)?;
+        let input = owners::Measured::try_slices(slices, usize::MAX)?;
         pool::Append::try_input(self, input)?.copy();
         Ok(())
     }

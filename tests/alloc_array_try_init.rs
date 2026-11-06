@@ -2,8 +2,8 @@ pub mod common;
 
 use std::{cell::Cell, mem};
 
-use common::alloc::{Owner, system::Tracker};
-use o3::alloc::array;
+use common::{Order, alloc::system::Tracker};
+use o3::alloc::{self, array};
 
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
@@ -28,18 +28,18 @@ fn retains_final_addresses() {
 fn failure_drops_prefix() {
     let drops = Cell::new(Some(0));
     let mut digit = 0;
-    let bytes = 4 * mem::size_of::<Owner<'_>>();
+    let bytes = 4 * mem::size_of::<Order<'_>>();
     let (result, activity) = Tracker::measure(|| {
         let drops = &drops;
-        let factory = Owner { drops, digit: 8 };
-        let block = array::Block::try_new(4usize, Owner { drops, digit: 9 }).expect("allocation");
+        let factory = Order(drops, 8);
+        let block = array::Block::try_new(4usize, Order(drops, 9)).expect("allocation");
         block.try_init(move |_| {
             let _ = &factory;
             digit += 1;
             if digit == 3 {
                 Err(17u8)
             } else {
-                Ok(Owner { drops, digit })
+                Ok(Order(drops, digit))
             }
         })
     });
@@ -51,18 +51,19 @@ fn failure_drops_prefix() {
 #[test]
 fn status_drops_value() {
     let drops = Cell::new(Some(0));
-    let bytes = 4 * mem::size_of::<Owner<'_>>();
+    let bytes = 4 * mem::size_of::<Order<'_>>();
     let (result, activity) = Tracker::measure(|| {
         let drops = &drops;
-        let factory = Owner { drops, digit: 8 };
-        let block = array::Block::try_new(4usize, Owner { drops, digit: 9 }).expect("allocation");
-        let mut digit = 0;
-        block.try_fill(move |slot| {
-            let _ = &factory;
-            digit += 1;
-            let done = slot.insert(Owner { drops, digit });
-            if digit == 3 { Err(17u8) } else { Ok(done) }
-        })
+        let factory = Order(drops, 8);
+        let block = array::Block::try_new(4usize, Order(drops, 9)).expect("allocation");
+        // SAFETY: the source yields exactly the four allocated slots.
+        unsafe {
+            alloc::raw::try_map(block, 1..=4, move |slot, digit| {
+                let _ = &factory;
+                let done = slot.insert(Order(drops, digit));
+                if digit == 3 { Err(17u8) } else { Ok(done) }
+            })
+        }
     });
     assert!(matches!(result, Err(17)));
     assert_eq!(drops.get(), Some(12389));

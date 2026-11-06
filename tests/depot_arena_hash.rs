@@ -6,10 +6,11 @@ static ALLOCATOR: Tracker = Tracker;
 use std::{array, cell, collections::BTreeMap, ptr, rc::Rc};
 
 use common::{
+    Order,
     alloc::system::Tracker,
     depot::{
         arena::{Item, Member, Slot},
-        model::{Random, drops::Order},
+        model::Random,
     },
 };
 use o3::depot::{

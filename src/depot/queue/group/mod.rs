@@ -42,14 +42,14 @@ pub enum Error<const LANES: usize> {
 }
 
 impl<const LANES: usize> Error<LANES> {
-    fn owner(lane: Index<LANES>, cause: map::Error<LANES>) -> Self {
+    fn owner(lane: Index<LANES>, key: u64, cause: map::Error<LANES>) -> Self {
         match cause {
-            map::Error::Owners { capacity, key } => Self::Owners {
+            map::Error::Owners(capacity) => Self::Owners {
                 lane,
                 capacity,
                 key,
             },
-            map::Error::Branches { capacity, key } => Self::Branches {
+            map::Error::Branches(capacity) => Self::Branches {
                 lane,
                 capacity,
                 key,

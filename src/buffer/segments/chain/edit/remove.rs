@@ -56,33 +56,6 @@ unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::Linked<'a> for &'a mut Multi<'
 // SAFETY: this Multi exclusively borrows the original sequence and both stores are disjoint.
 unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::LinkedMut<'a> for &'a mut Multi<'_, T, H> {}
 
-// SAFETY: detached-front metadata retains the descriptor and remaining live node partition.
-unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::Linked<'a> for &'a mut Removed<'_, T, H> {
-    type Item = segments::Item<T>;
-    type Metadata = handles::Descriptor;
-
-    fn parts(
-        self,
-    ) -> (
-        &'a slots::Store<Self::Item>,
-        &'a slots::Store<Self::Metadata>,
-        slots::Index,
-    ) {
-        (
-            handles::nodes(self.handle),
-            handles::descriptors(self.handle),
-            self.index,
-        )
-    }
-
-    fn head(metadata: &Self::Metadata) -> slots::Index {
-        metadata.links.head_raw()
-    }
-}
-
-// SAFETY: Removed retains the exclusive sequence-key loan through finalization.
-unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::LinkedMut<'a> for &'a mut Removed<'_, T, H> {}
-
 impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
     pub(in crate::buffer::segments) fn front(
         &mut self,
@@ -143,7 +116,8 @@ impl<T: buffer::raw::Segment, H: Handle<T>> Removed<'_, T, H> {
         let resident = buffer::Residency::resident(self.owner.get());
         let charge = hold::Charge::from_owner(len, resident);
         let descs = handles::descriptors(self.handle);
-        let desc = buffer::raw::LinkedMut::metadata_mut(&mut *self);
+        // SAFETY: Removed retains the exclusive sequence-key loan and this live descriptor.
+        let desc = unsafe { &mut *descs.value_ptr(self.index) };
         let count = Plural(desc.count);
         let rest = if count.raw() == 2 {
             let entry = unsafe { descs.detached(self.index) };

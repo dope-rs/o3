@@ -150,13 +150,13 @@ fn commit_or_cancel_pooled() {
             let plan = cursor.try_get(0..4).expect("the remaining four bytes fit");
             assert_eq!(plan.as_slice(), b"cdef");
             if commit {
-                cursor.commit();
+                assert_eq!(cursor.commit(), 2);
             }
         }
         assert_eq!(source.as_slice(), b"cdef");
         let mut cursor = bytes::Cursor::new(&mut source);
         cursor.consume_max(usize::MAX);
-        cursor.commit();
+        assert_eq!(cursor.commit(), 4);
     });
     assert!(activity == Activity::default());
     assert!(pool.view().is_some());

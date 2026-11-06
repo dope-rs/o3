@@ -13,12 +13,9 @@ pub(in crate::buffer::storage::provided) struct Domain<'d, T, L> {
 }
 
 impl<'d, T, L> Domain<'d, T, L> {
-    pub(super) fn new(capacity: num::NonZero<u32>, limit: u32, setting: L::Setting) -> Self
-    where
-        L: arena::Layout,
-    {
+    pub(super) fn new(capacity: num::NonZero<u32>, limit: u32) -> Self {
         Self {
-            state: State::new(capacity, limit.min(capacity.get()), L::mode(setting)),
+            state: State::new(capacity, limit.min(capacity.get())),
             slots: marker::PhantomData,
         }
     }
@@ -55,28 +52,23 @@ pub(in crate::buffer::storage::provided) struct State<'d> {
     returned: cell::Cell<Queue<'d>>,
     pub(super) accounted: Counter,
     capacity: num::NonZero<u32>,
-    mode: provided::Mode,
     pub(super) limit: u32,
     brand: marker::PhantomData<fn(&'d ()) -> &'d ()>,
 }
 
 impl<'d> State<'d> {
-    const fn new(capacity: num::NonZero<u32>, limit: u32, mode: provided::Mode) -> Self {
+    const fn new(capacity: num::NonZero<u32>, limit: u32) -> Self {
         Self {
             free: cell::Cell::new(None),
             returned: cell::Cell::new(Queue::Empty),
             accounted: Counter::new(),
             capacity,
-            mode,
             limit,
             brand: marker::PhantomData,
         }
     }
     pub(in crate::buffer::storage::provided) const fn capacity(&self) -> num::NonZero<u32> {
         self.capacity
-    }
-    pub(super) const fn mode(&self) -> provided::Mode {
-        self.mode
     }
     pub(super) fn push_free(&self, node: arena::Empty<'d>) {
         let next = self.free.take();

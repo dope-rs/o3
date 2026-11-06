@@ -33,14 +33,8 @@ pub(super) enum Link {
 }
 
 pub(super) enum Error<const LANES: usize> {
-    Owners {
-        capacity: capacity::Count<LANES>,
-        key: u64,
-    },
-    Branches {
-        capacity: capacity::Count<LANES>,
-        key: u64,
-    },
+    Owners(capacity::Count<LANES>),
+    Branches(capacity::Count<LANES>),
 }
 
 pub(super) struct Entry<const LANES: usize> {
@@ -246,10 +240,7 @@ impl<const LANES: usize> Tree<LANES> {
         let empty = Entry::new(key);
         let root = match start {
             Start::Empty(root) => {
-                let owner = map
-                    .vacant()
-                    .ok_or(Error::Owners { capacity, key })?
-                    .insert(empty);
+                let owner = map.vacant().ok_or(Error::Owners(capacity))?.insert(empty);
                 let root = Root(root.write(Link::Owner(Node::inserted(owner.key()))));
                 return Ok(Lease::open(
                     Rollback {
@@ -276,7 +267,7 @@ impl<const LANES: usize> Tree<LANES> {
             .into_owner()
             .0
             .vacant()
-            .ok_or(Error::Owners { capacity, key })?
+            .ok_or(Error::Owners(capacity))?
             .insert(empty);
         let mut build = |parent: Option<&mut Branch>, branch| {
             Branch::insert(
@@ -312,7 +303,7 @@ impl<const LANES: usize> Tree<LANES> {
             Ok(branch) => branch,
             Err(capacity) => {
                 owner.detach().discard();
-                return Err(Error::Branches { capacity, key });
+                return Err(Error::Branches(capacity));
             }
         };
         Ok(Lease::open(

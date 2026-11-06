@@ -2,10 +2,13 @@ pub mod common;
 
 use std::{cell, mem};
 
-use common::alloc::{
-    AlignedZst, Owner,
-    owner::{self, Aligned},
-    system::Tracker,
+use common::{
+    Order,
+    alloc::{
+        AlignedZst,
+        owner::{self, Aligned},
+        system::Tracker,
+    },
 };
 use o3::alloc::{self, array};
 
@@ -265,28 +268,17 @@ fn init_counts_zsts() {
 fn block_owns_elements() {
     let drops = cell::Cell::new(Some(0));
     let (block, activity) = Tracker::measure(|| {
-        array::Block::try_new(
-            3_usize,
-            Owner {
-                drops: &drops,
-                digit: 4,
-            },
-        )
-        .map(|block| {
-            block.init(|index| Owner {
-                drops: &drops,
-                digit: index + 1,
-            })
-        })
+        array::Block::try_new(3_usize, Order(&drops, 4))
+            .map(|block| block.init(|index| Order(&drops, index as u64 + 1)))
     });
     let mut block = block.expect("initialized element allocation");
-    let bytes = 3 * mem::size_of::<Owner<'_>>();
+    let bytes = 3 * mem::size_of::<Order<'_>>();
     assert_eq!(activity, [1, bytes, 0, 0]);
     assert_eq!(*block.extent(), 3);
-    assert_eq!(block.state().digit, 4);
-    block[1].digit = 5;
+    assert_eq!(block.state().1, 4);
+    block[1].1 = 5;
     let ((), released) = Tracker::measure(move || {
-        assert_eq!(block.iter().map(|value| value.digit).sum::<usize>(), 9);
+        assert_eq!(block.iter().map(|value| value.1).sum::<u64>(), 9);
     });
     assert_eq!(drops.get(), Some(1534));
     assert_eq!(released, [0, 0, 1, bytes]);
@@ -323,10 +315,7 @@ fn block_vec_owners() {
     let drops = cell::Cell::new(Some(0));
     let block = array::Block::try_new(3_usize, ())
         .expect("owner allocation")
-        .init(|index| Owner {
-            drops: &drops,
-            digit: index + 1,
-        });
+        .init(|index| Order(&drops, index as u64 + 1));
     let pointer = block.as_ptr();
     let (values, transfer) = Tracker::measure(|| block.into_vec());
     assert_eq!(transfer, [0; 4]);
@@ -336,7 +325,7 @@ fn block_vec_owners() {
 
     let ((), released) = Tracker::measure(|| drop(values));
     assert_eq!(drops.get(), Some(123));
-    assert_eq!(released, [0, 0, 1, 3 * mem::size_of::<Owner<'_>>()]);
+    assert_eq!(released, [0, 0, 1, 3 * mem::size_of::<Order<'_>>()]);
 }
 
 #[test]

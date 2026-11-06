@@ -10,12 +10,10 @@ pub use chain::{
     edit::drain::Drain,
     front::Front,
     many::{Many, flatten::Flatten},
-    sequence::Sequence,
     single::Single,
     view::{cursor::Cursor, iter::Iter},
 };
 use handles::Key;
-pub(in crate::buffer) use handles::pool::exact::Built;
 pub use handles::{
     handle::Handle,
     header::Header,

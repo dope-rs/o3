@@ -56,10 +56,6 @@ impl<'d, const N: usize> From<&'d [u8; N]> for Item<resident::Shared<'d>> {
 }
 
 impl<T> Item<T> {
-    pub const fn as_ref(&self) -> &T {
-        &self.value
-    }
-
     pub fn into_inner(self) -> T {
         self.value
     }
@@ -79,16 +75,13 @@ impl<T: buffer::raw::Segment> Item<T> {
 
     /// Splits a prefix while preserving the remaining owner's nonempty proof.
     pub fn try_split(mut self, limit: usize) -> Result<(T, Option<Self>), (rc::Error, Self)> {
-        use segments::Tail;
-
-        let Some(tail) = Tail::new(&mut self.value, limit) else {
+        let Some(tail) = segments::Tail::new(&mut self.value, limit) else {
             return Ok((self.value, None));
         };
-        let prefix = match tail.try_commit() {
-            Ok(result) => result,
-            Err(error) => return Err((error, self)),
-        };
-        Ok((prefix, Some(self)))
+        match tail.try_commit() {
+            Ok(prefix) => Ok((prefix, Some(self))),
+            Err(error) => Err((error, self)),
+        }
     }
 }
 
@@ -176,7 +169,6 @@ impl<'a, T: buffer::raw::Segment> Item<buffer::View<'a, T>> {
         end: usize,
     ) -> Option<Self> {
         let bytes = source.as_ref();
-        let start = start.min(bytes.len());
         let end = end.min(bytes.len());
         if start >= end {
             return None;

@@ -209,8 +209,6 @@ fn stops_at_last_identity() {
     let last = (before.next()).expect("the final generation must remain representable");
     assert_eq!(last.get(), u32::MAX);
     assert!((last.next()).is_none());
-    assert!((last.checked_add(0)) == (Some(last)));
-    assert!((last.checked_add(u32::MAX)).is_none());
     assert!((Generation::<0>::INITIAL.next()).is_none());
     let before = Epoch::new(
         NonZero::new(u64::MAX - 1).expect("nonzero identity"),

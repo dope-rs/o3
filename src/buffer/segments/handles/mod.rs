@@ -60,7 +60,7 @@ impl<T> Parts<T> {
         .min(segments::Plan::max_segments());
         let plan = segments::Plan {
             segments: capacity,
-            chains: usize::from(required.is_many()),
+            chains: 1,
         };
         Self::try_new(plan).or_else(|error| {
             if capacity == count {
@@ -74,9 +74,6 @@ impl<T> Parts<T> {
     }
 
     fn try_new(plan: segments::Plan) -> Result<Self, crate::alloc::Overflow> {
-        if plan.segments > segments::Plan::max_segments() || plan.chains > plan.segments / 2 {
-            return Err(crate::alloc::Overflow);
-        }
         let nodes = slots::Capacity::new(plan.segments)?;
         let desc = slots::Capacity::new(plan.chains)?;
         let bundle = alloc::raw::Bundle::try_root::<Header<T>>(1)?

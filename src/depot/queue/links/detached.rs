@@ -20,8 +20,7 @@ impl Detached<'_> {
         hooks: &H,
     ) {
         // SAFETY: the caller retains the same store and reciprocal endpoints.
-        let change =
-            unsafe { crate::depot::raw::Insert::<(), false>::from_vacant(chain, hooks, self) };
+        let change = unsafe { crate::depot::raw::Insert::<()>::from_vacant(chain, hooks, self) };
         change.commit();
     }
 

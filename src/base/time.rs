@@ -139,8 +139,7 @@ impl Unix<Nanos> {
     }
 
     fn nanos(duration: time::Duration) -> Option<u64> {
-        let nanos = duration.as_nanos();
-        (nanos <= u64::MAX as u128).then_some(nanos as u64)
+        u64::try_from(duration.as_nanos()).ok()
     }
 
     pub const fn floor_millis(self) -> Unix<Millis> {

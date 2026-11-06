@@ -9,9 +9,9 @@ use std::{
 };
 
 use common::{
-    Counted,
+    Counted, Order,
     alloc::system::Tracker,
-    depot::{index::capacity::Count, model::drops::Order, queue::indexed::slab::layout::Aligned},
+    depot::{index::capacity::Count, queue::indexed::slab::layout::Aligned},
 };
 use o3::{
     alloc,
@@ -92,19 +92,13 @@ fn rejects_exact_membership() {
     ))
     .expect("two slots must allocate");
     let vacant = match fifo.entry::<16>(1) {
-        Ok(entry::State::Vacant(vacant)) => Some(vacant),
+        Ok(Some(vacant)) => Some(vacant),
         _ => None,
     }
     .expect("the initial slot is vacant");
     vacant.insert::<false>(10).commit();
-    assert!(matches!(
-        fifo.entry::<0>(1),
-        Ok(entry::State::Occupied(&10))
-    ));
-    assert!(matches!(
-        fifo.entry::<16>(1),
-        Ok(entry::State::Occupied(&10))
-    ));
+    assert!(matches!(fifo.entry::<0>(1), Ok(None)));
+    assert!(matches!(fifo.entry::<16>(1), Ok(None)));
     assert!(matches!(
         fifo.vacant::<0>(1),
         Err(tagged::entry::Error::Linked { index, previous, next })

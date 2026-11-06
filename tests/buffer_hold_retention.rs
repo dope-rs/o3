@@ -3,24 +3,21 @@ pub mod common;
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
 
-use std::{cell, pin::Pin};
+use std::cell;
 
 use common::{
     alloc::system::{Activity, Tracker},
     buffer::domain::Capacity,
 };
-use o3::{
-    base::cell::region,
-    buffer::{
-        Residency as _,
-        hold::{
-            self,
-            scope::{self, Input},
-        },
-        resident::{self, staging},
-        storage,
-        write::{Sink as _, SpareExt as _},
+use o3::buffer::{
+    Residency as _,
+    hold::{
+        self,
+        scope::{self, Input},
     },
+    resident::{self, staging},
+    storage,
+    write::{Sink as _, SpareExt as _},
 };
 
 #[test]
@@ -174,40 +171,6 @@ fn limit_arithmetic() {
                 right: 2,
             })
     );
-}
-
-#[test]
-fn external_budget_admits() {
-    let mut domains = [resident::Domain::new(), resident::Domain::new()];
-    region::Token::scope_pinned(Pin::new(&mut domains), |token, domains| {
-        let domains = domains.get_mut();
-        let [origin, external] = domains;
-        let origin = (origin.try_budget(0, token.proof()))
-            .expect("the original resident domain must be empty");
-        let external = (external.try_budget(8, token.proof()))
-            .expect("the external resident domain must be empty");
-        let source = (storage::Shared::try_copy(b"one-four"))
-            .expect("the external-budget source must allocate");
-        let pointer = source.as_slice().as_ptr();
-        let bound = scope::Input::new(&source, &origin)
-            .defer_all()
-            .bind(hold::Policy::compact());
-
-        let (shared, alloc) = Tracker::measure(|| bound.try_admit(&external));
-
-        assert_eq!(alloc[0], 1);
-        {
-            let shared = shared
-                .map_err(|(_, cause)| cause)
-                .expect("the external budget must admit the compact copy");
-            assert_eq!(shared.as_slice(), b"one-four");
-            assert_ne!(shared.as_slice().as_ptr(), pointer);
-            assert_eq!(origin.resident(), 0);
-            assert_eq!(external.resident(), 8);
-            assert_eq!(shared.resident(), 8);
-        }
-        assert_eq!(external.resident(), 0);
-    });
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use std::{marker, num::NonZero};
+use std::marker;
 
 use crate::depot::{
     index::Initialized,
@@ -60,24 +60,6 @@ impl<E: crate::depot::raw::TagEntry, P: crate::depot::raw::TagFinish<E>> Linked<
     pub(in crate::depot) unsafe fn entry_mut(&mut self) -> &mut E {
         // SAFETY: the caller preserves this entry and its live membership.
         unsafe { P::entry_mut(&mut self.entry) }
-    }
-
-    pub fn unlink(self) -> tagged::Vacant<E> {
-        use tagged::hook::Neighbors;
-
-        Neighbors::new(&self).detach();
-        // SAFETY: both adjacent edges were repaired and this exact hook was detached.
-        unsafe { tagged::Vacant::new(self.into_inner()) }
-    }
-
-    /// # Safety
-    /// The entry is the current first node of this endpoint in its retained owner.
-    pub(in crate::depot) unsafe fn unlink_front(self, endpoint: NonZero<u32>) -> tagged::Vacant<E> {
-        use tagged::hook::Neighbors;
-
-        unsafe { Neighbors::new(&self).detach_front(endpoint) };
-        // SAFETY: the exact head was detached and both adjacent edges were repaired.
-        unsafe { tagged::Vacant::new(self.into_inner()) }
     }
 }
 

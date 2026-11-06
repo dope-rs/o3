@@ -42,7 +42,7 @@ impl<'a, const N: usize> Edit<'a, N> {
         Self { prefix, spare }
     }
 
-    pub fn bounded(&mut self) -> spans::Writer<'_, 'a, false> {
+    pub fn bounded(&mut self) -> spans::Writer<'_, 'a> {
         self.spare.bounded()
     }
 

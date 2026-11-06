@@ -65,12 +65,14 @@ pub(in crate::buffer) struct Selection<'a, S> {
 }
 
 impl buffer::bytes::Cursor<'_, '_> {
-    pub fn commit(self) {
+    #[inline]
+    pub fn commit(self) -> usize {
         Selection {
             source: self.target,
             len: self.consumed,
         }
         .consume();
+        self.consumed
     }
 }
 

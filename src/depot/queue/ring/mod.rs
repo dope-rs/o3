@@ -98,12 +98,9 @@ impl<T> Fifo<T> {
 
     pub fn clear(&mut self) {
         if !self.state.is_empty() {
-            // SAFETY: the exclusive owner destroys both initialized runs once,
-            // then clears their state while preserving the next physical slot.
-            unsafe {
-                crate::depot::raw::drop_ring(self);
-                self.state.clear(self.capacity());
-            }
+            // SAFETY: the exclusive owner destroys both initialized runs once.
+            unsafe { crate::depot::raw::drop_ring(self) };
+            self.state = ring::State::EMPTY;
         }
     }
 

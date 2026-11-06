@@ -177,10 +177,10 @@ impl<'a, T: Copy, P, const N: usize> Slot<'a, T, P, N> {
         let change = if index.is_linked(&self.node.hooks[Q]) {
             // SAFETY: membership belongs to this exact owner and plane.
             let vacant = unsafe { queue.unlink(&hooks, index) };
-            unsafe { crate::depot::raw::Insert::<(), false>::from_vacant(queue, &hooks, vacant) }
+            unsafe { crate::depot::raw::Insert::<()>::from_vacant(queue, &hooks, vacant) }
         } else {
             // SAFETY: the retained hook is idle in this exact owner and plane.
-            unsafe { crate::depot::raw::Insert::<(), false>::new(queue, &hooks, index) }
+            unsafe { crate::depot::raw::Insert::<()>::new(queue, &hooks, index) }
         };
         self.node.values[Q].set(mem::MaybeUninit::new(value));
         crate::depot::raw::Insert::commit(change);

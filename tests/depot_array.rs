@@ -2,11 +2,7 @@ pub mod common;
 
 use std::{cell::Cell, mem, ops, ptr};
 
-use common::{
-    Counted,
-    alloc::system::Tracker,
-    depot::{CompactBytes, model::drops},
-};
+use common::{Counted, Order, alloc::system::Tracker, depot::CompactBytes};
 use o3::depot::array::{self, Len, copy, init, sorted};
 
 #[global_allocator]
@@ -269,21 +265,20 @@ fn guard_release_order() {
     let order = Cell::new(Some(0));
     let mut backing = mem::MaybeUninit::uninit();
     assert!(matches!(
-        drops::Order::fill(init::Guard::<_, 3, false>::new(&mut backing), &order, true),
+        Order::fill(init::Guard::<_, 3, false>::new(&mut backing), &order, true),
         Err(3)
     ));
     assert_eq!(order.get(), Some(12));
     order.set(Some(0));
     assert!(matches!(
-        drops::Order::fill(init::Guard::<_, 3, true>::new(&mut backing), &order, true),
+        Order::fill(init::Guard::<_, 3, true>::new(&mut backing), &order, true),
         Err(3)
     ));
     assert_eq!(order.get(), Some(21));
     order.set(Some(0));
     {
-        let values =
-            drops::Order::fill(init::Guard::<_, 3, true>::new(&mut backing), &order, false)
-                .expect("complete array");
+        let values = Order::fill(init::Guard::<_, 3, true>::new(&mut backing), &order, false)
+            .expect("complete array");
         assert_eq!(values.each_ref().map(|value| value.1), [1, 2, 3]);
         assert_eq!(order.get(), Some(0));
     }

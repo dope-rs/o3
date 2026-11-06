@@ -7,7 +7,7 @@ use std::mem;
 
 use common::{
     alloc::system::Tracker,
-    buffer::{Bytes as _, Fill as _},
+    buffer::{Bytes as _, try_fill},
 };
 use o3::{
     buffer::{
@@ -32,9 +32,7 @@ fn snapshots_retain_owners() {
     for count in 0..=values.len() {
         {
             let mut chain = (pool.try_chain()).expect("the chain edge must be available");
-            chain
-                .try_fill(&values[..count])
-                .expect("fixture segments fit");
+            try_fill(&mut chain, &values[..count]).expect("fixture segments fit");
             let ((), activity) = Tracker::measure(|| {
                 let mut cursor = chain.segments();
                 for position in 0..=count {
@@ -118,9 +116,7 @@ fn drains_every_boundary() {
             }))
             .expect("pool allocation");
             let mut chain = (pool.try_chain()).expect("chain edge");
-            chain
-                .try_fill(&values[..count])
-                .expect("fixture segments fit");
+            try_fill(&mut chain, &values[..count]).expect("fixture segments fit");
             assert!(segments::Drain::try_new(&mut chain, len + 1).is_err());
             assert_eq!(
                 chain.try_bytes().expect("chain bytes must allocate"),
@@ -189,9 +185,7 @@ fn transfers_every_boundary() {
                             .as_ref()
                             .expect("required fixture outcome");
                     }
-                    target
-                        .try_fill(&values[..present])
-                        .expect("fixture segments fit");
+                    try_fill(&mut target, &values[..present]).expect("fixture segments fit");
                     let ranges: Vec<_> = source
                         .segments()
                         .chain(target.segments())

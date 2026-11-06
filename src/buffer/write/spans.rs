@@ -7,9 +7,9 @@ use crate::buffer::{self, write, write::consume::Error};
 #[repr(C)]
 pub struct Gap(num::NonZero<u32>, u32);
 
-/// A staged span whose publication policy is selected in its type.
+/// A staged span retaining its parent writer until publication.
 #[must_use = "commit the initialized span to publish bytes"]
-pub struct Writer<'writer, 'target, const EXACT: bool> {
+pub struct Writer<'writer, 'target> {
     spare: &'writer mut write::Spare<'target>,
     limit: u32,
     len: u32,
@@ -30,7 +30,7 @@ impl Gap {
     }
 }
 
-impl<'writer, 'target, const EXACT: bool> Writer<'writer, 'target, EXACT> {
+impl<'writer, 'target> Writer<'writer, 'target> {
     pub(in crate::buffer::write) fn new(spare: &'writer mut write::Spare<'target>) -> Self {
         let limit = buffer::raw::Space::remaining(spare) as u32;
         Self {
@@ -63,7 +63,7 @@ impl<'writer, 'target, const EXACT: bool> Writer<'writer, 'target, EXACT> {
         self.len += copied as u32;
     }
 
-    fn publish(self) {
+    pub fn commit(self) {
         self.spare.len += self.len;
     }
 
@@ -85,35 +85,7 @@ impl<'writer, 'target, const EXACT: bool> Writer<'writer, 'target, EXACT> {
     }
 }
 
-impl<'writer, 'target> Writer<'writer, 'target, false> {
-    pub fn commit(self) {
-        self.publish();
-    }
-}
-
-impl<'writer, 'target> Writer<'writer, 'target, true> {
-    pub fn try_commit(self) -> Result<(), Gap> {
-        Gap::check(self.limit, self.len)?;
-        self.publish();
-        Ok(())
-    }
-}
-
-impl AsMut<[u8]> for Writer<'_, '_, true> {
-    fn as_mut(&mut self) -> &mut [u8] {
-        // SAFETY: Writer advances len only after initializing each byte and
-        // retains exclusive access to the parent writer until publication.
-        unsafe {
-            buffer::raw::range_mut(
-                self.spare.pointer.as_ptr().cast(),
-                self.spare.len(),
-                self.len as usize,
-            )
-        }
-    }
-}
-
-impl<const EXACT: bool> write::Sink for Writer<'_, '_, EXACT> {
+impl write::Sink for Writer<'_, '_> {
     type Error = Error;
 
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
@@ -131,7 +103,7 @@ impl<const EXACT: bool> write::Sink for Writer<'_, '_, EXACT> {
     }
 }
 
-impl<const EXACT: bool> buffer::raw::Space for Writer<'_, '_, EXACT> {
+impl buffer::raw::Space for Writer<'_, '_> {
     fn remaining(&self) -> usize {
         (self.limit - self.len) as usize
     }
@@ -140,5 +112,4 @@ impl<const EXACT: bool> buffer::raw::Space for Writer<'_, '_, EXACT> {
 const _: () = assert!(size_of::<Gap>() == size_of::<u64>());
 const _: () = assert!(size_of::<Option<Gap>>() == size_of::<u64>());
 const _: () = assert!(size_of::<Result<(), Gap>>() == size_of::<u64>());
-const _: () = assert!(size_of::<Writer<'static, 'static, false>>() == size_of::<usize>() * 2);
-const _: () = assert!(size_of::<Writer<'static, 'static, true>>() == size_of::<usize>() * 2);
+const _: () = assert!(size_of::<Writer<'static, 'static>>() == size_of::<usize>() * 2);

@@ -11,42 +11,6 @@ pub const CAPACITY: usize = 24;
 
 mod append;
 
-struct Range<const CAP: usize> {
-    start: usize,
-    end: usize,
-}
-
-impl<const CAP: usize> Range<CAP> {
-    fn try_new<L: crate::buffer::raw::Length>(
-        target: &Bytes<CAP, L>,
-        amount: usize,
-    ) -> Result<Self, Error> {
-        let start = target.len();
-        Error::check(amount, CAP - start)?;
-        Ok(Self {
-            start,
-            end: start + amount,
-        })
-    }
-
-    fn fit<L: crate::buffer::raw::Length>(target: &Bytes<CAP, L>, amount: usize) -> Self {
-        let start = target.len();
-        Self {
-            start,
-            end: start + amount.min(CAP - start),
-        }
-    }
-
-    fn bind<L: crate::buffer::raw::Length>(
-        self,
-        target: &mut inline::Bytes<CAP, L>,
-    ) -> inline::Append<'_, L> {
-        // SAFETY: every Range constructor proves the selected extent lies within CAP.
-        let output = unsafe { target.bytes.get_unchecked_mut(self.start..self.end) };
-        inline::Append::new(output, &mut target.len)
-    }
-}
-
 /// A cleared inline owner with a compile-time remaining write bound.
 pub struct Fill<'a, const CAP: usize, const LEFT: usize = CAP, L = u16> {
     output: &'a mut [u8],
@@ -121,14 +85,17 @@ impl<const CAP: usize, L: crate::buffer::raw::Length> Bytes<CAP, L> {
 
     /// Reserves an exact region or returns its precise capacity shortfall.
     pub fn try_reserve(&mut self, amount: usize) -> Result<inline::Append<'_, L>, Error> {
-        let end: Range<CAP> = Range::<CAP>::try_new(self, amount)?;
-        Ok(end.bind(self))
+        Error::check(amount, self.available())?;
+        Ok(self.fit(amount))
     }
 
     /// Reserves the largest prefix up to `amount` that currently fits.
     pub fn fit(&mut self, amount: usize) -> inline::Append<'_, L> {
-        let end = Range::<CAP>::fit(self, amount);
-        end.bind(self)
+        let start = self.len();
+        let end = start + amount.min(CAP - start);
+        // SAFETY: the clamped suffix stays within this initialized backing.
+        let output = unsafe { self.bytes.get_unchecked_mut(start..end) };
+        inline::Append::new(output, &mut self.len)
     }
 
     /// Replaces the suffix after `start`, admitting every source within `limit`.

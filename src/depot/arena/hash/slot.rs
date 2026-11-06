@@ -30,7 +30,6 @@ impl<'a, T, Tag> Slot<'a, T, Tag> {
             core.dense.as_ptr().add(position as usize).write(self.index);
             let meta = core.meta_mut(self.index);
             meta.slot = position;
-            meta.bucket = hash::Bucket::NONE;
         }
         core.free = next;
         core.len += 1;

@@ -24,8 +24,8 @@ mod missing;
 #[derive(Clone, Copy, Eq, PartialEq)]
 #[repr(C)]
 pub struct Plan {
-    slots: u32,
-    lanes: u32,
+    slots: capacity::Count,
+    lanes: capacity::Count,
 }
 
 /// A dimension outside the lane-pool index domain.
@@ -47,18 +47,15 @@ impl Plan {
     }
 
     pub const fn from_counts(slots: capacity::Count, lanes: capacity::Count) -> Self {
-        Self {
-            slots: slots.raw(),
-            lanes: lanes.raw(),
-        }
+        Self { slots, lanes }
     }
 
     pub const fn slots(self) -> usize {
-        self.slots as usize
+        self.slots.get()
     }
 
     pub const fn lanes(self) -> usize {
-        self.lanes as usize
+        self.lanes.get()
     }
 }
 

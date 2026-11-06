@@ -1,7 +1,6 @@
 use std::marker;
 
 pub use error::Error;
-pub use state::State;
 
 use crate::depot::{
     array::Index,
@@ -10,7 +9,6 @@ use crate::depot::{
 };
 
 mod error;
-mod state;
 
 /// One native direct-table slot and the queue topology governed by the same borrow.
 pub struct Slot<

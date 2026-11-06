@@ -124,12 +124,6 @@ pub(in crate::buffer) unsafe trait Linked<'a>: Sized {
 /// # Safety
 /// The owner exclusively retains its descriptor and disjoint node partition for `'a`.
 pub(in crate::buffer) unsafe trait LinkedMut<'a>: Linked<'a> {
-    fn metadata_mut(self) -> &'a mut Self::Metadata {
-        let (_, descs, index) = self.parts();
-        // SAFETY: this native owner lends its live descriptor exclusively.
-        unsafe { &mut *descs.value_ptr(index) }
-    }
-
     fn front_mut(self) -> (&'a mut Self::Metadata, &'a mut Self::Item) {
         let (nodes, descs, index) = self.parts();
         // SAFETY: the original owner exclusively retains both live values in

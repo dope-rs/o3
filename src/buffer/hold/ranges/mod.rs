@@ -100,22 +100,6 @@ impl<'source, 'ranges, S: buffer::raw::Source + ?Sized, N: buffer::raw::Length>
         Iter::new(self)
     }
 
-    pub(in crate::buffer::hold::ranges) fn advance(
-        iter: &mut Iter<'_, 'source, 'ranges, S, N>,
-        left: NonZero<u32>,
-    ) -> buffer::View<'source, S> {
-        let left = left.get();
-        let plan = iter.plan;
-        let total = plan.count().into_raw();
-        let index = (total - left) as usize;
-        // SAFETY: `Iter::new` binds this private cursor to `plan` and its exact
-        // validated count. Every yielded item decrements it once, so nonzero
-        // `left` proves both the range index and the successor count.
-        let (start, end) = unsafe { *plan.ranges.as_ptr().add(index) };
-        iter.remaining = segments::Count::new(left - 1);
-        plan.view(start, end)
-    }
-
     pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -192,7 +176,6 @@ struct Retain<'a, 'b, 'c, N = u32> {
 unsafe impl<'d, N: buffer::raw::Length> buffer::raw::Sequence<resident::Shared<'d>>
     for &Retain<'_, '_, '_, N>
 {
-    type Output = segments::Many<resident::Shared<'d>>;
     type Item = Result<segments::Item<resident::Shared<'d>>, retain::Error>;
     type Error = retain::Error;
     fn owners(self) -> (impl Iterator<Item = Self::Item>, impl buffer::raw::Total) {

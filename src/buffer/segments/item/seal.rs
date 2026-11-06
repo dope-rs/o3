@@ -2,9 +2,7 @@ use std::fmt;
 
 use crate::{
     buffer,
-    buffer::{
-        hold, resident, resident::copy, segments::Item, storage, storage::regions, write::consume,
-    },
+    buffer::{hold, resident, segments::Item, storage, storage::regions, write::consume},
     mem::rc,
 };
 
@@ -73,12 +71,8 @@ impl<'d> Seal for resident::Shared<'d> {
             .ok_or(hold::CopyError::Authority(resident::BindError::Unbound))?;
         let value = source
             .try_copy(budget)
-            .map_err(|cause| {
-                hold::CopyError::Resident(match cause {
-                    copy::Error::Budget(cause) => resident::AllocError::Budget(cause),
-                    copy::Error::Allocation(cause) => resident::AllocError::Exhausted(cause),
-                })
-            })?
+            .map_err(resident::AllocError::from)
+            .map_err(hold::CopyError::Resident)?
             .into_shared();
         Ok(Item {
             value,

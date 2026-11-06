@@ -91,9 +91,9 @@ impl<'a, H: depot::raw::Hooks + ?Sized, L: depot::raw::Hooks + ?Sized> Join<'a, 
         index: links::Index,
     ) -> links::Detached<'a> {
         let change = unsafe { depot::raw::Pop::at(self.entries, self.hooks, index) };
-        let (_, next) = change.edge().links();
+        let last = change.is_last();
         let vacant = depot::raw::Removal::commit(change);
-        if next == links::Index::END {
+        if last {
             if ACTIVE {
                 unsafe { self.active.pop_front(self.lanes, self.index) };
             } else {

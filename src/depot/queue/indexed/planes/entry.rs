@@ -45,12 +45,6 @@ impl<'a, T, const PLANES: usize, P> Entry<'a, T, PLANES, P> {
         self.index.get()
     }
 
-    pub fn front<const PLANE: usize>(self) -> Option<Entry<'a, T, PLANES, phase::Front<PLANE>>> {
-        const { assert!(PLANE < PLANES) };
-        let index = self.set.queues[PLANE].first()?;
-        Some(Entry::new(self.set, index))
-    }
-
     /// Returns whether this entry is linked in `PLANE`.
     pub fn is_linked<const PLANE: usize>(&self) -> bool {
         const { assert!(PLANE < PLANES) };
@@ -92,7 +86,7 @@ impl<'storage, T, const PLANES: usize, const PLANE: usize>
         });
 
         crate::depot::raw::Insert::commit(unsafe {
-            crate::depot::raw::Insert::<u32, false>::from_vacant(queue, &hooks, vacant)
+            crate::depot::raw::Insert::<u32>::from_vacant(queue, &hooks, vacant)
         });
     }
 

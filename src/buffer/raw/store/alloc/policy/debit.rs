@@ -25,10 +25,6 @@ impl<P: crate::buffer::raw::Policy> crate::mem::Lease<Refund<P>> {
         Ok(Self::new(Refund(policy), amount))
     }
 
-    pub(in crate::buffer) const fn amount(&self) -> num::NonZero<u32> {
-        *self.item()
-    }
-
     pub(in crate::buffer) fn commit(self) -> P {
         mem::ManuallyDrop::new(self).sink().0
     }

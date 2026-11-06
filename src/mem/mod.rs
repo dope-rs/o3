@@ -1,4 +1,4 @@
-use std::{marker, mem, ptr};
+use std::{marker, mem};
 
 pub use rejected::Rejected;
 
@@ -70,10 +70,8 @@ impl<R: Return, M> Lease<R, M> {
         &self.parts.0
     }
 
-    pub const fn item(&self) -> &R::Item {
-        // SAFETY: ManuallyDrop<T> has the same layout as T and the pair stays
-        // initialized for the duration of this shared borrow.
-        unsafe { &(*ptr::from_ref(&self.parts).cast::<(R, R::Item)>()).1 }
+    pub fn item(&self) -> &R::Item {
+        &self.parts.1
     }
 }
 

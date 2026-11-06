@@ -5,7 +5,6 @@ use std::{mem, num::NonZero, ops};
 
 pub(in crate::buffer) use arena::charge::Charge;
 pub use arena::{Arena, account::Account, owner::Owner, root::Root, vacant::Vacant};
-use mode::Mode;
 
 use crate::{
     buffer,
@@ -20,7 +19,6 @@ use crate::{
 pub mod account;
 mod arena;
 pub mod fixed;
-mod mode;
 pub mod view;
 
 /// Mutable provided storage preserving its owner through splitting and freezing.

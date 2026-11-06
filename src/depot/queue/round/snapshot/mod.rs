@@ -33,20 +33,13 @@ impl<O, P> Snapshot<O, P> {
 }
 
 impl<'a, T, const G: usize, const N: usize, P> Snapshot<&'a round::Lanes<T, G, N>, P> {
-    pub(in crate::depot::queue::round) fn snapshot(
-        &self,
-    ) -> round::Location<&'a round::Lanes<T, G, N>> {
-        round::Location::new(self.owner, self.position)
-    }
-
     fn resolve(&self) -> Option<round::Location<&'a round::Lanes<T, G, N>, phase::Head>> {
-        let entry = self.snapshot();
         // SAFETY: the snapshot retains this lane's admission to its original owner.
-        let lane = unsafe { entry.owner.join(entry.position.lane) };
-        if lane.entries.first() != Some(entry.position.index) {
+        let lane = unsafe { self.owner.join(self.position.lane) };
+        if lane.entries.first() != Some(self.position.index) {
             return None;
         }
-        Some(entry.phase())
+        Some(round::Location::new(self.owner, self.position))
     }
 
     fn turn(&self) -> Option<round::Location<&'a round::Lanes<T, G, N>, phase::Head>> {

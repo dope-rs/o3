@@ -64,7 +64,7 @@ impl<T, H: linked::Source<T>, Tag> Drop for Live<T, H, Tag> {
         let index = self.vacant.index.raw();
         let node = unsafe { self.vacant.owner.store().region.slot(index) };
         // SAFETY: Drop consumes this node's sole initialized-value owner.
-        unsafe { node.clear(index) };
+        unsafe { (&mut *node.value.get()).assume_init_drop() };
     }
 }
 

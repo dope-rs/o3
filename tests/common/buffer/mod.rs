@@ -143,23 +143,14 @@ pub fn try_many(
     }
 }
 
-pub trait Fill<'a> {
-    fn try_fill(
-        &mut self,
-        values: &[&'a [u8]],
-    ) -> Result<(), mem::Rejected<segments::Item<resident::Shared<'a>>, segments::Error>>;
-}
-
-impl<'a> Fill<'a> for segments::Chain<resident::Shared<'a>> {
-    fn try_fill(
-        &mut self,
-        values: &[&'a [u8]],
-    ) -> Result<(), mem::Rejected<segments::Item<resident::Shared<'a>>, segments::Error>> {
-        for value in values {
-            self.try_push(resident::Shared::from(*value))?;
-        }
-        Ok(())
+pub fn try_fill<'a>(
+    chain: &mut segments::Chain<resident::Shared<'a>>,
+    values: &[&'a [u8]],
+) -> Result<(), mem::Rejected<segments::Item<resident::Shared<'a>>, segments::Error>> {
+    for value in values {
+        chain.try_push(resident::Shared::from(*value))?;
     }
+    Ok(())
 }
 
 pub struct Counted {

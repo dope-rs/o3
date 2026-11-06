@@ -4,7 +4,7 @@ use std::hint;
 
 use common::{
     alloc::system::Tracker,
-    buffer::{Fill as _, scatter::Slices},
+    buffer::{scatter::Slices, try_fill},
 };
 use o3::{
     buffer::{
@@ -32,7 +32,7 @@ fn resume_partial_moves() {
         })
         .expect("pool");
         let mut chain = pool.try_chain().expect("chain");
-        chain.try_fill(parts).expect("owners");
+        try_fill(&mut chain, parts).expect("owners");
         let expected = b"abcdefghi";
         let mut position = scatter::raw::Position::new();
         let mut chain = Some(chain);
