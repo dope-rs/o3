@@ -79,14 +79,15 @@ impl<T, const MAX: u32, M: entries::Mode> HeapPlane<T, MAX, M> for HeapEager<T, 
         cap: capacity::Count,
         init: impl Fn(u32) -> Slot<T, MAX, M>,
     ) -> Result<Self, alloc::Error> {
+        const { assert!(!mem::needs_drop::<Slot<T, MAX, M>>()) };
         let extent = crate::depot::raw::SlabCapacity::new(cap)?;
         Ok(Self {
-            block: crate::alloc::raw::Block::try_init(extent, cell::Cell::new(0), |index| {
-                (
-                    init(index as u32),
-                    cell::Cell::new(mem::MaybeUninit::uninit()),
-                )
-            })?,
+            block: crate::alloc::raw::Block::try_from_fn(
+                extent,
+                cell::Cell::new(0),
+                |index| init(index as u32),
+                |_| cell::Cell::new(mem::MaybeUninit::uninit()),
+            )?,
         })
     }
 }

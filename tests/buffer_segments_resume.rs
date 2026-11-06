@@ -9,11 +9,8 @@ use common::{
 use o3::{
     buffer::{
         self,
-        raw::Scatter as _,
-        segments::{
-            self, queue,
-            scatter::{self, Source as _},
-        },
+        raw::{Chunks as _, Scatter as _},
+        segments::{self, queue, scatter},
         storage,
     },
     depot::capacity::Count,
@@ -207,7 +204,7 @@ fn preserves_native_ranges() {
     compare(&scoped, b"def");
 }
 
-fn compare(source: &impl scatter::Source, expected: &[u8]) {
+fn compare(source: &impl buffer::raw::Chunks, expected: &[u8]) {
     let (_, activity) = Tracker::activity(|| {
         assert_eq!(buffer::raw::Chunks::len(source), expected.len());
         assert_eq!(source.suffix::<0>(), Some([]));

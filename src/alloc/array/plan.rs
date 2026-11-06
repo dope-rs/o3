@@ -26,41 +26,18 @@ impl<T, E: alloc::raw::Extent> Plan<T, E> {
     ) -> Result<array::Block<mem::MaybeUninit<T>, E, S>, alloc::Exhausted> {
         Ok(array::Block {
             pointer: alloc::raw::LayoutExt::try_allocate(self.layout())?,
-            plan: self.uninit(),
+            extent: self.extent,
             state,
         })
-    }
-
-    pub(in crate::alloc::array) const fn empty(extent: alloc::raw::Empty<E>) -> Self {
-        Self {
-            extent: extent.into_inner(),
-            value: marker::PhantomData,
-        }
     }
 
     pub const fn extent(&self) -> &E {
         &self.extent
     }
 
-    pub(in crate::alloc::array) fn layout(&self) -> Layout {
+    fn layout(&self) -> Layout {
         // SAFETY: admission proves this exact T and immutable extent fit.
         unsafe { alloc::raw::Layout::<T>::layout(self.extent.len()) }
-    }
-
-    pub(in crate::alloc::array) const fn uninit(self) -> Plan<mem::MaybeUninit<T>, E> {
-        Plan {
-            extent: self.extent,
-            value: marker::PhantomData,
-        }
-    }
-}
-
-impl<T, E: alloc::raw::Extent> Plan<mem::MaybeUninit<T>, E> {
-    pub(super) const fn initialized(self) -> Plan<T, E> {
-        Plan {
-            extent: self.extent,
-            value: marker::PhantomData,
-        }
     }
 }
 

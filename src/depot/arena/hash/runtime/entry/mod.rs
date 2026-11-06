@@ -52,18 +52,19 @@ impl<'a, T, Tag> Entry<'a, T, Tag> {
         }
     }
 
-    pub fn remove(self) -> T {
+    pub fn unindex(self) -> Live<'a, T, Tag, Staged> {
         match self {
-            Self::Indexed(entry) => entry.remove(),
-            Self::Staged(entry) => entry.remove(),
+            Self::Indexed(entry) => entry.unindex(),
+            Self::Staged(entry) => entry,
         }
     }
 
+    pub fn remove(self) -> T {
+        self.unindex().remove()
+    }
+
     pub fn discard(self) {
-        match self {
-            Self::Indexed(entry) => entry.unindex().discard(),
-            Self::Staged(entry) => entry.discard(),
-        }
+        self.unindex().discard();
     }
 }
 

@@ -1,10 +1,10 @@
 //! Exact-capacity local ring queues.
 
-use std::{cell, iter, marker, mem, num::NonZero, slice};
+use std::{iter, mem, num::NonZero, slice};
 
 pub use full::Full;
 pub use lease::Lease;
-pub use pool::Pool;
+pub use pool::{Cell, Pool};
 
 use crate::{
     alloc::array,
@@ -15,7 +15,7 @@ mod full;
 pub mod inline;
 
 mod lease;
-mod pool;
+pub(in crate::depot) mod pool;
 mod state;
 pub use state::State;
 
@@ -35,13 +35,6 @@ pub struct Front<'a, S: ?Sized> {
 #[must_use]
 pub struct Vacant<'a, S: ?Sized> {
     pub(in crate::depot::queue::ring) source: &'a mut S,
-}
-
-/// A thread-confined exact FIFO whose operations use a shared borrow.
-pub struct Cell<T> {
-    pub(in crate::depot) block: array::Block<mem::MaybeUninit<T>, capacity::Count>,
-    pub(in crate::depot) state: cell::Cell<ring::State<u32>>,
-    invariant: marker::PhantomData<cell::Cell<T>>,
 }
 
 impl<T> Fifo<T> {
@@ -198,37 +191,7 @@ impl<'a, S: crate::depot::raw::RingEdit + ?Sized> Vacant<'a, S> {
     }
 }
 
-impl<T> Cell<T> {
-    /// Allocates exactly `capacity` entries.
-    pub fn try_new(capacity: capacity::Count) -> Result<Self, crate::alloc::Error> {
-        Ok(Self {
-            block: array::Block::try_new(capacity, ())?,
-            state: cell::Cell::new(ring::State::EMPTY),
-            invariant: marker::PhantomData,
-        })
-    }
-
-    pub fn pop_front(&self) -> Option<T> {
-        crate::depot::raw::RingCell::take_front(self)
-    }
-
-    pub const fn capacity(&self) -> usize {
-        self.block.extent().get()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.state.get().is_empty()
-    }
-}
-
 impl<T> Drop for Fifo<T> {
-    fn drop(&mut self) {
-        // SAFETY: Drop is the terminal exclusive owner of both resident runs.
-        unsafe { crate::depot::raw::drop_ring(self) };
-    }
-}
-
-impl<T> Drop for Cell<T> {
     fn drop(&mut self) {
         // SAFETY: Drop is the terminal exclusive owner of both resident runs.
         unsafe { crate::depot::raw::drop_ring(self) };

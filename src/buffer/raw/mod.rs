@@ -118,7 +118,7 @@ pub trait Total {
 /// Immutable scattered bytes with an exact length and borrowed cursor.
 ///
 /// # Safety
-/// `start()` has `len()` remaining; offset cursors exist through the end.
+/// `chunks()` has `len()` remaining; offset cursors exist through the end.
 pub unsafe trait Chunks {
     type Cursor<'data>: Scatter<'data>
     where
@@ -129,9 +129,24 @@ pub unsafe trait Chunks {
     }
 
     fn len(&self) -> usize;
-    fn start(&self) -> Self::Cursor<'_>;
+    fn chunks(&self) -> Self::Cursor<'_>;
     fn cursor(&self, offset: usize) -> Option<Self::Cursor<'_>> {
-        Scatter::seek(self.start(), offset)
+        Scatter::seek(self.chunks(), offset)
+    }
+
+    /// Copies an exact array-sized suffix without changing the retained source.
+    fn suffix<const N: usize>(&self) -> Option<[u8; N]> {
+        let mut cursor = self.chunks();
+        let skipped = buffer::raw::Scatter::remaining(&cursor).checked_sub(N)?;
+        segments::scatter::Take::new(&mut cursor, skipped).finish();
+        let mut output = [0; N];
+        let source = segments::scatter::Take::new(&mut cursor, usize::MAX);
+        // SAFETY: admission and exact traversal leave N bytes in the retained
+        // source, disjoint from this exclusive array of the same length.
+        unsafe {
+            buffer::raw::copy_slices(source.map(|chunk| chunk.bytes()), output.as_mut_ptr());
+        }
+        Some(output)
     }
 }
 
@@ -224,13 +239,13 @@ pub struct Output<'a, L = pool::Layout> {
     target: &'a mut pool::Span<owners::Plain<L>, pool::Owned, state::Initialized>,
 }
 
-impl<'a, L> Output<'a, L> {
-    pub(in crate::buffer) const fn new(
-        target: &'a mut pool::Span<owners::Plain<L>, pool::Owned, state::Initialized>,
-    ) -> Self {
-        Self { target }
+impl<L> pool::Span<owners::Plain<L>, pool::Owned, state::Initialized> {
+    pub fn output(&mut self) -> Output<'_, L> {
+        Output { target: self }
     }
+}
 
+impl<'a, L> Output<'a, L> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

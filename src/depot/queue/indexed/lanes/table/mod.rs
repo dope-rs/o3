@@ -9,14 +9,6 @@ use lanes::entry;
 
 use crate::depot::{capacity, index::Initialized, map::direct, queue::indexed::lanes};
 
-pub(in crate::depot) struct Hooks<
-    'a,
-    K: crate::depot::raw::Key,
-    V,
-    const N: usize,
-    S: lanes::raw::State<V> = (),
->(pub(in crate::depot) &'a direct::Table<K, Node<V, N, S>>);
-
 /// Key-indexed values and their exclusive FIFO membership.
 pub struct Table<K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V> = ()> {
     pub(in crate::depot) values: direct::Table<K, Node<V, N, S>>,
@@ -25,11 +17,11 @@ pub struct Table<K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::St
 
 // SAFETY: the retained table admits stable hooks at every initialized index.
 unsafe impl<K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
-    crate::depot::raw::Hooks for Hooks<'_, K, V, N, S>
+    crate::depot::raw::Hooks for direct::Table<K, Node<V, N, S>>
 {
     unsafe fn hook_raw(&self, index: links::Index) -> &links::Hook {
         // SAFETY: this exact table retains the admitted initialized hook slot.
-        &unsafe { self.0.value(index) }.hook
+        &unsafe { self.value(index) }.hook
     }
 }
 
@@ -133,7 +125,7 @@ impl<K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>> Tabl
             unsafe {
                 target
                     .get(&self.queues)
-                    .append(source.get(&self.queues), &Hooks(&self.values));
+                    .append(source.get(&self.queues), &self.values);
             }
         }
         moved

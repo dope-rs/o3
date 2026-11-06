@@ -4,9 +4,9 @@ use o3::{
     base::cell::region,
     buffer::{
         hold,
-        raw::Scatter as _,
+        raw::{Chunks as _, Scatter as _},
         resident,
-        segments::{self, queue, scatter::Source as _},
+        segments::{self, queue},
         storage::{self, Shared},
         write::consume::Consume as _,
     },

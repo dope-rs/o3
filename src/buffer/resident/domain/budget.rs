@@ -11,7 +11,7 @@ use crate::{
 /// Retaining a pool slot can reserve credits without allocating another backing.
 #[derive(Clone, Copy, Debug)]
 pub struct Budget<'d> {
-    core: (&'d Domain, region::Proof<region::Identity<'d>>),
+    core: (&'d Domain, region::Identity<'d>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,7 +25,7 @@ impl Domain {
     pub fn try_budget<'d>(
         &'d mut self,
         capacity: usize,
-        proof: region::Proof<region::Identity<'d>>,
+        proof: region::Identity<'d>,
     ) -> Result<Budget<'d>, Reuse> {
         if let Some(retained) = num::NonZero::new(self.resident.get()) {
             return Err(Reuse {

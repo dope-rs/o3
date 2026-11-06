@@ -117,7 +117,7 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
 
 impl<T: buffer::raw::Segment> Writer<'_, T> {
     /// # Safety
-    /// `index` is an outstanding vacancy in this writer's exact node store.
+    /// `claim` is an outstanding vacancy in this writer's exact node store.
     pub(in crate::buffer::segments::handles::pool) unsafe fn push_claim(
         &mut self,
         claim: slots::Vacant<segments::Item<T>, &'_ slots::Store<segments::Item<T>>>,

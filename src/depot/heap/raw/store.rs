@@ -17,7 +17,9 @@ pub(in crate::depot) unsafe trait Store: Sized {
     /// The auxiliary plane retained by the backing block's state.
     type Extra;
 
-    fn precedes(left: &Self::Key, right: &Self::Key) -> bool;
+    fn precedes(_: &Self::Key, _: &Self::Key) -> bool {
+        false
+    }
 
     /// The backing block retaining this store's disjoint planes.
     fn storage(&self) -> &alloc::raw::Block<Self::Storage, u32, Self::Extra>;

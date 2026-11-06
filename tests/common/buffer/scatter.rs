@@ -68,7 +68,7 @@ unsafe impl buffer::raw::Chunks for Slices<'_> {
         self.len
     }
 
-    fn start(&self) -> Self::Cursor<'_> {
+    fn chunks(&self) -> Self::Cursor<'_> {
         let mut parts = self.parts.iter();
         let current = parts
             .find(|part| !part.is_empty())

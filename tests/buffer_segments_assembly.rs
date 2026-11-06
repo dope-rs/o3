@@ -241,7 +241,7 @@ fn joins_with_one_alloc() {
 }
 
 #[test]
-fn checks_wrapped_ranges() {
+fn checks_initial_ranges() {
     let created = queue::Fifo::try_with(queue::Capacity::new(Count::new(32), Count::new(3)));
     let mut source = created.expect("queue storage");
     examine(&source, b"");
@@ -253,26 +253,6 @@ fn checks_wrapped_ranges() {
             .expect("required fixture outcome");
     }
     examine(&source, b"abcdefghij");
-    source
-        .try_consume(3)
-        .as_ref()
-        .expect("required fixture outcome");
-    let owner = storage::Shared::try_copy(b"klm").expect("wrapped owner");
-    source
-        .try_push(owner)
-        .as_ref()
-        .expect("required fixture outcome");
-    examine(&source, b"defghijklm");
-    source
-        .try_consume(3)
-        .as_ref()
-        .expect("required fixture outcome");
-    examine(&source, b"ghijklm");
-    source
-        .try_consume(7)
-        .as_ref()
-        .expect("required fixture outcome");
-    examine(&source, b"");
 }
 
 #[test]

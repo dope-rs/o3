@@ -41,8 +41,12 @@ impl<'d> Exact<'d> {
         budget: &resident::Budget<'d>,
         slices: [&[u8]; N],
     ) -> Result<Self, resident::AllocError> {
-        let inner = regions::Init::<resident::Budget<'d>>::try_copy(budget, slices)?;
-        Ok(inner.map_or_else(Self::new, Self::from_init))
+        let Some(slices) =
+            buffer::raw::Slices::try_new(slices).map_err(resident::AllocError::Capacity)?
+        else {
+            return Ok(Self::new());
+        };
+        Ok(slices.try_copy(budget)?)
     }
 
     #[must_use]

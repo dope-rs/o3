@@ -1,9 +1,6 @@
 use std::{marker, mem, num, ptr, slice};
 
-use regions::Initialize as _;
-
 use crate::{
-    buffer,
     buffer::{resident, storage, storage::regions},
     mem::rc,
 };
@@ -66,19 +63,6 @@ impl<'d> Init<resident::Budget<'d>> {
                 .map_addr(|address| address | 1),
             ownership: marker::PhantomData,
         }
-    }
-
-    pub(in crate::buffer) fn try_copy<const N: usize>(
-        budget: &resident::Budget<'d>,
-        slices: [&[u8]; N],
-    ) -> Result<Option<Self>, resident::AllocError> {
-        use resident::AllocError;
-        let Some(slices) = buffer::raw::Slices::try_new(slices).map_err(AllocError::Capacity)?
-        else {
-            return Ok(None);
-        };
-        let init = slices.try_init(*budget)?;
-        Ok(Some(init))
     }
 }
 

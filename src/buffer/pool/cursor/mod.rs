@@ -104,10 +104,6 @@ impl<L, M> Cursor<L, M> {
 }
 
 impl<L> Cursor<L> {
-    pub fn recycle(self) {
-        self.lease.recycle();
-    }
-
     #[must_use]
     pub fn freeze(self) -> storage::Shared {
         self.into_shared().into()

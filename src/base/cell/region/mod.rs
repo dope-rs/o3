@@ -1,11 +1,9 @@
 use std::{marker, pin};
 
-pub use proof::Proof;
 pub use value::Value;
 
-use crate::base::cell::{Sealed, region};
+use crate::base::cell::{Sealed, region, values};
 
-mod proof;
 mod value;
 
 /// One generative state identity, invariant and unforgeable.
@@ -15,6 +13,7 @@ mod value;
 pub trait Brand: Sealed {}
 
 /// The invariant identity of one generative region.
+/// Copyable identity proof carried by capabilities derived from a region token.
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
 pub struct Identity<'id, const ID: u8 = 0>(marker::PhantomData<*mut &'id ()>);
@@ -23,6 +22,13 @@ impl<'id, const ID: u8> Sealed for Identity<'id, ID> {}
 
 impl<'id, const ID: u8> Brand for Identity<'id, ID> {}
 
+impl<'id, const ID: u8> Identity<'id, ID> {
+    /// Binds newly owned state to this exact region identity.
+    pub const fn bind<T>(self, value: T) -> region::Value<Self, T> {
+        values::Value::new(value)
+    }
+}
+
 /// Exclusive permission for one generative state domain.
 pub use crate::base::cell::values::Token;
 
@@ -30,12 +36,12 @@ impl<B: Brand> Token<B> {
     pub fn borrow<'a, T>(&'a self, value: &'a region::Value<B, T>) -> &'a T {
         self.read(value)
     }
+}
 
+impl<'id, const ID: u8> Token<Identity<'id, ID>> {
     /// Copies the opaque identity proof for capabilities owned by this region.
-    pub const fn proof(&self) -> region::Proof<B> {
-        region::Proof {
-            proof: marker::PhantomData,
-        }
+    pub const fn proof(&self) -> Identity<'id, ID> {
+        Identity(marker::PhantomData)
     }
 }
 
@@ -53,3 +59,8 @@ impl Token<Identity<'_>> {
         f(Token::new(), root)
     }
 }
+
+const _: () = {
+    assert!(size_of::<Identity<'static>>() == 0);
+    assert!(size_of::<Identity<'static, 1>>() == 0);
+};

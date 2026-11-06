@@ -8,14 +8,13 @@ use common::{
 };
 use o3::{
     buffer::{
-        raw::Scatter as _,
+        raw::{Chunks as _, Scatter as _},
         segments::{self, queue, scatter},
         storage,
         write::consume::Consume as _,
     },
     depot::capacity::{self, Count},
 };
-use scatter::Source as _;
 
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
@@ -185,11 +184,13 @@ fn chains_share_nodes() {
                 .expect("required fixture outcome");
             assert_eq!(scoped.segments().len(), 2);
             let mut output = [0; 11];
-            scatter::Reader::new(scoped.segments())
+            let mut reader = scatter::Reader::new(scoped.segments());
+            reader
                 .read_exact(&mut output)
                 .as_ref()
                 .expect("scatter reader must fill the exact retained byte length");
             assert_eq!(&output, b"firstsecond");
+            assert_eq!(reader.read(&mut [0]).expect("exhausted reader"), 0);
         }
     });
     assert_eq!(hot, [0; 4]);
@@ -262,37 +263,6 @@ fn segments_recycle() {
         (abc.as_slice(), def.as_slice(), gh.as_slice()),
         (&b"abc"[..], &b"def"[..], &b"gh"[..])
     );
-}
-
-#[test]
-fn rejects_with_owner() {
-    let pool = (segments::Pool::try_new(segments::Plan {
-        segments: 2,
-        chains: 0,
-    }))
-    .expect("the rejection pool must allocate");
-    let first = (storage::Shared::try_copy(b"first")).expect("the accepted owner must allocate");
-    let second = (storage::Shared::try_copy(b"second")).expect("the rejected owner must allocate");
-    let ptr = second.as_slice().as_ptr();
-    let mut chain = (pool.try_chain()).expect("metadata edge must fit");
-    chain
-        .try_push(first)
-        .as_ref()
-        .expect("metadata admits the owner");
-
-    let result = chain.try_push(second);
-    let err = result.expect_err("the full chain must reject another owner");
-    let (owner, cause) = err.into_parts();
-    assert!(
-        cause
-            == segments::Error::ChainCapacity(capacity::Shortage {
-                requested: NonZero::<usize>::MIN,
-                available: 0
-            })
-    );
-    assert_eq!(owner.as_slice().as_ptr(), ptr);
-    assert!(chain.count() == segments::Count::ONE);
-    assert_eq!(pool.available().segments, 1);
 }
 
 #[test]

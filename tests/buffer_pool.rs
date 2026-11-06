@@ -49,7 +49,7 @@ fn recycles_pool_leases() {
             (1, 0)
         );
         assert!(pool.acquire().is_none());
-        buffer.recycle();
+        drop(buffer);
     }
     assert_eq!(pool.available(), 1);
 }

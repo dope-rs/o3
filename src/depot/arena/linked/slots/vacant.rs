@@ -41,13 +41,7 @@ impl<T, H: linked::Source<T>, Tag> Vacant<T, H, Tag> {
         }
         let (index, node) = unsafe { store.claim::<true>() };
         unsafe { node.value.get().cast::<T>().write(value) };
-        slots::Live {
-            vacant: Self {
-                owner,
-                index: slots::Index::new(index),
-                value: marker::PhantomData,
-            },
-        }
+        unsafe { slots::Live::detached(owner, slots::Index::new(index)) }
     }
 
     pub fn insert(self, value: T) -> slots::Live<T, H, Tag> {

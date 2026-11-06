@@ -129,6 +129,34 @@ where
     }
 }
 
+impl<'a, T, Tag, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, const ROOT: bool>
+    slab::Vacant<entries::Pending<'a, T, MAX, M, PARTITIONS>, Tag, ROOT>
+{
+    pub fn insert(self, value: T) -> key::Handle<Tag, MAX> {
+        let key = key::Handle::new(self.entry.index().raw(), self.entry.generation());
+        self.commit(value);
+        key
+    }
+
+    pub(in crate::depot::arena::slab) fn commit(self, value: T) {
+        drop(self.entry.install(value));
+    }
+
+    pub fn stage(
+        self,
+        value: T,
+    ) -> slab::Staged<
+        crate::mem::Lease<entries::Busy<'a, T, MAX, M, PARTITIONS>, lease::Open>,
+        Tag,
+        ROOT,
+    > {
+        slab::Staged {
+            entry: Lease::open(self.entry.install(value), ()),
+            tag: self.tag,
+        }
+    }
+}
+
 impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool>
     slab::Vacant<entries::Pending<'a, T, MAX, entries::Interior<RECYCLE>>, Tag>
 where
@@ -136,16 +164,7 @@ where
 {
     /// Issues this identity; dropping before installation retires its generation.
     pub fn reserve(self) -> slab::Reserved<'a, T, Tag, MAX, RECYCLE> {
-        slab::Vacant {
-            entry: Lease::open(self.entry, ()),
-            tag: self.tag,
-        }
-    }
-
-    pub fn insert(self, value: T) -> key::Handle<Tag, MAX> {
-        let key = key::Handle::new(self.entry.index().raw(), self.entry.generation());
-        drop(self.entry.install(value));
-        key
+        slab::Vacant::new(Lease::open(self.entry, ()))
     }
 
     pub fn occupy(
@@ -160,19 +179,6 @@ where
 
     pub fn reject(self) {
         self.entry.reject();
-    }
-
-    pub fn stage(
-        self,
-        value: T,
-    ) -> slab::Staged<
-        crate::mem::Lease<entries::Busy<'a, T, MAX, entries::Interior<RECYCLE>>, lease::Open>,
-        Tag,
-    > {
-        slab::Staged {
-            entry: Lease::open(self.entry.install(value), ()),
-            tag: marker::PhantomData,
-        }
     }
 }
 
@@ -295,25 +301,6 @@ impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, c
 where
     cycle::Mode<RECYCLE>: Policy,
 {
-    pub(in crate::depot::arena::slab) fn from_pending(
-        pending: entries::Pending<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>,
-    ) -> Self {
-        Self {
-            entry: pending,
-            tag: marker::PhantomData,
-        }
-    }
-
-    pub fn insert(self, value: T) -> key::Handle<Tag, MAX> {
-        let key = key::Handle::new(self.entry.index().raw(), self.entry.generation());
-        self.commit(value);
-        key
-    }
-
-    pub(in crate::depot::arena::slab) fn commit(self, value: T) {
-        drop(self.entry.install(value));
-    }
-
     pub fn insert_with(
         self,
         build: impl FnOnce(key::Handle<Tag, MAX>) -> T,
@@ -338,23 +325,6 @@ where
         let value = build(self.entry.index());
         self.stage(value)
     }
-
-    pub fn stage(
-        self,
-        value: T,
-    ) -> slab::Staged<
-        crate::mem::Lease<
-            entries::Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>,
-            lease::Open,
-        >,
-        Tag,
-        ROOT,
-    > {
-        slab::Staged {
-            entry: Lease::open(self.entry.install(value), ()),
-            tag: self.tag,
-        }
-    }
 }
 
 impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize>
@@ -369,7 +339,7 @@ where
     ) -> Replaced<'a, T, Tag, MAX, RECYCLE, PARTITIONS> {
         let entry = entries::Occupied::try_key(self.entry.core, key)?;
         Ok((
-            slab::Vacant::from_pending(self.entry),
+            slab::Vacant::new(self.entry),
             slab::Occupied {
                 entry: entry.take(),
                 tag: marker::PhantomData,

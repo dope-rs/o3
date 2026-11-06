@@ -33,30 +33,26 @@ impl<O, P> Snapshot<O, P> {
 }
 
 impl<'a, T, const G: usize, const N: usize, P> Snapshot<&'a round::Lanes<T, G, N>, P> {
-    fn resolve(&self) -> Option<round::Location<&'a round::Lanes<T, G, N>, phase::Head>> {
+    fn resolve<const FAIR: bool>(
+        &self,
+    ) -> Option<round::Location<&'a round::Lanes<T, G, N>, phase::Head>> {
         // SAFETY: the snapshot retains this lane's admission to its original owner.
         let lane = unsafe { self.owner.join(self.position.lane) };
         if lane.entries.first() != Some(self.position.index) {
             return None;
         }
-        Some(round::Location::new(self.owner, self.position))
-    }
-
-    fn turn(&self) -> Option<round::Location<&'a round::Lanes<T, G, N>, phase::Head>> {
-        let head = self.resolve()?;
+        let head = round::Location::new(self.owner, self.position);
         // SAFETY: the admitted FIFO front proves its owner's lane and group remain nonempty.
-        let first = unsafe { head.owner.join(head.position.lane).active.first_live() };
-        (first == self.position.lane).then_some(head)
+        (!FAIR || unsafe { lane.active.first_live() } == self.position.lane).then_some(head)
     }
 
     pub(in crate::depot::queue::round) fn filter<const FAIR: bool>(
         &self,
         test: impl FnOnce(round::Location<&'a round::Lanes<T, G, N>, phase::Head>) -> bool,
     ) -> Option<round::Location<&'a round::Lanes<T, G, N>, phase::Head>> {
-        let entry = if FAIR { self.turn()? } else { self.resolve()? };
-        if !test(entry) {
+        if !test(self.resolve::<FAIR>()?) {
             return None;
         }
-        if FAIR { self.turn() } else { self.resolve() }
+        self.resolve::<FAIR>()
     }
 }

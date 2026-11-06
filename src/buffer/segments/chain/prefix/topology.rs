@@ -6,7 +6,7 @@ use crate::{
     buffer,
     buffer::{
         segments,
-        segments::{Key, Kind, Pool, chain::prefix, handles},
+        segments::{Key, Kind, Pool, handles},
     },
     depot::{
         arena::linked::{fifo::ends, slots},
@@ -201,7 +201,7 @@ impl<'a, T: buffer::raw::Segment> Topology<'a, T> {
         target: Original<'a, T>,
         remains: segments::Count,
         count: segments::Count,
-        relation: &prefix::Relation,
+        different_pool: &bool,
     ) -> Result<(Self, Self), segments::Error> {
         let source = Source::new(source, remains);
         let (body, output, source) = match target {
@@ -216,8 +216,8 @@ impl<'a, T: buffer::raw::Segment> Topology<'a, T> {
                 Kind::One => (body, Output::Small(Small::One), source),
                 Kind::Many(count) => {
                     let count = count.nonzero();
-                    match (relation, source) {
-                        (prefix::Relation::Same, Source::Free { old, state }) => {
+                    match (different_pool, source) {
+                        (false, Source::Free { old, state }) => {
                             let (from, claim) = old.take();
                             return Ok((
                                 Self {

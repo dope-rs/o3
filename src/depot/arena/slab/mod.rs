@@ -128,10 +128,6 @@ where
         Some(entries::Occupied::key(&self.core, parts.index(), parts.generation())?.read())
     }
 
-    pub fn parts_mut(self: Pin<&mut Self>, parts: key::Parts<MAX>) -> Option<Pin<&mut T>> {
-        Some(self.anchor(parts)?.into_value())
-    }
-
     pub fn anchor(
         self: Pin<&mut Self>,
         parts: key::Parts<MAX>,
@@ -142,18 +138,6 @@ where
             entry: entry.take(),
             tag: marker::PhantomData,
         })
-    }
-
-    /// Passes the pinned value to `f`, then drops it in place.
-    pub fn remove_with<R>(
-        self: Pin<&mut Self>,
-        parts: key::Parts<MAX>,
-        f: impl FnOnce(u32, Pin<&mut T>) -> R,
-    ) -> Option<R> {
-        let mut entry = self.anchor(parts)?;
-        let result = f(parts.index(), entry.value());
-        entry.discard();
-        Some(result)
     }
 }
 
@@ -192,7 +176,7 @@ where
         let Some(pending) = self.core.free() else {
             return Err(value);
         };
-        Ok(slab::Vacant::<_, Tag>::from_pending(pending).insert(value))
+        Ok(slab::Vacant::<_, Tag>::new(pending).insert(value))
     }
 
     /// Reserves a slot or preserves the exact temporary or permanent refusal.
@@ -202,7 +186,7 @@ where
         slab::Vacant<entries::Pending<'_, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>, Tag>,
         Vacancy,
     > {
-        Ok(slab::Vacant::from_pending(
+        Ok(slab::Vacant::new(
             self.core.free().ok_or_else(|| self.core.refusal())?,
         ))
     }
@@ -219,7 +203,7 @@ where
         >,
     > {
         let core = &self.core;
-        iter::from_fn(move || core.free().map(slab::Vacant::from_pending))
+        iter::from_fn(move || core.free().map(slab::Vacant::new))
     }
 }
 

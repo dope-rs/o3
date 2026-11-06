@@ -28,10 +28,6 @@ pub struct Span<K: crate::buffer::raw::Backing = owners::Plain, M = pool::Owned,
 }
 
 impl<K: crate::buffer::raw::Backing, S> Span<K, pool::Owned, S> {
-    pub fn recycle(self) {
-        drop(self);
-    }
-
     pub(in crate::buffer::pool) fn acquire(core: owners::Ptr<K, S>) -> Option<Self> {
         let slots = core;
         let claim = owners::Claim::new(slots)?;
@@ -153,12 +149,6 @@ impl pool::Span<owners::Plain<pool::Layout>, pool::Owned, state::Uninit> {
         unsafe { buffer::raw::SliceExt::copy_to(source.slices(), target.add(start)) };
         self.len += len;
         Ok(self.freeze())
-    }
-}
-
-impl<L> pool::Span<owners::Plain<L>, pool::Owned, state::Initialized> {
-    pub fn output(&mut self) -> buffer::raw::Output<'_, L> {
-        buffer::raw::Output::new(self)
     }
 }
 

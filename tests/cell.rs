@@ -9,7 +9,7 @@ fn borrows_branded_regions() {
         *token.pin_mut(Pin::new(&value)).get_mut() = 2;
         assert_eq!(*token.borrow_pin(Pin::new(&value)), 2);
         let buffer = io.bind(1_u64);
-        let mut counter = state.bind(2_u64);
+        let mut counter = state.proof().bind(2_u64);
         let count = state.borrow_mut(&counter);
         let bytes = io.borrow_mut(&buffer);
         *bytes += *count;

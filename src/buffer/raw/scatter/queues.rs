@@ -34,7 +34,7 @@ unsafe impl<T: buffer::raw::Segment> buffer::raw::Chunks for queue::Slice<'_, T>
         self.len()
     }
 
-    fn start(&self) -> Self::Cursor<'_> {
+    fn chunks(&self) -> Self::Cursor<'_> {
         self.fragments()
     }
 
@@ -54,7 +54,7 @@ unsafe impl<T: buffer::raw::Segment> buffer::raw::Chunks for Fifo<T> {
         self.len()
     }
 
-    fn start(&self) -> Self::Cursor<'_> {
+    fn chunks(&self) -> Self::Cursor<'_> {
         self.fragments()
     }
 

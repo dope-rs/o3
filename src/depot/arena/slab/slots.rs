@@ -58,7 +58,7 @@ impl<'a, T, Tag, const MAX: u32> slab::Store<T, Tag, MAX> {
                     slab::State::Free => {
                         // SAFETY: this unique visit proved the original slot's free membership.
                         let free = unsafe { entries::Free::new(core, slot, index as u32) };
-                        Some(slab::Entry::Vacant(slab::Vacant::from_pending(free.take())))
+                        Some(slab::Entry::Vacant(slab::Vacant::new(free.take())))
                     }
                     slab::State::Reserved | slab::State::Retired(()) => None,
                 }
@@ -78,7 +78,7 @@ where
         slab::Vacant<entries::Pending<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>, Tag>,
     > {
         let pending = self.core.at(index)?;
-        Some(slab::Vacant::from_pending(pending))
+        Some(slab::Vacant::new(pending))
     }
 
     /// Reserves the first reusable slot in `range` without leaving it.
@@ -90,7 +90,7 @@ where
         slab::Vacant<entries::Pending<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>, Tag>,
     > {
         let pending = self.core.in_range(range)?;
-        Some(slab::Vacant::from_pending(pending))
+        Some(slab::Vacant::new(pending))
     }
 
     pub fn entry_at(
@@ -132,10 +132,7 @@ where
         index: u32,
     ) -> Option<slab::Vacant<entries::Pending<'a, T, MAX, entries::Interior<RECYCLE>>, Tag>> {
         let pending = self.core.at(index)?;
-        Some(slab::Vacant {
-            entry: pending,
-            tag: marker::PhantomData,
-        })
+        Some(slab::Vacant::new(pending))
     }
 
     pub(in crate::depot::arena::slab) fn reserve(
@@ -147,10 +144,7 @@ where
         // SAFETY: this maps the retained Cell directly to its original core.
         let live = unsafe { live.map(|(owner, index)| (&owner.core, index)) };
         let pending = entries::Core::allocated(live)?;
-        Some(slab::Vacant {
-            entry: pending,
-            tag: marker::PhantomData,
-        })
+        Some(slab::Vacant::new(pending))
     }
 
     pub(in crate::depot::arena::slab) fn current(

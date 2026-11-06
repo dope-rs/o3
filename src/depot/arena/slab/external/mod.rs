@@ -321,9 +321,7 @@ impl<'a, T, G: external::Generation, Tag, const PARTITIONS: usize>
     ) -> Result<external::Grant<'a, T, G, Tag, PARTITIONS>, slab::Vacancy> {
         let free = entries::Free::in_range(&mut self.inner.core, range, excluded)
             .ok_or(slab::Vacancy::Full)?;
-        external::Grant::try_new(&mut self.next, || {
-            Some(slab::Vacant::from_pending(free.take()))
-        })
+        external::Grant::try_new(&mut self.next, || Some(slab::Vacant::new(free.take())))
     }
 }
 

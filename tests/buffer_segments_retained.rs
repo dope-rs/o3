@@ -1,12 +1,7 @@
 pub mod common;
 
-use std::io::Read as _;
-
 use common::{buffer::try_bytes, depot::model::Lcg};
-use o3::buffer::{
-    segments::{self, scatter},
-    storage,
-};
+use o3::buffer::{segments, storage};
 
 #[test]
 fn split_keeps_owners() {
@@ -181,33 +176,6 @@ fn scoped_returns_metadata() {
     assert_eq!(pool.available().chains, 0);
     drop(chain);
     assert!(pool.is_idle());
-}
-
-#[test]
-fn reads_chain() {
-    let pool = (segments::Pool::try_new(segments::Plan {
-        segments: 2,
-        chains: 1,
-    }))
-    .expect("the scatter-read pool must allocate");
-    let mut owned = (pool.try_chain()).expect("metadata edge must fit");
-    let first =
-        (storage::Shared::try_copy(b"ab")).expect("the detached scatter head must allocate");
-    let second =
-        (storage::Shared::try_copy(b"c")).expect("the detached scatter tail must allocate");
-    owned
-        .try_push(first)
-        .as_ref()
-        .expect("metadata admits the owner");
-    owned
-        .try_push(second)
-        .as_ref()
-        .expect("metadata admits the owner");
-    let mut dbuf = Vec::new();
-    let result = scatter::Reader::new(owned.segments()).read_to_end(&mut dbuf);
-    result.as_ref().expect("detached scatter read succeeds");
-
-    assert_eq!(dbuf, b"abc");
 }
 
 #[test]

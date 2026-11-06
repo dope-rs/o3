@@ -157,10 +157,10 @@ fn insertion_returns_item() {
         .expect("metadata admits the retained item");
     let second = try_item(b"second").expect("nonempty fixture owner");
     let pointer = second.as_ref().as_slice().as_ptr();
-    let (result, activity) = Tracker::measure(|| chain.try_insert(second));
+    let (result, activity) = Tracker::measure(|| chain.try_push(second.into_inner()));
     assert_eq!(activity, [0; 4]);
 
-    let error = result.err().expect("descriptor rejection");
+    let error = result.expect_err("descriptor rejection");
     let (second, error) = error.into_parts();
     assert!(
         error
@@ -171,6 +171,7 @@ fn insertion_returns_item() {
     );
     assert_eq!(second.as_ref().as_slice().as_ptr(), pointer);
     assert_eq!(chain.contiguous(), Some(b"first".as_slice()));
+    assert!(chain.count() == segments::Count::ONE);
     assert_eq!(pool.available().segments, 1);
 }
 

@@ -9,6 +9,13 @@ pub struct Vacant<B, Tag = (), const ROOT: bool = true> {
 }
 
 impl<B, Tag, const ROOT: bool> Vacant<B, Tag, ROOT> {
+    pub(in crate::depot::arena::slab) fn new(entry: B) -> Self {
+        Self {
+            entry,
+            tag: marker::PhantomData,
+        }
+    }
+
     pub(in crate::depot::arena::slab) fn with_state<S>(
         self,
         state: S,

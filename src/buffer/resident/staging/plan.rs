@@ -10,19 +10,14 @@ pub struct Plan {
 }
 
 impl Plan {
+    #[inline]
     pub fn new(warm: usize, limit: usize) -> Result<Self, Error> {
         let Some(warm) = num::NonZero::<usize>::new(warm) else {
             return Err(Error::ZeroWarm);
         };
-        let Some(limit) = num::NonZero::<usize>::new(limit) else {
-            return Err(Error::WarmExceedsLimit { warm, limit: 0 });
+        let Some(limit) = num::NonZero::<usize>::new(limit).filter(|&limit| warm <= limit) else {
+            return Err(Error::WarmExceedsLimit { warm, limit });
         };
-        if warm > limit {
-            return Err(Error::WarmExceedsLimit {
-                warm,
-                limit: limit.get(),
-            });
-        }
         if limit.get() > u32::MAX as usize {
             return Err(Error::LimitTooLarge { limit });
         }

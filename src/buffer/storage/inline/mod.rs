@@ -12,28 +12,24 @@ pub const CAPACITY: usize = 24;
 mod append;
 
 /// A cleared inline owner with a compile-time remaining write bound.
-pub struct Fill<'a, const CAP: usize, const LEFT: usize = CAP, L = u16> {
-    output: &'a mut [u8],
+pub struct Fill<'a, const LEFT: usize, L = u16> {
+    output: &'a mut [u8; LEFT],
     len: &'a mut L,
 }
 
-impl<'a, const CAP: usize, L: crate::buffer::raw::Length> Fill<'a, CAP, CAP, L> {
-    pub fn new(target: &'a mut inline::Bytes<CAP, L>) -> Self {
+impl<'a, const LEFT: usize, L: crate::buffer::raw::Length> Fill<'a, LEFT, L> {
+    pub fn new(target: &'a mut inline::Bytes<LEFT, L>) -> Self {
         target.len = L::ZERO;
         Self {
             output: &mut target.bytes,
             len: &mut target.len,
         }
     }
-}
 
-impl<'a, const CAP: usize, const LEFT: usize, L: crate::buffer::raw::Length>
-    Fill<'a, CAP, LEFT, L>
-{
     pub fn write<const MAX: usize, const NEXT: usize>(
         self,
         source: bytes::Prefix<'_, MAX>,
-    ) -> (Fill<'a, CAP, NEXT, L>, &'a mut [u8]) {
+    ) -> (Fill<'a, NEXT, L>, &'a mut [u8]) {
         const { assert!(MAX <= LEFT && NEXT == LEFT - MAX) }
         let source = source.as_slice();
         // SAFETY: Prefix bounds input by MAX, and the consuming transition
@@ -42,7 +38,8 @@ impl<'a, const CAP: usize, const LEFT: usize, L: crate::buffer::raw::Length>
         inline::Append::new(copied, self.len).write(|output| output.copy_from_slice(source));
         (
             Fill {
-                output,
+                // SAFETY: NEXT <= LEFT - source.len() admits this disjoint initialized suffix.
+                output: unsafe { &mut *output.as_mut_ptr().cast::<[u8; NEXT]>() },
                 len: self.len,
             },
             copied,
@@ -55,7 +52,7 @@ impl<'a, const CAP: usize, const LEFT: usize, L: crate::buffer::raw::Length>
     }
 }
 
-const _: () = assert!(mem::size_of::<Fill<'_, 284>>() == 3 * mem::size_of::<usize>());
+const _: () = assert!(mem::size_of::<Fill<'_, 284>>() == 2 * mem::size_of::<usize>());
 
 /// Fixed-capacity owned bytes with an integer prefix length.
 #[repr(C)]

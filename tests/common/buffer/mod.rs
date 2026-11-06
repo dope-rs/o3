@@ -4,11 +4,12 @@ use o3::{
     buffer::{
         self,
         bytes::scope,
+        raw::Chunks as _,
         resident::{
             self,
             staging::{self, reserve},
         },
-        segments::{self, scatter::Source as _},
+        segments,
         storage::{self, range},
         write::{
             Sink as _,

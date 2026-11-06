@@ -31,9 +31,14 @@ use o3::{
 
 #[test]
 fn fills_at_capacity() {
-    let bytes = [b'x'; CAPACITY];
+    let mut bytes = [b'x'; CAPACITY];
+    bytes[0] = b'a';
     let mut inline = Bytes::<CAPACITY>::new();
-    Fill::new(&mut inline).finish((&bytes).into());
+    let (fill, first) =
+        Fill::new(&mut inline).write::<{ CAPACITY - 1 }, 1>(Prefix::new(&bytes[..1]));
+    fill.finish(b"x".into());
+    assert_eq!(first, b"a");
+    inline.write_slice(&bytes[2..]).expect("remaining capacity");
 
     assert_eq!(inline.as_ref(), bytes);
     assert_eq!(size_of::<Bytes>(), CAPACITY + 1);

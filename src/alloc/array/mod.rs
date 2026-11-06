@@ -13,7 +13,7 @@ pub use plan::Plan;
 #[derive(Debug)]
 #[repr(C)]
 pub struct Block<T, E: alloc::raw::Extent, S = ()> {
-    pub(in crate::alloc::array) plan: array::Plan<T, E>,
+    pub(in crate::alloc::array) extent: E,
     pub(in crate::alloc::array) state: S,
     pub(in crate::alloc::array) pointer: ptr::NonNull<T>,
 }
@@ -69,7 +69,7 @@ impl<T, E: alloc::raw::Extent, S> array::Block<mem::MaybeUninit<T>, E, S> {
         self,
         mut make: impl FnMut(ptr::NonNull<T>) -> Result<T, F>,
     ) -> Result<array::Block<T, E, S>, F> {
-        let source = iter::repeat_n((), self.plan.extent().len());
+        let source = iter::repeat_n((), self.extent.len());
         // SAFETY: this source yields exactly the retained allocation's extent.
         unsafe {
             alloc::raw::try_map(self, source, move |slot, ()| {
@@ -88,14 +88,14 @@ impl<T, E: alloc::raw::Extent, S> array::Block<mem::MaybeUninit<T>, E, S> {
 impl<T, E: alloc::raw::Extent, S> Block<T, E, S> {
     pub const fn empty(extent: alloc::raw::Empty<E>, state: S) -> Self {
         Self {
-            plan: array::Plan::empty(extent),
+            extent: extent.into_inner(),
             state,
             pointer: ptr::NonNull::dangling(),
         }
     }
 
     pub const fn extent(&self) -> &E {
-        self.plan.extent()
+        &self.extent
     }
 
     pub const fn state(&self) -> &S {
@@ -118,8 +118,7 @@ impl<T, E: alloc::raw::Extent, S> Block<T, E, S> {
     pub fn parts_mut(&mut self) -> (&mut S, &mut [T]) {
         // SAFETY: admission proves this exact array layout, and construction
         // initializes every T; the backing is disjoint from the inline state.
-        let values =
-            unsafe { slice::from_raw_parts_mut(self.pointer.as_ptr(), self.plan.extent().len()) };
+        let values = unsafe { slice::from_raw_parts_mut(self.pointer.as_ptr(), self.extent.len()) };
         (&mut self.state, values)
     }
 }
@@ -157,7 +156,7 @@ impl<T, E: alloc::raw::Extent, S> ops::Deref for Block<T, E, S> {
     fn deref(&self) -> &Self::Target {
         // SAFETY: construction proves that every element is initialized and
         // owned under this exact immutable extent and validated layout.
-        unsafe { slice::from_raw_parts(self.pointer.as_ptr(), self.plan.extent().len()) }
+        unsafe { slice::from_raw_parts(self.pointer.as_ptr(), self.extent.len()) }
     }
 }
 
@@ -169,13 +168,12 @@ impl<T, E: alloc::raw::Extent, S> ops::DerefMut for Block<T, E, S> {
 
 impl<T, E: alloc::raw::Extent, S> Drop for Block<T, E, S> {
     fn drop(&mut self) {
-        // SAFETY: this owner retains every initialized element and its exact layout.
+        // SAFETY: this owner transfers its initialized slice and exact standard allocation once.
         unsafe {
-            ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+            drop(Box::from_raw(ptr::slice_from_raw_parts_mut(
                 self.pointer.as_ptr(),
-                self.plan.extent().len(),
-            ));
-            alloc::raw::LayoutExt::deallocate(self.plan.layout(), self.pointer);
+                self.extent.len(),
+            )));
         }
     }
 }
@@ -186,7 +184,7 @@ impl<T, E: alloc::raw::Extent, S> array::Block<mem::MaybeUninit<T>, E, S> {
     pub(crate) unsafe fn assume_init(self) -> array::Block<T, E, S> {
         let block = mem::ManuallyDrop::new(self);
         array::Block {
-            plan: block.plan.initialized(),
+            extent: block.extent,
             // SAFETY: the consumed owner transfers its state once without running Drop.
             state: unsafe { ptr::read(&block.state) },
             pointer: block.pointer.cast(),
@@ -196,7 +194,7 @@ impl<T, E: alloc::raw::Extent, S> array::Block<mem::MaybeUninit<T>, E, S> {
 
 impl<T, E: alloc::raw::Extent, S> Block<mem::MaybeUninit<T>, E, S> {
     pub(in crate::alloc) fn swap_storage(&mut self, other: &mut Block<mem::MaybeUninit<T>, E>) {
-        mem::swap(&mut self.plan, &mut other.plan);
+        mem::swap(&mut self.extent, &mut other.extent);
         mem::swap(&mut self.pointer, &mut other.pointer);
     }
 }

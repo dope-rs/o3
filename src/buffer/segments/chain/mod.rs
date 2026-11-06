@@ -105,7 +105,7 @@ unsafe impl<T: buffer::raw::Segment, H: segments::Handle<T>> buffer::raw::Chunks
         Chain::len(self)
     }
 
-    fn start(&self) -> Self::Cursor<'_> {
+    fn chunks(&self) -> Self::Cursor<'_> {
         segments::Cursor::new(self)
     }
 }

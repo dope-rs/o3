@@ -58,30 +58,16 @@ unsafe impl<T> crate::depot::raw::RingEdit for ring::Fifo<T> {
 }
 
 // SAFETY: operations publish synchronously and never lend resident references.
-unsafe impl<T> crate::depot::raw::RingCell for ring::Cell<T> {
+unsafe impl<T, S> crate::depot::raw::RingCell for ring::pool::Shared<T, S> {
     unsafe fn publish(&self, state: ring::State<u32>) {
         self.state.set(state);
     }
 }
 
 // SAFETY: exclusive ownership rules out shared mutations of this disjoint state and backing.
-unsafe impl<T> crate::depot::raw::RingEdit for ring::Cell<T> {
+unsafe impl<T, S> crate::depot::raw::RingEdit for ring::pool::Shared<T, S> {
     unsafe fn parts_mut(&mut self) -> (&mut ring::State<u32>, &mut [mem::MaybeUninit<T>]) {
         (self.state.get_mut(), &mut self.block)
-    }
-}
-
-// SAFETY: exclusive ownership rules out all outstanding leases and shared mutations.
-unsafe impl<T> crate::depot::raw::RingEdit for ring::Pool<T> {
-    unsafe fn parts_mut(&mut self) -> (&mut ring::State<u32>, &mut [mem::MaybeUninit<T>]) {
-        (self.state.get_mut(), &mut self.block)
-    }
-}
-
-// SAFETY: affine reservations protect vacant slots; shared operations lend no values.
-unsafe impl<T> crate::depot::raw::RingCell for ring::Pool<T> {
-    unsafe fn publish(&self, state: ring::State<u32>) {
-        self.state.set(state);
     }
 }
 
@@ -102,25 +88,9 @@ unsafe impl<T> crate::depot::raw::RingStore for ring::Fifo<T> {
 }
 
 // SAFETY: the shared cell owns exactly the initialized range described by state.
-unsafe impl<T> crate::depot::raw::RingStore for ring::Cell<T> {
+unsafe impl<T, S> crate::depot::raw::RingStore for ring::pool::Shared<T, S> {
     type Item = T;
     type Word = u32;
-    fn state(&self) -> ring::State<u32> {
-        self.state.get()
-    }
-    fn capacity(&self) -> usize {
-        self.capacity()
-    }
-    fn entries(&self) -> *const mem::MaybeUninit<T> {
-        self.block.as_ptr()
-    }
-}
-
-// SAFETY: ring::Pool retains the exact backing and initialized range across shared operations.
-unsafe impl<T> crate::depot::raw::RingStore for ring::Pool<T> {
-    type Item = T;
-    type Word = u32;
-
     fn state(&self) -> ring::State<u32> {
         self.state.get()
     }

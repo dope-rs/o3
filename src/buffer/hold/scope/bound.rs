@@ -31,14 +31,16 @@ impl<'input, 'd, R: buffer::Source + 'input> Bound<'input, 'd, R> {
     }
 }
 
-impl<'input, 'd, R: hold::raw::Retain<'d> + 'input> Bound<'input, 'd, R> {
-    pub(super) fn new(source: Deferred<'input, 'd, R>, policy: hold::Policy) -> Self {
-        let logical = source.len();
-        let choice = policy.choose(logical, || R::charge(&source.input.0).resident_bytes);
-        let Deferred { input } = source;
-        Self { input, choice }
+impl<'input, 'd, R: hold::raw::Retain<'d> + 'input> Deferred<'input, 'd, R> {
+    pub fn bind(self, policy: hold::Policy) -> Bound<'input, 'd, R> {
+        let logical = self.len();
+        let choice = policy.choose(logical, || R::charge(&self.input.0).resident_bytes);
+        let Deferred { input } = self;
+        Bound { input, choice }
     }
+}
 
+impl<'input, 'd, R: hold::raw::Retain<'d> + 'input> Bound<'input, 'd, R> {
     /// Maximum resident bytes produced when this exact bound is retained.
     pub fn ceiling(&self) -> usize {
         match self.choice {

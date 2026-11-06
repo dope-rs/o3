@@ -18,10 +18,7 @@ pub struct Staged<B, Tag = (), const ROOT: bool = true> {
 
 impl<B, Tag, const ROOT: bool> Staged<B, Tag, ROOT> {
     pub(in crate::depot::arena::slab) fn into_external(self) -> external::Staged<B, Tag, ROOT> {
-        external::Staged {
-            entry: self.entry,
-            tag: self.tag,
-        }
+        external::Staged { inner: self }
     }
 }
 

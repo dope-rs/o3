@@ -157,10 +157,6 @@ unsafe impl<P: Ord, V> heap::raw::Store for Queue<P, V> {
     type Storage = heap::Capacity<heap::Stored<heap::Direct, P>, u32, Node<V>>;
     type Extra = ptr::NonNull<Node<V>>;
 
-    fn precedes(_: &Self::Key, _: &Self::Key) -> bool {
-        false
-    }
-
     fn storage(&self) -> &alloc::raw::Block<Self::Storage, u32, Self::Extra> {
         &self.storage
     }

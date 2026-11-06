@@ -60,14 +60,12 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
                     return;
                 }
                 unsafe {
-                    source.get(self.queues).move_back(
-                        queue,
-                        &lanes::Hooks(self.slot.table()),
-                        index,
-                    );
+                    source
+                        .get(self.queues)
+                        .move_back(queue, self.slot.table(), index);
                 }
             }
-            None => unsafe { queue.link_back(&lanes::Hooks(self.slot.table()), index) },
+            None => unsafe { queue.link_back(self.slot.table(), index) },
         }
         node.lane.set(Some(target));
     }
@@ -80,7 +78,7 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
             unsafe {
                 source
                     .get(self.queues)
-                    .unlink(&lanes::Hooks(self.slot.table()), index)
+                    .unlink(self.slot.table(), index)
                     .idle();
             }
             node.lane.set(None);
@@ -127,8 +125,7 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
         if let Some(lane) = lane {
             // SAFETY: this occupied entry retains its exact reciprocal lane.
             unsafe {
-                lane.get(self.queues)
-                    .unlink(&lanes::Hooks(self.slot.table()), index);
+                lane.get(self.queues).unlink(self.slot.table(), index);
             }
         }
         index
@@ -163,11 +160,7 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
             // SAFETY: this vacancy retained the exclusive table borrow and the
             // original hook, so its two neighbors still bound the same gap.
             unsafe {
-                crate::depot::raw::Detach::restore(
-                    lane.get(self.queues),
-                    &lanes::Hooks(slot.table()),
-                    index,
-                );
+                crate::depot::raw::Detach::restore(lane.get(self.queues), slot.table(), index);
             }
         }
         Slot::new(slot, self.queues)

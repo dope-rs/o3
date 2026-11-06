@@ -11,9 +11,6 @@ pub struct Vacant<B, Tag = (), const ROOT: bool = true, S = ()> {
 
 impl<B, Tag, const ROOT: bool, S> Vacant<B, Tag, ROOT, S> {
     pub(in crate::depot::arena::slab) fn into_native(self) -> slab::Vacant<B, Tag, ROOT> {
-        slab::Vacant {
-            entry: self.entry,
-            tag: self.tag,
-        }
+        slab::Vacant::new(self.entry)
     }
 }

@@ -22,13 +22,7 @@ struct Projection<'a, T> {
     count: segments::Count,
     len: usize,
     resident: usize,
-    relation: Relation,
-}
-
-#[repr(u8)]
-enum Relation {
-    Same,
-    Other,
+    different_pool: bool,
 }
 
 struct Drain<'a, T: buffer::raw::Segment> {
@@ -47,11 +41,7 @@ impl<'a, T: buffer::raw::Segment> Projection<'a, T> {
             let owner = unsafe { handles::nodes(&target.handle).value(index) };
             (owner.len().get(), buffer::Residency::resident(owner))
         });
-        let relation = if target.handle().is_same(shape.source) {
-            Relation::Same
-        } else {
-            Relation::Other
-        };
+        let different_pool = !target.handle().is_same(shape.source);
         let (current, base_len, base_mem) = target.total();
         let count = total::Error::count(current, shape.count())?;
         let len = total::Error::logical(base_len, shape.amount)?;
@@ -62,7 +52,7 @@ impl<'a, T: buffer::raw::Segment> Projection<'a, T> {
             count,
             len,
             resident,
-            relation,
+            different_pool,
         })
     }
 
@@ -92,9 +82,10 @@ unsafe impl<'a, T: buffer::raw::Segment> depot::raw::Input<segments::Item<T>>
     type Output = Topology<'a, T>;
 
     fn count(&self) -> capacity::Count {
-        capacity::Count::new(match self.relation {
-            Relation::Same => u32::from(self.shape.split.is_some()),
-            Relation::Other => self.shape.count().into_raw(),
+        capacity::Count::new(if self.different_pool {
+            self.shape.count().into_raw()
+        } else {
+            u32::from(self.shape.split.is_some())
         })
     }
 
@@ -128,10 +119,10 @@ unsafe impl<T: buffer::raw::Segment> depot::raw::TryStart<segments::Item<T>> for
             self.target,
             self.shape.remains,
             self.count,
-            &self.relation,
+            &self.different_pool,
         )?;
         let output = handles::nodes(target.body.handle);
-        if let Relation::Same = self.relation {
+        if !self.different_pool {
             while self.shape.full != segments::Count::EMPTY {
                 let index = source.body.links.head_raw();
                 let index = unsafe { source.body.links.detach_store(input, index) };

@@ -13,7 +13,8 @@ pub struct Live<T, H: linked::Source<T>, Tag = ()> {
 
 impl<T, H: linked::Source<T>, Tag> Live<T, H, Tag> {
     /// # Safety
-    /// The slot was detached from this owner's topology exactly once.
+    /// `index` is an initialized, unlinked live slot in this owner's exact store,
+    /// with no outstanding loans or capabilities and its unchanged TRACK return right.
     pub(crate) unsafe fn detached(owner: H, index: slots::Index<Tag>) -> Self {
         Self {
             vacant: slots::Vacant {
