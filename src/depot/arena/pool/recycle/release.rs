@@ -8,11 +8,6 @@ use crate::{
     },
 };
 
-pub struct Header<T: recycle::Recycle, C> {
-    pub(in crate::depot::arena::pool) free: cell::Cell<*mut pool::Entry<T, Header<T, C>>>,
-    pub(in crate::depot::arena::pool) context: mem::ManuallyDrop<C>,
-}
-
 pub trait Context<'owner, T>: Sized + 'owner
 where
     T: recycle::Recycle + 'owner,
@@ -35,7 +30,7 @@ impl<T: recycle::Recycle, C> Store<T, C> {
         Ok(Self {
             block: pool::Entry::init(
                 tail::Plan::try_new(capacity)?.try_allocate()?,
-                Header {
+                recycle::Header {
                     free: cell::Cell::new(ptr::null_mut()),
                     context: mem::ManuallyDrop::new(context),
                 },
@@ -44,9 +39,7 @@ impl<T: recycle::Recycle, C> Store<T, C> {
         })
     }
 
-    pub fn vacancy<'owner>(
-        &'owner self,
-    ) -> Option<pool::Vacant<'owner, T, Header<T, C>, Notify<'owner>>>
+    pub fn vacancy<'owner>(&'owner self) -> Option<pool::Vacant<'owner, T, C, Notify<'owner>>>
     where
         T: 'owner,
         C: Context<'owner, T>,
@@ -71,29 +64,23 @@ pub struct Notify<'a>(marker::PhantomData<fn(&'a ()) -> &'a ()>);
 pub struct Frozen;
 
 // SAFETY: the policy is installed only for the initialized slots of this owner.
-unsafe impl<'owner, T, C> crate::depot::raw::PoolPolicy<T, Header<T, C>> for Notify<'owner>
+unsafe impl<'owner, T, C> crate::depot::raw::PoolPolicy<T, C> for Notify<'owner>
 where
     T: recycle::Recycle + 'owner,
     C: Context<'owner, T>,
 {
-    fn retire(mut entry: pool::Terminal<'_, T, Header<T, C>>) {
+    fn retire(mut entry: pool::Terminal<'_, T, C>) {
         let result = T::recycle(entry.get_mut());
         entry.recycle().context.released(result);
     }
 }
 
 // SAFETY: the exclusive pinned reservation excludes every other lease of this slot.
-unsafe impl<'owner, T, C> crate::depot::raw::PoolMutable<T, Header<T, C>> for Notify<'owner>
+unsafe impl<'owner, T, C> crate::depot::raw::PoolMutable<T, C> for Notify<'owner>
 where
     T: recycle::Recycle + 'owner,
     C: Context<'owner, T>,
 {
 }
 
-impl<T: recycle::Recycle, C> Header<T, C> {
-    pub(in crate::depot) fn free_list(&self) -> &cell::Cell<*mut pool::Entry<T, Self>> {
-        &self.free
-    }
-}
-
-type Storage<T, C> = tail::Block<Header<T, C>, pool::Entry<T, Header<T, C>>, capacity::Count>;
+type Storage<T, C> = tail::Block<recycle::Header<T, C>, pool::Entry<T, C>, capacity::Count>;

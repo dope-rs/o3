@@ -276,8 +276,8 @@ fn shared_transactions() {
         Ok(1)
     ));
     let free = (slab.vacancy()).expect("the removed slot must accept a second generation");
+    let key = free.key();
     let mut staged = free.stage(3);
-    let key = staged.key();
     assert_eq!(key.generation().get(), 2);
     assert!(matches!(
         slab.try_entry(key),
@@ -299,8 +299,8 @@ fn shared_transactions() {
             slab.vacancy(),
             Err(slab::Vacancy::IdentityExhausted)
         ));
+        assert_eq!(free.key().generation().get(), 3);
         let mut staged = free.stage(6);
-        assert_eq!(staged.key().generation().get(), 3);
         *staged.get_mut() = 7;
     }
     assert!(slab.is_empty());
@@ -424,20 +424,20 @@ fn advances_past_retired() {
         actual
     })
     .expect("the two-slot short-generation slab must allocate"),);
-    let first = slab::Slots::new(&mut slab)
+    let first = slab
         .vacant_at(0)
         .expect("slot zero begins vacant")
         .insert(1);
     assert_eq!(first.generation().get(), 1);
     assert_eq!(slab.remove(first), Some(1));
-    let second = slab::Slots::new(&mut slab)
+    let second = slab
         .vacant_at(0)
         .expect("removing the first value vacates slot zero")
         .insert(2);
     assert_eq!(second.generation().get(), 2);
     assert_eq!(slab.try_get(first).ok(), None);
     assert_eq!(slab.remove(second), Some(2));
-    let third = slab::Slots::new(&mut slab)
+    let third = slab
         .vacant_at(0)
         .expect("removing the second value vacates slot zero")
         .insert(3);
@@ -517,14 +517,14 @@ fn cancel_keeps_generation() {
         actual
     })
     .expect("the short-generation cancellation slab must allocate"),);
-    assert!(slab::Slots::new(&mut slab).vacant_at(0).is_some());
-    let second = slab::Slots::new(&mut slab)
+    assert!(slab.vacant_at(0).is_some());
+    let second = slab
         .vacant_at(0)
         .expect("canceling vacancy keeps slot zero available")
         .insert(2);
     assert_eq!(second.generation().get(), 1);
     assert_eq!(slab.remove(second), Some(2));
-    let third = slab::Slots::new(&mut slab)
+    let third = slab
         .vacant_at(0)
         .expect("removing the second value vacates slot zero")
         .insert(3);

@@ -229,7 +229,7 @@ impl<'source, T: buffer::raw::Segment, I> Views<'_, 'source, T, I> {
         let owner = if self
             .plan
             .policy
-            .allows_share(logical, || view.source().resident())
+            .allows_share(logical, || view.source.resident())
         {
             view.try_retain().map_err(segments::Error::Retain)?
         } else {

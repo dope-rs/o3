@@ -15,16 +15,13 @@ use common::{
         },
     },
 };
-use o3::{
-    alloc,
-    buffer::{
-        self, Complete as _,
-        hold::{self, scope},
-        resident,
-        storage::{
-            self,
-            provided::{self, Frozen as _, Mutable as _, account},
-        },
+use o3::buffer::{
+    self, Complete as _,
+    hold::{self, scope},
+    resident,
+    storage::{
+        self,
+        provided::{self, Frozen as _, Mutable as _, account},
     },
 };
 
@@ -162,9 +159,8 @@ fn chunks_preserve_owner() {
 
 #[test]
 fn keeps_foreign_charge() {
-    let mut arena =
-        provided::Arena::<_, _>::try_with(NonZero::<u32>::MIN, || Ok::<(), alloc::Error>(()))
-            .expect("one-slot arena must allocate");
+    let mut arena = provided::Arena::<_, _>::try_allocate(NonZero::<u32>::MIN)
+        .expect("one-slot arena must allocate")(());
     let mut domains = (resident::Domain::new(), resident::Domain::new());
     arena.scope(Pin::new(&mut domains), |token, arena, domains| {
         let (first, second) = domains.get_mut();

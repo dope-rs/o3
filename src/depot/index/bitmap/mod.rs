@@ -45,13 +45,6 @@ pub trait Access<W: Width = usize>: crate::depot::raw::Words<W> {
             .is_none_or(|word| word.value.get() == W::ZERO)
     }
 
-    fn get(self, index: usize) -> Option<Row<Self, (), (), W>>
-    where
-        Self: Sized,
-    {
-        Row::try_new(self, index).ok()
-    }
-
     fn find(self, plane: Self::Plane, start: usize) -> Option<Row<Self, (), (), W>>
     where
         Self: Sized,

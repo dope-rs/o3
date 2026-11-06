@@ -243,7 +243,7 @@ unsafe fn vacant<'a, P: Ord, T: Values, C: alloc::raw::Extent, F: Phase<T>>(
     // SAFETY: caller retains the exact F field and its vacant heap position in this owner.
     let live: depot::raw::Proof<_, Initialized<indexed::Empty>> =
         unsafe { depot::raw::Proof::new(((order, core), index.position())) };
-    let (order, core) = indexed::Slot::from_source(live).entry();
+    let (order, core) = live.entry();
     Slot {
         order,
         field: unsafe { Held::new(core, index) },
@@ -266,7 +266,7 @@ pub(super) fn entry<P: Ord, T: Values, C: alloc::raw::Extent>(
             // SAFETY: the original node owner retains this exact initialized reverse-map slot.
             let live: depot::raw::Proof<_, Initialized<()>> =
                 unsafe { depot::raw::Proof::new(((order, core), index.position())) };
-            let (order, core) = indexed::Slot::from_source(live).entry();
+            let (order, core) = live.entry();
             match (tag, order) {
                 (Tag::Control, indexed::Entry::Occupied(order)) => {
                     Entry::Control(Control::Full(Slot {
@@ -302,7 +302,7 @@ pub(super) fn control<P: Ord, T: Values, C: alloc::raw::Extent>(
     // heap position. Both full and empty Control are legitimate scheduled outcomes.
     let live: depot::raw::Proof<_, Initialized<()>> =
         unsafe { depot::raw::Proof::new(((order, core), index.position())) };
-    let (order, core) = indexed::Slot::from_source(live).entry();
+    let (order, core) = live.entry();
     Some(match order {
         indexed::Entry::Occupied(order) => Control::Full(Slot {
             order,

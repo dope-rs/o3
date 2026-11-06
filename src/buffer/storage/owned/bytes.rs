@@ -58,12 +58,6 @@ impl<P: crate::buffer::raw::Policy> Owned<P> {
     }
 }
 
-impl<P: crate::buffer::raw::Policy> buffer::raw::Space for Owned<P> {
-    fn remaining(&self) -> usize {
-        self.capacity() - self.len()
-    }
-}
-
 impl<const N: usize> buffer::raw::Slices<'_, N> {
     /// Replaces the suffix after `prefix` and publishes the complete initialized length.
     ///

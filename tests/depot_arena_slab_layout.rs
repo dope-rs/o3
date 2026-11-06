@@ -104,13 +104,13 @@ fn keeps_allocation_layout() {
                         .as_ref()
                         .expect("required fixture outcome");
                 }
-                for entry in slab::Slots::new(&mut table).entries() {
+                for entry in table.entries() {
                     let mut entry =
                         into_occupied(entry).expect("every measured slot was initialized");
                     *entry.get_mut() += 1;
                 }
                 assert!(
-                    (slab::Slots::new(&mut table)
+                    (table
                         .entries()
                         .map(|entry| {
                             let entry = into_occupied(entry).expect("initialized resident");
@@ -148,7 +148,7 @@ fn aligns_both_planes() {
                 }
             }
         }
-        for (index, entry) in slab::Slots::new(&mut table).entries().enumerate() {
+        for (index, entry) in table.entries().enumerate() {
             let mut entry = into_occupied(entry).expect("each aligned slot was initialized");
             let value = entry.get_mut();
             assert_eq!(
@@ -159,7 +159,7 @@ fn aligns_both_planes() {
             value.0 += 1;
         }
         assert!(
-            (slab::Slots::new(&mut table)
+            (table
                 .entries()
                 .map(|entry| {
                     let entry = into_occupied(entry).expect("aligned resident");
@@ -182,7 +182,7 @@ fn keeps_disjoint_slots() {
     let old = (table.insert(11)).expect("insert the first physical slot");
     let (live, next, hot) = {
         let (reused, hot) = Tracker::measure(|| {
-            let mut entries = slab::Slots::new(&mut table).entries();
+            let mut entries = table.entries();
             let occupied =
                 into_occupied((entries.next()).expect("the first slot must retain its value"))
                     .expect("the first slot must retain its value");
@@ -324,16 +324,12 @@ fn keep_restores_slot() {
     let key =
         (slab.vacancy().map(|vacant| vacant.insert(5))).expect("empty slab accepts one value");
     {
-        let mut entry = slab::Slots::new(&slab)
-            .entry_at(key.index())
-            .expect("inserted slot");
+        let mut entry = slab.entry_at(key.index()).expect("inserted slot");
         *entry.value_mut() = 999;
     }
     assert!((slab.len()) == (capacity::Count::new(1)));
     assert_eq!(
-        slab::Slots::new(&slab)
-            .entry_at(key.index())
-            .map(|entry| entry.remove()),
+        slab.entry_at(key.index()).map(|entry| entry.remove()),
         Some(999)
     );
     assert_eq!(slab.len(), capacity::Count::EMPTY);

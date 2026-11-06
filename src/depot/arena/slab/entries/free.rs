@@ -17,7 +17,7 @@ pub(in crate::depot::arena::slab) struct Free<
 {
     core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
     slot: &'a storage::Slot<T, MAX, M>,
-    index: entries::SlotIndex,
+    index: u32,
 }
 
 impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, S>
@@ -30,7 +30,7 @@ where
     pub(in crate::depot::arena::slab) unsafe fn new(
         core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
         slot: &'a storage::Slot<T, MAX, M>,
-        index: entries::SlotIndex,
+        index: u32,
     ) -> Self {
         Self { core, slot, index }
     }
@@ -71,7 +71,7 @@ where
                     // SAFETY: this initialized owner slice and state retain the
                     // free member at this index under the exclusive core loan.
                     (slot.state.get() == slab::State::Free)
-                        .then(|| unsafe { Self::new(core, slot, entries::SlotIndex(index)) })
+                        .then(|| unsafe { Self::new(core, slot, index) })
                 });
         };
         for head in core.free.iter().take(groups.end).skip(groups.start) {
@@ -91,7 +91,7 @@ where
                 slot = unsafe { core.slots.as_ref().get_unchecked(index as usize) };
             }
             // SAFETY: this exclusive loan retains the head or its free successor.
-            return Some(unsafe { Self::new(core, slot, entries::SlotIndex(index)) });
+            return Some(unsafe { Self::new(core, slot, index) });
         }
         None
     }

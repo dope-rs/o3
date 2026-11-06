@@ -15,16 +15,17 @@ impl<'a, T, const G: usize, const N: usize> round::Snapshot<&'a round::Lanes<T, 
     }
 
     /// Preserves existing membership in this destination.
-    pub fn set(&self) -> round::Insertion {
+    /// Returns true when inserted and false when already present.
+    pub fn set(&self) -> bool {
         let lane = self.slot().linked_lane();
         if lane == Some(self.position.lane) {
-            return round::Insertion::Present;
+            return false;
         }
         let round::Lanes { block, groups } = self.owner;
         // SAFETY: this snapshot admits both indices to these same-owner fields;
         // membership was just resolved without an intervening callback.
         unsafe { round::lanes::push_from(block, groups, self.position, lane) };
-        round::Insertion::Inserted
+        true
     }
 
     /// Moves this resident to its destination's tail.

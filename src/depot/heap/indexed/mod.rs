@@ -20,7 +20,6 @@ mod entry;
 mod error;
 pub mod resident;
 mod slot;
-pub use slot::Slot;
 
 /// The retained source proves this exact heap slot is vacant.
 pub struct Empty;

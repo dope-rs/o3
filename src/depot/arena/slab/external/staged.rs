@@ -6,13 +6,12 @@ use crate::{
 };
 
 /// A logical identity projection of its native staged phase.
-pub struct Staged<B, Tag = (), const ROOT: bool = true, S = ()> {
+pub struct Staged<B, Tag = (), const ROOT: bool = true> {
     pub(in crate::depot::arena::slab) entry: B,
-    pub(in crate::depot::arena::slab) state: S,
     pub(in crate::depot::arena::slab) tag: marker::PhantomData<fn() -> Tag>,
 }
 
-impl<B, Tag, const ROOT: bool, S> Staged<B, Tag, ROOT, S> {
+impl<B, Tag, const ROOT: bool> Staged<B, Tag, ROOT> {
     pub(in crate::depot::arena::slab) fn into_native(self) -> slab::Staged<B, Tag, ROOT> {
         slab::Staged {
             entry: self.entry,
@@ -29,13 +28,8 @@ impl<T, G: external::Generation, Tag>
         >,
         Tag,
         true,
-        G,
     >
 {
-    pub fn key(&self) -> external::Key<G, Tag> {
-        external::Key::new(self.entry.sink().index(), self.state)
-    }
-
     pub fn get_mut(&mut self) -> &mut T {
         &mut self.entry.parts_mut().0.value_mut().value
     }

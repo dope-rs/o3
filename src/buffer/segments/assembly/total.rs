@@ -18,7 +18,7 @@ impl Error {
     ) -> Result<segments::Count, Self> {
         current
             .checked_add(added)
-            .ok_or(Self::Count(assembly::Overflow::new(current, added)))
+            .ok_or(Self::Count(assembly::Overflow { current, added }))
     }
 
     pub(in crate::buffer::segments) fn logical(
@@ -27,7 +27,7 @@ impl Error {
     ) -> Result<usize, Self> {
         current
             .checked_add(added)
-            .ok_or(Self::Logical(assembly::Overflow::new(current, added)))
+            .ok_or(Self::Logical(assembly::Overflow { current, added }))
     }
 
     pub(in crate::buffer::segments) fn resident(
@@ -36,6 +36,6 @@ impl Error {
     ) -> Result<usize, Self> {
         current
             .checked_add(added)
-            .ok_or(Self::Resident(assembly::Overflow::new(current, added)))
+            .ok_or(Self::Resident(assembly::Overflow { current, added }))
     }
 }

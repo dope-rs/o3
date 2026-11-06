@@ -114,7 +114,6 @@ fn lanes_keep_three_planes() {
                         .try_lane(index % lanes.get())
                         .expect("destination")
                         .set()
-                        == round::Insertion::Inserted
                 );
                 assert_eq!(lane.pop_front().map(|slot| slot.get()), Some(index));
             }
@@ -150,7 +149,6 @@ fn aligned_lanes_drop_once() {
                     .try_lane(index + 2)
                     .expect("destination")
                     .set()
-                    == round::Insertion::Inserted
             );
         }
         assert_eq!(
@@ -206,7 +204,6 @@ fn reservations_are_hot() {
                 .try_lane(0)
                 .expect("destination")
                 .set()
-                == round::Insertion::Inserted
         );
         let mut selected = round::Lane::try_new(&mut queue, 0).expect("lane");
         let mut held = (selected.dequeue()).expect("fresh resident must be reservable");
@@ -222,7 +219,6 @@ fn reservations_are_hot() {
                 .try_lane(0)
                 .expect("destination")
                 .set()
-                == round::Insertion::Inserted
         );
         let mut selected = round::Lane::try_new(&mut queue, 0).expect("lane");
         let held = (selected.dequeue()).expect("released resident must be reservable");

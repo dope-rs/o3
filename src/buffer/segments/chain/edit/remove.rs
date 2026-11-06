@@ -4,7 +4,7 @@ use crate::{
     buffer,
     buffer::{
         hold, segments,
-        segments::{Chain, Handle, Key, Nonempty, Plural, Shape, Tail, handles},
+        segments::{Chain, Handle, Key, Nonempty, Plural, Shape, handles},
     },
     depot::arena::linked::slots,
     mem::rc,
@@ -55,12 +55,8 @@ impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
             desc.len -= amount.get();
             return None;
         }
-        let owner = self.take();
+        let owner = self.take_front().0;
         NonZero::new(amount.get() - owner.len().get())
-    }
-
-    pub(in crate::buffer::segments) fn take(self) -> segments::Item<T> {
-        self.take_front().0
     }
 
     #[inline(always)]
@@ -119,7 +115,7 @@ impl<T: buffer::raw::Segment> Nonempty<T> {
     pub fn try_pop(self, limit: usize) -> Result<(T, Shape<T>), (rc::Error, Self)> {
         match self {
             Self::One(mut owner) => {
-                let Some(tail) = Tail::new(&mut owner.value, limit) else {
+                let Some(tail) = owner.tail(limit) else {
                     return Ok((owner.into_inner(), Shape::Empty));
                 };
                 match tail.try_commit() {

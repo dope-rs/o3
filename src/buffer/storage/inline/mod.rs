@@ -35,7 +35,7 @@ impl<'a, const CAP: usize, const LEFT: usize, L: crate::buffer::raw::Length>
         source: bytes::Prefix<'_, MAX>,
     ) -> (Fill<'a, CAP, NEXT, L>, &'a mut [u8]) {
         const { assert!(MAX <= LEFT && NEXT == LEFT - MAX) }
-        let source = source.into_slice();
+        let source = source.as_slice();
         // SAFETY: Prefix bounds input by MAX, and the consuming transition
         // retains at least LEFT bytes of this owner's disjoint remaining storage.
         let (copied, output) = unsafe { self.output.split_at_mut_unchecked(source.len()) };

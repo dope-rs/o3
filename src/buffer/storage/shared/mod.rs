@@ -48,7 +48,7 @@ impl<O: buffer::raw::Retain> buffer::View<'_, Shared<O>> {
     pub(in crate::buffer) fn try_clone(&self) -> Result<Shared<O>, rc::Error> {
         // SAFETY: the source-bound selection retains the same immutable
         // region throughout retention; no independent owner can be supplied.
-        unsafe { self.source().try_view(self.as_slice()) }
+        unsafe { self.source.try_view(self.as_slice()) }
     }
 }
 

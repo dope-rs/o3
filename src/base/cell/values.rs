@@ -4,7 +4,7 @@ use crate::base::cell::{Sealed, brand, region};
 
 /// Exclusive access issued only by a generative scope.
 #[repr(transparent)]
-pub(in crate::base::cell) struct Token<B: Sealed> {
+pub struct Token<B: Sealed> {
     proof: marker::PhantomData<B>,
 }
 
@@ -23,16 +23,19 @@ impl<B: Sealed> Token<B> {
         }
     }
 
-    pub(in crate::base::cell) fn borrow<'a, T>(&'a self, value: &'a Value<B, T>) -> &'a T {
+    pub const fn bind<T>(&self, value: T) -> Value<B, T> {
+        Value::new(value)
+    }
+
+    pub(in crate::base::cell) fn read<'a, T>(&'a self, value: &'a Value<B, T>) -> &'a T {
         // SAFETY: the invariant brand matches this unique domain token; shared
         // token access prevents an exclusive borrow for this lifetime.
         unsafe { &*value.value.get() }
     }
+}
 
-    pub(in crate::base::cell) fn borrow_mut<'a, T: Unpin>(
-        &'a mut self,
-        value: &'a Value<B, T>,
-    ) -> &'a mut T {
+impl<B: region::Brand> Token<B> {
+    pub fn borrow_mut<'a, T: Unpin>(&'a mut self, value: &'a Value<B, T>) -> &'a mut T {
         // SAFETY: the matching brand identity and exclusive token exclude every
         // other access. Unpin permits replacement of the value.
         unsafe { &mut *value.value.get() }
@@ -52,7 +55,7 @@ impl<B: brand::Brand> brand::Token<B> {
     pub fn borrow_pin<'a, T>(&'a self, value: pin::Pin<&'a brand::Value<B, T>>) -> pin::Pin<&'a T> {
         // SAFETY: Value structurally pins T. Shared token access
         // excludes mutable access throughout the returned borrow.
-        unsafe { pin::Pin::new_unchecked(self.token.borrow(value.get_ref())) }
+        unsafe { pin::Pin::new_unchecked(self.read(value.get_ref())) }
     }
 }
 

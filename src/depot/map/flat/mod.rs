@@ -208,7 +208,9 @@ const _: () = {
 
 impl<'a, V> map::Found<&'a mut Table<V>> {
     pub fn into_mut(self) -> &'a mut V {
-        value(self)
+        let (map, bucket) = self.into_parts();
+        // SAFETY: the consumed capability retains this initialized payload's original exclusive loan.
+        unsafe { map.table.payload_mut(&bucket) }
     }
 }
 
@@ -218,7 +220,7 @@ impl<V> map::Found<&mut Table<V>> {
     }
 
     pub fn get_mut(&mut self) -> &mut V {
-        value(self.reborrow())
+        self.reborrow().into_mut()
     }
 
     pub fn remove(self) -> V {
@@ -252,12 +254,6 @@ impl<'a, V> map::Vacancy<&'a mut Table<V>, u64> {
         map.len += 1;
         value
     }
-}
-
-fn value<V>(entry: map::Found<&mut Table<V>>) -> &mut V {
-    let (map, bucket) = entry.into_parts();
-    // SAFETY: the consumed capability retains this initialized payload's original exclusive loan.
-    unsafe { map.table.payload_mut(&bucket) }
 }
 
 pub mod raw;

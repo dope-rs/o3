@@ -5,7 +5,7 @@ pub use growing::Growing;
 use layout::NonEmpty;
 pub(in crate::buffer) use layout::Tally;
 pub use layout::{Layout, fixed::Fixed, width::Width};
-pub use span::{Span, append::Append, complete::Complete, copy::Copy, frozen::Frozen};
+pub use span::{Span, append::Append, frozen::Frozen};
 
 use crate::{
     buffer,

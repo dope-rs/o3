@@ -36,6 +36,10 @@ impl<T, G: external::Generation, Tag> Pinned<T, G, Tag> {
         })
     }
 
+    pub fn capacity(&self) -> capacity::Count {
+        storage::Plane::count(&self.inner.core.slots)
+    }
+
     pub fn try_grant(self: Pin<&mut Self>) -> Result<Anchor<'_, T, G, Tag>, slab::Vacancy> {
         let (next, inner) = self.split();
         external::grant::Reservation::try_new(next, || inner.vacant())

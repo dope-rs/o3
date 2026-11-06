@@ -59,6 +59,14 @@ pub(in crate::buffer::storage::provided) struct Scope<'d, T, L> {
 }
 
 impl<T, C, L> Arena<T, C, L> {
+    /// Allocates the exact arena before its context is constructed.
+    pub fn try_allocate(
+        entries: num::NonZero<u32>,
+    ) -> Result<impl FnOnce(C) -> Self, alloc::Error> {
+        let memory = tail::Plan::try_new(entries)?.try_allocate()?;
+        Ok(move |context| Self::initialize(memory, context))
+    }
+
     fn initialize(
         memory: tail::Uninit<Header<C>, Space<T, L>, num::NonZero<u32>>,
         context: C,
@@ -185,7 +193,7 @@ impl<T, C: buffer::raw::Fixed<T>> Arena<T, C, ()> {
     ) -> O::Output {
         let resident = mem::MaybeUninit::new(self.context().resident().get());
         let mut input = (self, state, terminal);
-        brand::Token::scope_pinned(pin::Pin::new(&mut input), |token, regions, input| {
+        brand::scope_pinned(pin::Pin::new(&mut input), |token, regions, input| {
             let (arena, state, terminal) = input.get_mut();
             // SAFETY: this sole generation borrow retains the allocation until
             // the operation ends and the hidden scope reclaims every slot.
@@ -234,16 +242,6 @@ impl<T, C> Arena<T, C> {
         (root, move || scope.finish(Returned::discard))
     }
 
-    pub fn try_with<E>(
-        entries: num::NonZero<u32>,
-        context: impl FnOnce() -> Result<C, E>,
-    ) -> Result<Self, E>
-    where
-        E: From<alloc::Overflow> + From<alloc::Exhausted>,
-    {
-        let memory = tail::Plan::try_new(entries)?.try_allocate()?;
-        Ok(Self::initialize(memory, context()?))
-    }
     pub fn scope<S, R>(
         &mut self,
         state: pin::Pin<&mut S>,
@@ -257,13 +255,6 @@ impl<T, C> Arena<T, C> {
     }
 }
 impl<T, C: buffer::raw::Fixed<T>> Arena<T, C, ()> {
-    /// Allocates the exact arena before its context is constructed.
-    pub fn try_allocate(
-        entries: num::NonZero<u32>,
-    ) -> Result<impl FnOnce(C) -> Self, alloc::Error> {
-        let memory = tail::Plan::try_new(entries)?.try_allocate()?;
-        Ok(move |context| Self::initialize(memory, context))
-    }
     pub fn scope<S, R>(
         &mut self,
         state: pin::Pin<&mut S>,

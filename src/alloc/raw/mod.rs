@@ -8,7 +8,7 @@ pub use rows::Rows;
 pub use shape::Shape;
 
 use crate::{
-    alloc::{Exhausted, Overflow, Vacant, array},
+    alloc::{Exhausted, Overflow, array},
     base::marker::ThreadBound,
 };
 mod layout;
@@ -29,7 +29,7 @@ pub trait VecExt<T> {
     /// Retains one previously admitted insertion.
     /// # Safety
     /// This vector's length is strictly below its capacity.
-    unsafe fn vacancy(&mut self) -> Vacant<'_, T>;
+    unsafe fn vacancy(&mut self) -> impl FnOnce(T) + '_;
 
     /// Removes one retained resident and returns the tail moved into its place.
     /// # Safety
@@ -38,10 +38,19 @@ pub trait VecExt<T> {
 }
 
 impl<T> VecExt<T> for Vec<T> {
-    unsafe fn vacancy(&mut self) -> Vacant<'_, T> {
-        Vacant {
-            values: self,
-            _bound: ThreadBound::NEW,
+    unsafe fn vacancy(&mut self) -> impl FnOnce(T) + '_ {
+        let bound = ThreadBound::NEW;
+        move |value| {
+            let _bound = bound;
+            let values = self;
+            let len = values.len();
+            // SAFETY: admission proved len + 1 fits both usize and this
+            // vector's capacity. The captured exclusive loan preserves its
+            // allocation and length, including aligned zero-sized storage.
+            unsafe {
+                values.as_mut_ptr().add(len).write(value);
+                values.set_len(len + 1);
+            }
         }
     }
 

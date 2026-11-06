@@ -71,6 +71,7 @@ pub struct Front<'a, V, const LANES: usize> {
     entry: Slot<'a, V, LANES>,
     owner: map::Bound<'a, LANES>,
     length: &'a mut u32,
+    lane: Index<LANES>,
 }
 
 impl<'a, V, const LANES: usize> Front<'a, V, LANES> {
@@ -81,11 +82,12 @@ impl<'a, V, const LANES: usize> Front<'a, V, LANES> {
         lane: Index<LANES>,
     ) -> Self {
         let record = entry.as_ref();
-        let owner = map.entry(&record.owner, lane);
+        let owner = map.entry(&record.owner);
         Self {
             entry,
             owner,
             length,
+            lane,
         }
     }
 
@@ -100,21 +102,21 @@ impl<'a, V, const LANES: usize> Front<'a, V, LANES> {
     fn pop(self) -> (u64, V) {
         let entry = self.entry.remove();
         let owner = self.owner.key();
-        self.owner.remove(entry.owner_next);
+        self.owner.remove(self.lane, entry.owner_next);
         *self.length -= 1;
         (owner, entry.value)
     }
 
     pub fn take(self) -> (V, Vacancy<'a, V, LANES>) {
-        let (entry, slot) = self.entry.take(self.owner.lane());
+        let (entry, slot) = self.entry.take(self.lane);
         let mut owner = self.owner;
-        owner.detach(entry.owner_next);
+        owner.detach(self.lane, entry.owner_next);
         *self.length -= 1;
         (
             entry.value,
             Vacancy {
                 slot,
-                owner: Lease::open(owner, (self.length, entry.owner)),
+                owner: Lease::open(owner, self.length),
             },
         )
     }
@@ -135,8 +137,8 @@ pub struct Vacancy<'a, V, const LANES: usize> {
 
 impl<V, const LANES: usize> Vacancy<'_, V, LANES> {
     pub fn restore(self, value: V) {
-        let (mut bound, (length, owner)) = self.owner.into_parts();
-        let next = bound.restore(self.slot.handle());
+        let (mut bound, length) = self.owner.into_parts();
+        let (owner, next) = bound.restore(self.slot.phase.0, self.slot.handle());
         *length += 1;
         self.slot.restore(Entry {
             owner,
@@ -290,7 +292,7 @@ impl<V> Ledger<V, 1> {
 const _: () = {
     assert!(mem::size_of::<Entry<u64>>() == 2 * mem::size_of::<usize>());
     assert!(mem::size_of::<Front<'static, u64, 2>>() == 8 * mem::size_of::<usize>());
-    assert!(mem::size_of::<Vacancy<'static, u64, 2>>() == 9 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Vacancy<'static, u64, 2>>() == 7 * mem::size_of::<usize>());
     assert!(mem::size_of::<Index<2>>() == 1);
     assert!(mem::size_of::<Option<Index<2>>>() == 1);
 };

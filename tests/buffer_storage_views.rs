@@ -10,7 +10,6 @@ use common::{
     buffer::provided::{Fixed, Input, Item},
 };
 use o3::{
-    alloc,
     buffer::{
         self,
         storage::{self, Str, provided},
@@ -121,9 +120,8 @@ fn recovers_exhaustion() {
 fn retains_admission() {
     let drops = Cell::new(Some(0));
     let count = Cell::new(Some(0));
-    let mut arena =
-        provided::Arena::<Item>::try_with(NonZero::<u32>::MIN, || Ok::<(), alloc::Error>(()))
-            .expect("the single-slot arena must allocate");
+    let mut arena = provided::Arena::<Item>::try_allocate(NonZero::<u32>::MIN)
+        .expect("the single-slot arena must allocate")(());
     let input = Input {
         buffer: Item::try_new(b"body", &drops).expect("fixture buffer must allocate"),
         converted: &count,

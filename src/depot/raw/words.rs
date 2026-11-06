@@ -1,7 +1,4 @@
-use crate::{
-    depot,
-    depot::index::{bitmap, bitmap::entry::Row},
-};
+use crate::depot::index::{bitmap, bitmap::entry::Row};
 
 /// # Safety
 /// Planes stay stationary and initialized with exact shapes, zero tail bits, and exact nonzero-child summaries.
@@ -35,10 +32,7 @@ unsafe impl<W: bitmap::Width, S: Words<W>> Words<W> for &S {
     }
     fn row(entry: Row<&Self, (), (), W>, plane: Self::Plane) -> &[bitmap::Word<W>] {
         // SAFETY: dereferencing this borrow preserves its exact source and bound.
-        S::row(
-            unsafe { depot::raw::Rows::map_row(entry, |source| *source) },
-            plane,
-        )
+        S::row(unsafe { entry.map(|source| *source) }, plane)
     }
 }
 
@@ -56,9 +50,6 @@ unsafe impl<W: bitmap::Width, S: Words<W>> Words<W> for &mut S {
     }
     fn row(entry: Row<&Self, (), (), W>, plane: Self::Plane) -> &[bitmap::Word<W>] {
         // SAFETY: this reborrow retains the original exclusive owner's domain.
-        S::row(
-            unsafe { depot::raw::Rows::map_row(entry, |source| &**source) },
-            plane,
-        )
+        S::row(unsafe { entry.map(|source| &**source) }, plane)
     }
 }

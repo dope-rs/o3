@@ -7,7 +7,7 @@ use crate::{
         segments::{
             Chain, Handle, Key,
             chain::{view, view::iter::Iter},
-            handles,
+            handles::{self, Occupied},
         },
     },
     depot::arena::linked::{self, slots},
@@ -22,13 +22,13 @@ impl<T, H: Handle<T>> Chain<T, H> {
     fn release(handle: &H, key: &Key) {
         let nodes = handles::nodes(handle);
         let index = match key.state() {
-            handles::State::Empty => return,
-            handles::State::Single(index) => {
+            None => return,
+            Some(Occupied::Single(index)) => {
                 // SAFETY: this detached key retains its exact initialized node.
                 drop(unsafe { nodes.detached(index) });
                 return;
             }
-            handles::State::Multi(index) => index,
+            Some(Occupied::Multi(index)) => index,
         };
         let descs = handles::descriptors(handle);
         // SAFETY: this detached multi key uniquely owns its exact descriptor.

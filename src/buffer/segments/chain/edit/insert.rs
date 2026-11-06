@@ -8,7 +8,7 @@ use crate::{
             Chain, Front, Handle, Key,
             chain::edit::{Cause, Growth},
             handles,
-            handles::Descriptor,
+            handles::{Descriptor, Occupied},
         },
     },
     depot::{
@@ -34,14 +34,14 @@ impl<T: buffer::raw::Segment, H: Handle<T>> Chain<T, H> {
                     break 'rejected Cause::ONE_NODE.into_error();
                 };
                 match self.key.state() {
-                    handles::State::Empty => {
+                    None => {
                         let claim = node.insert(item);
                         self.key = Key::single(claim.index());
                         // SAFETY: the key above attaches this exact claim slot as the
                         // sequence's sole node before publication.
                         unsafe { claim.publish() };
                     }
-                    handles::State::Single(previous) => {
+                    Some(Occupied::Single(previous)) => {
                         let Some(desc) = handles::descriptors(&self.handle).vacant() else {
                             break 'rejected segments::Error::ChainCapacity(capacity::Shortage {
                                 requested: NonZero::<usize>::MIN,
@@ -67,7 +67,7 @@ impl<T: buffer::raw::Segment, H: Handle<T>> Chain<T, H> {
                         // complete live node set, count, and checked accounting.
                         unsafe { desc.publish() };
                     }
-                    handles::State::Multi(index) => {
+                    Some(Occupied::Multi(index)) => {
                         // SAFETY: the multi key names this live descriptor in the exact
                         // store borrowed exclusively through this chain.
                         let desc =

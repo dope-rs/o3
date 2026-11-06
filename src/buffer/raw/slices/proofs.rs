@@ -30,6 +30,10 @@ pub(in crate::buffer) unsafe trait Exclusive: Prefix {
 
     fn capacity(&self) -> u32;
 
+    fn remaining(&self) -> usize {
+        (self.capacity() - self.prefix().1) as usize
+    }
+
     fn as_mut_slice(&mut self) -> &mut [u8] {
         let pointer = self.as_mut_ptr();
         let len = self.len_mut();

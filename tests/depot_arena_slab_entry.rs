@@ -37,7 +37,7 @@ fn rejects_identities() {
         );
     }
     assert!(
-        (slab::Slots::new(&mut table)
+        (table
             .try_entry_at(1)
             .map(|entry| (*entry.get(), entry.key())))
             == (Err(lookup::Error::Index {
@@ -46,7 +46,7 @@ fn rejects_identities() {
             }))
     );
     assert!(
-        (slab::Slots::new(&mut table)
+        (table
             .try_entry_at(0)
             .map(|entry| (*entry.get(), entry.key())))
             == (Err(lookup::Error::Free { index: 0 }))
@@ -65,7 +65,7 @@ fn rejects_identities() {
         matches!(table.try_entry(first), Err(key::Error::Generation { key, actual }) if key == first && actual == second.generation())
     );
     assert!(
-        (slab::Slots::new(&mut table)
+        (table
             .try_entry_at(0)
             .map(|entry| (*entry.get(), entry.key())))
             == (Ok((11, second)))
@@ -75,7 +75,7 @@ fn rejects_identities() {
         matches!(table.try_entry(second), Err(key::Error::Retired { key, actual, retired: () }) if key == second && actual == second.generation())
     );
     assert!(
-        (slab::Slots::new(&mut table)
+        (table
             .try_entry_at(0)
             .map(|entry| (*entry.get(), entry.key())))
             == (Err(lookup::Error::Retired {
@@ -95,7 +95,7 @@ fn retains_reservations() {
         matches!(table.try_entry(key), Err(key::Error::Reserved { key: observed, actual }) if observed == key && actual == key.generation())
     );
     assert!(
-        (slab::Slots::new(&mut table)
+        (table
             .try_entry_at(key.index())
             .map(|entry| (*entry.get(), entry.key())))
             == (Err(lookup::Error::Reserved { index: key.index() }))
@@ -241,14 +241,14 @@ fn matches_reference_set() {
         &[0, 63, 64, 127, 4095, 4096, 4999]
     };
     for &index in edges {
-        let first = slab::Slots::new(&mut s)
+        let first = s
             .vacant_at(index)
             .expect("an untouched edge slot is vacant")
             .insert(2);
         assert!(free.remove(&index));
         assert_eq!(s.remove(first), Some(2));
         free.insert(index);
-        let next = slab::Slots::new(&mut s)
+        let next = s
             .vacant_at(index)
             .expect("removing an edge restores its vacancy")
             .insert(2);
@@ -271,9 +271,7 @@ fn matches_reference_set() {
             },
             1 => {
                 let idx = ((rng.advance() >> 33) as u32) % CAP;
-                let placed = slab::Slots::new(&mut s)
-                    .vacant_at(idx)
-                    .map(|entry| entry.insert(2));
+                let placed = s.vacant_at(idx).map(|entry| entry.insert(2));
                 assert_eq!(
                     placed.is_some(),
                     free.contains(&idx),

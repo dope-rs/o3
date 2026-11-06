@@ -90,27 +90,20 @@ fn entry_paths_preserve() {
     assert_eq!(slab.try_get(first).ok(), Some(&1));
     assert_eq!(slab.try_get(second).ok(), Some(&3));
 
-    let free = slab::Slots::new(&mut slab)
-        .vacant_at(130)
-        .expect("high vacancy");
+    let free = slab.vacant_at(130).expect("high vacancy");
     let high = free.insert_with(|key| key.index());
-    let free = slab::Slots::new(&mut slab)
-        .vacant_at(70)
-        .expect("middle vacancy");
+    let free = slab.vacant_at(70).expect("middle vacancy");
     let middle = free.insert_with(|key| key.index());
-    assert!(slab::Slots::new(&mut slab).vacant_at(70).is_none());
+    assert!(slab.vacant_at(70).is_none());
     let next = slab.insert(4).expect("next free slot available");
     assert_eq!(next.index(), 2);
 
     {
-        let entry =
-            (slab::Slots::new(&mut slab).entry_at(130)).expect("the high slot remains live");
+        let entry = (slab.entry_at(130)).expect("the high slot remains live");
         assert!((*entry.get(), entry.key()) == (130, high));
     }
     let found = {
-        let mut entry = slab::Slots::new(&mut slab)
-            .entry_at(70)
-            .expect("middle slot remains live");
+        let mut entry = slab.entry_at(70).expect("middle slot remains live");
         *entry.get_mut() += 1;
         entry.key()
     };
@@ -118,7 +111,7 @@ fn entry_paths_preserve() {
     assert_eq!(slab.try_get(middle).ok(), Some(&71));
 
     assert_eq!(slab.remove(high), Some(130));
-    let next = slab::Slots::new(&mut slab)
+    let next = slab
         .vacant_at(130)
         .expect("removed high slot becomes vacant")
         .insert(7);
@@ -130,27 +123,19 @@ fn entry_paths_preserve() {
 fn range_stays_partitioned() {
     let mut slab = (slab::Store::<u32>::try_new(Count::new(6)))
         .expect("the exclusive slab must admit six slots");
-    let first = slab::Slots::new(&mut slab)
-        .vacant_at(2)
-        .expect("slot two vacant")
-        .insert(2);
-    let second = slab::Slots::new(&mut slab)
-        .vacant_at(3)
-        .expect("slot three vacant")
-        .insert(3);
+    let first = slab.vacant_at(2).expect("slot two vacant").insert(2);
+    let second = slab.vacant_at(3).expect("slot three vacant").insert(3);
 
-    let pick = slab::Slots::new(&mut slab)
-        .vacant_in(2..5)
-        .expect("free slot in range");
+    let pick = slab.vacant_in(2..5).expect("free slot in range");
     let pick = pick.insert_with(|key| {
         assert_eq!(key.index(), 4);
         4
     });
     assert_eq!(slab.try_get(pick).ok(), Some(&4));
 
-    assert!(slab::Slots::new(&mut slab).vacant_in(2..4).is_none());
-    assert!(slab::Slots::new(&mut slab).vacant_in(5..5).is_none());
-    let last = slab::Slots::new(&mut slab)
+    assert!(slab.vacant_in(2..4).is_none());
+    assert!(slab.vacant_in(5..5).is_none());
+    let last = slab
         .vacant_in(5..6)
         .expect("last range has one vacancy")
         .insert(5);
@@ -164,13 +149,10 @@ fn range_stays_partitioned() {
 #[test]
 fn range_stops_at_capacity() {
     let mut slab = slab::Store::<u32>::try_new(Count::new(3)).expect("three slots");
-    let key = slab::Slots::new(&mut slab)
-        .vacant_in(2..u32::MAX)
-        .expect("last slot")
-        .insert(7);
+    let key = slab.vacant_in(2..u32::MAX).expect("last slot").insert(7);
     assert_eq!(key.index(), 2);
-    assert!(slab::Slots::new(&mut slab).vacant_in(2..u32::MAX).is_none());
-    assert!(slab::Slots::new(&mut slab).vacant_in(3..u32::MAX).is_none());
+    assert!(slab.vacant_in(2..u32::MAX).is_none());
+    assert!(slab.vacant_in(3..u32::MAX).is_none());
 }
 
 #[test]
@@ -189,9 +171,7 @@ fn entry_proves_generation() {
     }
     assert_eq!(slab.try_get(key).ok(), Some(&11));
 
-    let entry = slab::Slots::new(&mut slab)
-        .entry_at(key.index())
-        .expect("occupied index");
+    let entry = slab.entry_at(key.index()).expect("occupied index");
     assert_eq!(entry.remove(), 11);
     assert!(slab.try_entry(key).is_err());
 
@@ -202,7 +182,7 @@ fn entry_proves_generation() {
     assert!(matches!(slab.try_entry(next), Ok(entry) if entry.get() == &13));
 
     let key2 = {
-        let entry = slab::Slots::new(&mut slab)
+        let entry = slab
             .vacant_at(1)
             .expect("the second slot is vacant")
             .stage(17)
@@ -217,20 +197,13 @@ fn entry_proves_generation() {
 fn vacancy_keeps_generation() {
     let mut slab = (slab::Store::<u32>::try_new(Count::new(4)))
         .expect("the exclusive slab must admit four slots");
-    let entry = slab::Slots::new(&mut slab)
-        .vacant_at(1)
-        .expect("slot one vacant")
-        .insert(7);
-    assert!(
-        slab::Slots::new(&mut slab)
-            .vacant_at(entry.index())
-            .is_none()
-    );
-    assert!(slab::Slots::new(&mut slab).vacant_at(4).is_none());
+    let entry = slab.vacant_at(1).expect("slot one vacant").insert(7);
+    assert!(slab.vacant_at(entry.index()).is_none());
+    assert!(slab.vacant_at(4).is_none());
 
-    assert!(slab::Slots::new(&mut slab).vacant_at(3).is_some());
+    assert!(slab.vacant_at(3).is_some());
 
-    let next = slab::Slots::new(&mut slab)
+    let next = slab
         .vacant_at(3)
         .expect("cancelled slot stays vacant")
         .insert(9);
@@ -244,22 +217,16 @@ fn vacancy_keeps_generation() {
 fn sparse_live_entries() {
     let mut slab = slab::Store::<u32>::try_new(Count::new(128))
         .expect("the exclusive slab must admit one hundred twenty-eight slots");
-    assert!((slab::Slots::new(&slab).key_at(127)).is_none());
-    let high = slab::Slots::new(&mut slab)
-        .vacant_at(127)
-        .expect("high slot vacant")
-        .insert(7);
-    let low = slab::Slots::new(&mut slab)
-        .vacant_at(1)
-        .expect("low slot vacant")
-        .insert(3);
+    assert!((slab.key_at(127)).is_none());
+    let high = slab.vacant_at(127).expect("high slot vacant").insert(7);
+    let low = slab.vacant_at(1).expect("low slot vacant").insert(3);
     assert_eq!(slab.try_get(high).ok(), Some(&7));
     assert_eq!(slab.try_get(low).ok(), Some(&3));
     assert_eq!(slab.remove(high), Some(7));
     assert_eq!(slab.try_get(high).ok(), None);
     assert_eq!(slab.try_get(low).ok(), Some(&3));
 
-    let mut entry = slab::Slots::new(&mut slab)
+    let mut entry = slab
         .entry_at(low.index())
         .expect("low slot remains occupied");
     *entry.get_mut() += 1;
@@ -271,7 +238,7 @@ fn sparse_live_entries() {
     let live = slab.insert(9).expect("removed low slot becomes vacant");
     slab.clear();
     assert_eq!(slab.len(), o3::depot::capacity::Count::EMPTY);
-    assert!((slab::Slots::new(&slab).key_at(live.index() as usize)).is_none());
+    assert!((slab.key_at(live.index() as usize)).is_none());
 }
 
 #[test]

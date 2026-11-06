@@ -25,7 +25,7 @@ impl<L: crate::depot::raw::Link> State<L> {
     }
 
     unsafe fn push_front(&mut self, index: L::Item, publish: impl FnOnce(Option<L::Item>)) {
-        let previous = option(self.head);
+        let previous = self.head.item();
         publish(previous);
         let link = unsafe { L::some(index) };
         if previous.is_none() {
@@ -35,7 +35,7 @@ impl<L: crate::depot::raw::Link> State<L> {
     }
 
     unsafe fn push_back(&mut self, index: L::Item, publish: impl FnOnce(Option<L::Item>)) {
-        let previous = option(self.tail);
+        let previous = self.tail.item();
         publish(previous);
         let link = unsafe { L::some(index) };
         self.set_back(link, previous.is_none());
@@ -51,11 +51,11 @@ impl<L: crate::depot::raw::Link> State<L> {
     unsafe fn append(
         &mut self,
         source: Self,
-        front: crate::depot::raw::Present<L>,
+        front: L::Item,
         publish: impl FnOnce(Option<L::Item>, L::Item),
     ) {
-        let previous = option(self.tail);
-        publish(previous, front.item());
+        let previous = self.tail.item();
+        publish(previous, front);
         if previous.is_none() {
             self.head = source.head;
         }
@@ -96,12 +96,12 @@ pub struct Cell<L: crate::depot::raw::Link = u32>(pub(in crate::depot) cell::Cel
 #[must_use = "a present front must be consumed or left linked"]
 pub struct Front<O, L: crate::depot::raw::Link = u32> {
     owner: O,
-    present: crate::depot::raw::Present<L>,
+    present: L::Item,
 }
 
 impl<O, L: crate::depot::raw::Link> Front<O, L> {
     pub fn get(&self) -> L::Item {
-        self.present.item()
+        self.present
     }
 }
 
@@ -111,7 +111,7 @@ impl<L: depot::raw::Link, O: crate::depot::raw::EndsPop<L>> Front<O, L> {
         proof: depot::raw::Proof<(Self, T, F), fifo::Detach>,
     ) -> R {
         let (front, input, pop) = proof.into_inner();
-        unsafe { front.owner.pop(front.present.item(), input, pop) }
+        unsafe { front.owner.pop(front.present, input, pop) }
     }
 }
 
@@ -122,9 +122,9 @@ impl<L: depot::raw::Link> Front<&Cell<L>, L> {
     ) -> (R, Option<Self>) {
         let (front, input, pop) = proof.into_inner();
         let mut state = front.owner.0.get();
-        let result = state.pop(front.present.item(), input, pop);
+        let result = state.pop(front.present, input, pop);
         front.owner.0.set(state);
-        let next = depot::raw::Present::new(state.head).map(|present| Self {
+        let next = state.head.item().map(|present| Self {
             owner: front.owner,
             present,
         });
@@ -138,7 +138,7 @@ impl<L: crate::depot::raw::Link> Exclusive<L> {
     }
 
     pub fn head(&self) -> Option<L::Item> {
-        option(self.0.head)
+        self.0.head.item()
     }
 
     pub(crate) const fn head_raw(&self) -> L {
@@ -154,7 +154,7 @@ impl<L: crate::depot::raw::Link> Exclusive<L> {
     }
 
     pub fn front(&mut self) -> Option<Front<&mut Self, L>> {
-        let present = crate::depot::raw::Present::new(self.0.head)?;
+        let present = self.0.head.item()?;
         Some(Front {
             owner: self,
             present,
@@ -183,7 +183,7 @@ impl<L: crate::depot::raw::Link> Exclusive<L> {
     ) {
         let (owner, source, publish) = proof.into_inner();
         let chain = source.0;
-        let Some(front) = depot::raw::Present::new(chain.head) else {
+        let Some(front) = chain.head.item() else {
             return;
         };
         unsafe { owner.0.append(chain, front, publish) };
@@ -212,11 +212,11 @@ impl<L: crate::depot::raw::Link> Cell<L> {
     }
 
     pub fn head(&self) -> Option<L::Item> {
-        option(self.0.get().head)
+        self.0.get().head.item()
     }
 
     pub fn back(&self) -> Option<L::Item> {
-        option(self.0.get().tail)
+        self.0.get().tail.item()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -224,7 +224,7 @@ impl<L: crate::depot::raw::Link> Cell<L> {
     }
 
     pub fn front(&self) -> Option<Front<&Self, L>> {
-        let present = crate::depot::raw::Present::new(self.0.get().head)?;
+        let present = self.0.get().head.item()?;
         Some(Front {
             owner: self,
             present,
@@ -236,8 +236,8 @@ impl<L: crate::depot::raw::Link> Cell<L> {
         proof: depot::raw::Proof<(&Self, T, F), fifo::Detach>,
     ) -> Option<R> {
         let (owner, input, pop) = proof.into_inner();
-        let front = depot::raw::Present::new(owner.0.get().head)?;
-        let (next, result) = pop(front.item(), input);
+        let front = owner.0.get().head.item()?;
+        let (next, result) = pop(front, input);
         let empty = next == L::NONE;
         // SAFETY: Detach retains the same endpoints through the completed callback.
         // Callback and Link/Eq evaluation finish before the exclusive field writes.
@@ -260,7 +260,7 @@ impl<L: crate::depot::raw::Link> Cell<L> {
         proof: depot::raw::Proof<(&Self, L::Item, F), fifo::Append>,
     ) {
         let (owner, index, publish) = proof.into_inner();
-        let previous = option(owner.0.get().tail);
+        let previous = owner.0.get().tail.item();
         publish(previous);
         let link = unsafe { L::some(index) };
         // SAFETY: Append retains the same endpoints through the completed callback.
@@ -275,7 +275,7 @@ impl<L: crate::depot::raw::Link> Cell<L> {
     ) {
         let (owner, source, publish) = proof.into_inner();
         let chain = source.0;
-        let Some(front) = depot::raw::Present::new(chain.head) else {
+        let Some(front) = chain.head.item() else {
             return;
         };
         let mut state = owner.0.get();
@@ -283,10 +283,6 @@ impl<L: crate::depot::raw::Link> Cell<L> {
         source.0 = State::EMPTY;
         owner.0.set(state);
     }
-}
-
-fn option<L: crate::depot::raw::Link>(link: L) -> Option<L::Item> {
-    crate::depot::raw::Present::new(link).map(|present| present.item())
 }
 
 const _: () = {

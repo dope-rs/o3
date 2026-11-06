@@ -487,8 +487,8 @@ fn retains_parked_deadline() {
                 }
                 while let Some(queued) = table.front() {
                     let position = queued.position();
-                    let live = unsafe { depot::raw::Proof::new(((&mut heap, queued), position)) };
-                    let source = indexed::Slot::<_, _, _, indexed::Empty>::from_source(live);
+                    let source: depot::raw::Proof<_, depot::index::Initialized<indexed::Empty>> =
+                        unsafe { depot::raw::Proof::new(((&mut heap, queued), position)) };
                     let (deadline, queued) = source.entry();
                     let key = *queued.key();
                     let (parked, ()) = queued.park(!key);

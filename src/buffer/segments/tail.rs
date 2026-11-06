@@ -32,11 +32,9 @@ impl<'a, T: buffer::raw::Segment> Tail<'a, T, NonZero<usize>> {
         source: &'a mut segments::Item<T>,
         amount: NonZero<usize>,
     ) -> Option<Self> {
-        if amount >= source.len() {
-            return None;
-        }
+        let tail = source.tail(amount.get())?;
         Some(Self {
-            source: &mut source.value,
+            source: tail.source,
             amount,
         })
     }

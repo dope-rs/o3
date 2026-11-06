@@ -37,12 +37,12 @@ pub struct Cell<L: crate::depot::raw::Link = u32>(pub(in crate::depot) cell::Cel
 #[must_use = "a present head must be consumed or left linked"]
 pub struct Front<'a, L: crate::depot::raw::Link = u32> {
     owner: &'a Cell<L>,
-    present: crate::depot::raw::Present<L>,
+    present: L::Item,
 }
 
 impl<L: crate::depot::raw::Link> Front<'_, L> {
     pub fn item(&self) -> L::Item {
-        self.present.item()
+        self.present
     }
 
     /// # Safety
@@ -52,7 +52,7 @@ impl<L: crate::depot::raw::Link> Front<'_, L> {
         pop: P,
         input: I,
     ) -> P::Output {
-        let (next, result) = unsafe { pop.pop(self.present.item(), input) };
+        let (next, result) = unsafe { pop.pop(self.present, input) };
         self.owner.0.set(next);
         result
     }
@@ -68,7 +68,7 @@ impl<L: crate::depot::raw::Link> Cell<L> {
     }
 
     pub fn front(&self) -> Option<Front<'_, L>> {
-        let present = crate::depot::raw::Present::new(self.raw())?;
+        let present = self.raw().item()?;
         Some(Front {
             owner: self,
             present,

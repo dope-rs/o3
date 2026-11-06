@@ -32,7 +32,7 @@ impl Gap {
 
 impl<'writer, 'target> Writer<'writer, 'target> {
     pub(in crate::buffer::write) fn new(spare: &'writer mut write::Spare<'target>) -> Self {
-        let limit = buffer::raw::Space::remaining(spare) as u32;
+        let limit = spare.remaining() as u32;
         Self {
             spare,
             limit,
@@ -44,12 +44,16 @@ impl<'writer, 'target> Writer<'writer, 'target> {
         spare: &'writer mut write::Spare<'target>,
         len: usize,
     ) -> Result<Self, Error> {
-        Error::check(len, buffer::raw::Space::remaining(spare))?;
+        Error::check(len, spare.remaining())?;
         Ok(Self {
             spare,
             limit: len as u32,
             len: 0,
         })
+    }
+
+    fn remaining(&self) -> usize {
+        (self.limit - self.len) as usize
     }
 
     pub(in crate::buffer) fn suffix(&mut self) -> (*mut u8, usize) {
@@ -74,7 +78,7 @@ impl<'writer, 'target> Writer<'writer, 'target> {
         source: &I,
     ) -> Result<(), Error> {
         let len = source.len();
-        Error::check(len, buffer::raw::Space::remaining(self))?;
+        Error::check(len, self.remaining())?;
         let (target, start) = self.suffix();
         // SAFETY: admission fits the source's stable length in this exclusive
         // suffix; its retained sources are disjoint from the writer's storage.
@@ -91,7 +95,7 @@ impl write::Sink for Writer<'_, '_> {
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
         use buffer::raw::SliceExt as _;
 
-        let len = Error::checked_end(0, buffer::raw::Space::remaining(self), &slices)?;
+        let len = Error::checked_end(0, self.remaining(), &slices)?;
         let (target, start) = self.suffix();
         // SAFETY: admission retains every source and its exclusive suffix;
         // copying them initializes exactly the bytes published to this writer.
@@ -100,12 +104,6 @@ impl write::Sink for Writer<'_, '_> {
             self.extend(len);
         }
         Ok(())
-    }
-}
-
-impl buffer::raw::Space for Writer<'_, '_> {
-    fn remaining(&self) -> usize {
-        (self.limit - self.len) as usize
     }
 }
 

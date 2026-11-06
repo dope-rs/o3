@@ -86,8 +86,7 @@ pub struct Table<T, H, const MAX: u32> {
     records: Vec<raw::Record<T, MAX>>,
     buckets: Box<[u32]>,
     free: Option<links::Index>,
-    usable: u32,
-    len: u32,
+    available: u32,
     hash: H,
     bound: PhantomData<ThreadBound>,
 }
@@ -100,15 +99,14 @@ impl<T, H: map::Hasher<Id>, const MAX: u32> Table<T, H, MAX> {
             records,
             buckets,
             free: None,
-            usable: plan.records,
-            len: 0,
+            available: plan.records,
             hash,
             bound: PhantomData,
         })
     }
 
     pub const fn available(&self) -> usize {
-        self.usable.wrapping_sub(self.len) as usize
+        self.available as usize
     }
 
     pub fn get(&self, key: Key<MAX>) -> Option<&T> {
@@ -158,7 +156,7 @@ impl<T, H: map::Hasher<Id>, const MAX: u32> Table<T, H, MAX> {
                     index,
                 })
             }
-            map::raw::State::Vacant(bucket) if self.len < self.usable => {
+            map::raw::State::Vacant(bucket) if self.available != 0 => {
                 map::Entry::Vacant(Some(Vacant {
                     table: self,
                     bucket,

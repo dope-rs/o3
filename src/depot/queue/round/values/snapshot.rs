@@ -30,7 +30,7 @@ impl<'a, T: Copy, const G: usize, const N: usize> Snapshot<'a, T, G, round::Plac
     /// Schedules an accepted payload after checking equality and current initialization.
     /// Returns the callback's context, preserving queue order when already present.
     /// Equality may reenter, so initialization is checked again before insertion.
-    pub fn set<R>(&self, test: impl FnOnce(T) -> Option<R>) -> Option<(round::Insertion, R)>
+    pub fn set<R>(&self, test: impl FnOnce(T) -> Option<R>) -> Option<(bool, R)>
     where
         T: PartialEq,
     {

@@ -386,9 +386,8 @@ fn fixed_scope() {
 fn exact_scope() {
     let drops = Cell::new(Some(0));
     let mut domain = resident::Domain::new();
-    let mut arena =
-        (provided::Arena::<_, _>::try_with(num::NonZero::<u32>::MIN, || Ok::<_, alloc::Error>(())))
-            .expect("test precondition");
+    let mut arena = provided::Arena::<_, _>::try_allocate(num::NonZero::<u32>::MIN)
+        .expect("test precondition")(());
     for _ in 0..2 {
         let measured = Tracker::begin();
         arena.scope(pin::Pin::new(&mut domain), |token, root, domain| {
@@ -477,11 +476,9 @@ fn terminal_scope() {
 fn joined_scopes() {
     let drops = Cell::new(Some(0));
     let first =
-        provided::Arena::<_, _>::try_with(num::NonZero::<u32>::MIN, || Ok::<_, alloc::Error>(()))
-            .expect("first arena");
+        provided::Arena::<_, _>::try_allocate(num::NonZero::<u32>::MIN).expect("first arena")(());
     let second =
-        provided::Arena::<_, _>::try_with(num::NonZero::<u32>::MIN, || Ok::<_, alloc::Error>(()))
-            .expect("second arena");
+        provided::Arena::<_, _>::try_allocate(num::NonZero::<u32>::MIN).expect("second arena")(());
     let mut state = (resident::Domain::new(), (first, second));
     for round in 1..=2 {
         region::Token::scope_pinned(pin::Pin::new(&mut state), |token, state| {

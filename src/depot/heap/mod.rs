@@ -156,7 +156,7 @@ impl<'a, S: heap::raw::Store> Slot<'a, S> {
 
     pub(in crate::depot::heap) fn clear(self) {
         if let Some(entry) = self.occupied() {
-            heap::raw::Hole::retire(entry.into_parts().0);
+            entry.into_parts().0.clear();
         }
     }
 
@@ -165,7 +165,7 @@ impl<'a, S: heap::raw::Store> Slot<'a, S> {
             if entry.value().identity != entry.next {
                 return;
             }
-            heap::raw::Hole::retire(entry.into_parts().0);
+            entry.into_parts().0.clear();
         }
     }
 }

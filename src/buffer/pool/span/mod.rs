@@ -13,8 +13,6 @@ use crate::{
 };
 
 pub(in crate::buffer::pool) mod append;
-pub(in crate::buffer::pool) mod complete;
-pub(in crate::buffer::pool) mod copy;
 pub(in crate::buffer::pool) mod frozen;
 
 /// Owns one live slot edge and its initialized prefix. The backing and prefix
@@ -141,6 +139,20 @@ impl pool::Span<owners::Plain<pool::Layout>, pool::Owned, state::Uninit> {
         let seed = owners::Block::<owners::Plain<pool::Layout>, state::Uninit>::try_seed(layout)
             .map_err(pool::CreateError::Exhausted)?;
         Ok(pool::Span::from_seed(seed))
+    }
+
+    pub fn try_copy<const N: usize>(
+        mut self,
+        source: buffer::raw::Slices<'_, N>,
+    ) -> Result<pool::Span<owners::Plain, pool::Owned, pool::Frozen>, Error> {
+        let start = self.len();
+        let len = source.len().get();
+        Error::check(len as usize, self.capacity().get() as usize - start)?;
+        let target = self.entry().data();
+        // SAFETY: admission retains every source and this exact exclusive suffix.
+        unsafe { buffer::raw::SliceExt::copy_to(source.slices(), target.add(start)) };
+        self.len += len;
+        Ok(self.freeze())
     }
 }
 

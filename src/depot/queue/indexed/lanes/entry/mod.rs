@@ -1,5 +1,3 @@
-use std::marker;
-
 pub use error::Error;
 
 use crate::depot::{
@@ -11,16 +9,9 @@ use crate::depot::{
 mod error;
 
 /// One native direct-table slot and the queue topology governed by the same borrow.
-pub struct Slot<
-    'a,
-    K: crate::depot::raw::Key,
-    V,
-    const N: usize,
-    B = direct::Occupied<'a, K, lanes::Node<V, N>>,
-> {
+pub struct Slot<'a, B, const N: usize> {
     slot: B,
     queues: &'a [links::Chain; N],
-    value: marker::PhantomData<fn() -> (K, V)>,
 }
 
 /// A removed value's exact slot and original FIFO position.
@@ -33,18 +24,14 @@ pub struct Withdrawn<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes:
     hook: links::Hook,
 }
 
-impl<'a, K: crate::depot::raw::Key, V, const N: usize, B> Slot<'a, K, V, N, B> {
+impl<'a, B, const N: usize> Slot<'a, B, N> {
     pub(in crate::depot) fn new(slot: B, queues: &'a [links::Chain; N]) -> Self {
-        Self {
-            slot,
-            queues,
-            value: marker::PhantomData,
-        }
+        Self { slot, queues }
     }
 }
 
 impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
-    Slot<'a, K, V, N, direct::Occupied<'a, K, lanes::Node<V, N, S>>>
+    Occupied<'a, K, V, N, S>
 {
     pub fn get(&self) -> &V {
         &self.slot.get().value
@@ -148,7 +135,7 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
     }
 }
 
-impl<'a, K: crate::depot::raw::Key, V, const N: usize> Slot<'a, K, V, N> {
+impl<'a, K: crate::depot::raw::Key, V, const N: usize> Occupied<'a, K, V, N> {
     pub fn remove(self) -> V {
         self.take_owned().1.into_value()
     }
@@ -171,7 +158,7 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
         let index = unsafe { links::Index::new_usize(self.slot.key().index()) };
         let slot = self
             .slot
-            .occupy(lanes::Node::from_parts(self.lane, self.hook, value));
+            .insert(lanes::Node::from_parts(self.lane, self.hook, value));
         if let Some(lane) = self.lane {
             // SAFETY: this vacancy retained the exclusive table borrow and the
             // original hook, so its two neighbors still bound the same gap.
@@ -196,17 +183,17 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
 }
 
 impl<'a, K: crate::depot::raw::Key, V, const N: usize> Withdrawn<'a, K, V, N> {
-    pub fn restore(self, value: V) -> Slot<'a, K, V, N> {
+    pub fn restore(self, value: V) -> Occupied<'a, K, V, N> {
         self.restore_with(lanes::raw::Owned::new(value))
     }
 
-    pub fn insert(self, value: V) -> Slot<'a, K, V, N> {
+    pub fn insert(self, value: V) -> Occupied<'a, K, V, N> {
         self.insert_with(lanes::raw::Owned::new(value))
     }
 }
 
 impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
-    Slot<'a, K, V, N, direct::Vacant<'a, K, lanes::Node<V, N, S>>>
+    Vacancy<'a, K, V, N, S>
 {
     pub(in crate::depot) fn insert_with(
         self,
@@ -214,22 +201,20 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
     ) -> Occupied<'a, K, V, N, S> {
         // SAFETY: the retained vacancy lies inside its original u32-sized table.
         let index = unsafe { links::Index::new_usize(self.slot.key().index()) };
-        let slot = self.slot.occupy(lanes::Node::new(index, value));
+        let slot = self.slot.insert(lanes::Node::new(index, value));
         Slot::new(slot, self.queues)
     }
 }
 
-impl<'a, K: crate::depot::raw::Key, V, const N: usize>
-    Slot<'a, K, V, N, direct::Vacant<'a, K, lanes::Node<V, N>>>
-{
-    pub fn insert(self, value: V) -> Slot<'a, K, V, N> {
+impl<'a, K: crate::depot::raw::Key, V, const N: usize> Vacancy<'a, K, V, N> {
+    pub fn insert(self, value: V) -> Occupied<'a, K, V, N> {
         self.insert_with(lanes::raw::Owned::new(value))
     }
 }
 
-pub(super) type Occupied<'a, K, V, const N: usize, S> =
-    Slot<'a, K, V, N, direct::Occupied<'a, K, lanes::Node<V, N, S>>>;
+pub type Occupied<'a, K, V, const N: usize, S = ()> =
+    Slot<'a, direct::Occupied<'a, K, lanes::Node<V, N, S>>, N>;
 
 /// A table vacancy retains the value reservation and all lane metadata.
-pub(super) type Vacancy<'a, K, V, const N: usize, S> =
-    Slot<'a, K, V, N, direct::Vacant<'a, K, lanes::Node<V, N, S>>>;
+pub type Vacancy<'a, K, V, const N: usize, S = ()> =
+    Slot<'a, direct::Vacant<'a, K, lanes::Node<V, N, S>>, N>;

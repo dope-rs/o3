@@ -379,7 +379,7 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
             return Ok(resident::Shared::new());
         };
         let view = view.view();
-        let owner = match &view.source().backing {
+        let owner = match &view.source.backing {
             State::Empty | State::Cold(_) => return Ok(resident::Shared::new()),
             State::Live(Backing::Warm(cursor) | Backing::Accounted(cursor)) => {
                 let Some(owner) = owners::Account::try_bind(cursor, budget)? else {

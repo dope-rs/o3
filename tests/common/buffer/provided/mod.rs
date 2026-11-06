@@ -50,10 +50,8 @@ impl<'a> Item<'a> {
     ) -> Result<(), Error> {
         let drops = Cell::new(Some(0));
         let mut arena =
-            provided::Arena::<Item>::try_with(NonZero::<u32>::MIN.saturating_add(1), || {
-                Ok::<(), alloc::Error>(())
-            })
-            .map_err(Error::Allocation)?;
+            provided::Arena::<Item>::try_allocate(NonZero::<u32>::MIN.saturating_add(1))
+                .map_err(Error::Allocation)?(());
 
         let mut domain = resident::Domain::new();
         let (stats, resident, returned) =

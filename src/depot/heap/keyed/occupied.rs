@@ -18,7 +18,7 @@ impl<K: crate::depot::raw::Address, P: Ord, I: Position, B> keyed::Occupied<'_, 
         self.entry.into_parts().0.retire_min()
     }
     pub fn remove(self) -> P {
-        heap::raw::Hole::take(self.entry.into_parts().0).priority
+        self.entry.into_parts().0.remove().1.priority
     }
 }
 

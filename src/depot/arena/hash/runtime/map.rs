@@ -1,3 +1,5 @@
+use std::marker;
+
 use hash::errors;
 use runtime::entry;
 
@@ -11,14 +13,18 @@ use crate::depot::{
 };
 
 #[repr(transparent)]
-pub struct Map<T, Tag = ()> {
-    pub(super) core: hash::Core<T, Tag>,
+pub struct Store<T, Tag, P> {
+    pub(in crate::depot::arena::hash) core: hash::Core<T, Tag>,
+    phase: marker::PhantomData<fn(P) -> P>,
 }
 
-impl<T, Tag> Map<T, Tag> {
+pub type Map<T, Tag = ()> = Store<T, Tag, entry::Occupied>;
+
+impl<T, Tag, P> Store<T, Tag, P> {
     pub fn try_new(plan: hash::Plan) -> Result<Self, crate::alloc::Error> {
         Ok(Self {
             core: hash::Core::try_new(hash::Parts::try_new(plan.table)?)?,
+            phase: marker::PhantomData,
         })
     }
 
@@ -27,19 +33,11 @@ impl<T, Tag> Map<T, Tag> {
     }
 
     pub const fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub const fn len(&self) -> usize {
-        self.core.len()
+        self.core.len() == 0
     }
 
     pub fn get(&self, key: key::Handle<runtime::Domain<Tag>>) -> Option<&T> {
         self.core.get(key)
-    }
-
-    pub fn key_at(&self, index: usize) -> Option<key::Handle<runtime::Domain<Tag>>> {
-        self.core.key_at(index)
     }
 
     pub fn key_value_at(&self, index: usize) -> Option<(key::Handle<runtime::Domain<Tag>>, &T)> {
@@ -52,6 +50,16 @@ impl<T, Tag> Map<T, Tag> {
         eq: impl Fn(&T) -> bool,
     ) -> Option<key::Handle<runtime::Domain<Tag>>> {
         map::raw::Probe::find(&self.core, hash, eq)
+    }
+}
+
+impl<T, Tag> Map<T, Tag> {
+    pub const fn len(&self) -> usize {
+        self.core.len()
+    }
+
+    pub fn key_at(&self, index: usize) -> Option<key::Handle<runtime::Domain<Tag>>> {
+        self.core.key_at(index)
     }
 
     pub fn try_key<E>(

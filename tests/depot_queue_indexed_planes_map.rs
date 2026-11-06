@@ -8,7 +8,7 @@ use std::{cell, collections::VecDeque, mem};
 use common::{
     Counted,
     alloc::system::Tracker,
-    depot::{model::Random, queue::Sequence},
+    depot::{model::Random, queue::try_sequence},
 };
 use o3::{
     alloc,
@@ -231,7 +231,7 @@ fn fixed_storage_admission() {
 #[test]
 fn preserves_domain() {
     let (result, allocs) = Tracker::counts(|| {
-        let seed = Sequence::try_new(10).expect("factor");
+        let seed = try_sequence(10).expect("factor");
         planes::Set::<usize, 2, indexed::Min<u64, Limit<64>>>::try_seed_in::<1>(
             Limit::fixed::<8>(),
             seed,
@@ -266,7 +266,7 @@ fn preserves_domain() {
     assert_eq!(allocs, [0, 0, 0, 0]);
     let records = groups::Index::<u64, Limit<64>, (), 1, 1>::reserve(Limit::fixed::<16>())
         .expect("replacement rows");
-    heap.try_replace::<1>(records, Sequence::try_new(10).expect("factor"))
+    heap.try_replace::<1>(records, try_sequence(10).expect("factor"))
         .expect("queue planes must retain their allocation domain")();
     assert_eq!((heap.len(), heap.limit().get()), (16, 16));
     assert_eq!(heap.len_in::<0>(), 8);
@@ -294,7 +294,7 @@ fn preserves_failed_growth() {
     let mut heap: planes::Set<usize, 2, groups::Index<u64, Limit<64>, (), 1, 1>> =
         planes::Set::<usize, 2, indexed::Min<u64, Limit<64>>>::try_seed_in::<1>(
             Limit::fixed::<8>(),
-            Sequence::try_new(10).expect("factor"),
+            try_sequence(10).expect("factor"),
         )
         .expect("queue planes must retain their allocation domain")
         .try_into()
@@ -314,7 +314,7 @@ fn preserves_failed_growth() {
         let records = groups::Index::<u64, Limit<64>, (), 1, 1>::reserve(Limit::fixed::<64>())
             .expect("replacement rows");
         let error = Tracker::fail_after(allows, || {
-            heap.try_replace::<1>(records, Sequence::try_new(10).expect("factor"))
+            heap.try_replace::<1>(records, try_sequence(10).expect("factor"))
                 .map(|commit| commit())
         })
         .expect_err("one allocation is rejected");

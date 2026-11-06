@@ -2,7 +2,7 @@ pub(in crate::buffer::segments) mod sequence;
 use std::{marker, mem, num, ops};
 
 use many::Many;
-use segments::{Front, Handle, Pool};
+use segments::{Front, Handle, Pool, handles::Occupied};
 use storage::alloc;
 
 use crate::{
@@ -67,10 +67,10 @@ impl<T: buffer::raw::Segment> Chain<T> {
 
     pub fn into_shape(mut self) -> segments::Shape<T> {
         let index = match self.key.state() {
-            handles::State::Empty => return segments::Shape::Empty,
-            handles::State::Single(index) => index,
+            None => return segments::Shape::Empty,
+            Some(Occupied::Single(index)) => index,
             // SAFETY: this decoded multi key owns its exact initialized descriptor.
-            handles::State::Multi(_) => return segments::Shape::Many(unsafe { Many::new(self) }),
+            Some(Occupied::Multi(_)) => return segments::Shape::Many(unsafe { Many::new(self) }),
         };
         self.key = Key::EMPTY;
         let nodes = handles::nodes(&self.handle);
@@ -190,7 +190,10 @@ impl<T: buffer::raw::Segment> Chain<T> {
 
 impl<T: buffer::raw::Segment, H: Handle<T>> Chain<T, H> {
     pub fn front_entry(&mut self) -> Option<segments::Front<'_, T, H>> {
-        segments::Front::new(self)
+        if self.key.is_empty() {
+            return None;
+        }
+        Some(segments::Front { sequence: self })
     }
 
     /// Returns an empty owner unchanged, or None after insertion.

@@ -10,8 +10,6 @@ use crate::depot::{
     index::Initialized,
 };
 
-pub struct Cursor<G>(cell::Cell<Option<G>>);
-
 impl<'a, T, G: external::Generation, Tag> Borrowed<'a, T, G, Tag> {
     pub fn key(&self) -> external::Key<G, Tag> {
         external::Key::new(self.entry.index(), self.entry.value().generation)
@@ -39,38 +37,18 @@ impl<'a, T, G: external::Generation, Tag> Borrowed<'a, T, G, Tag> {
     }
 }
 
-impl<G: external::Generation> Cursor<G> {
-    pub(super) fn new() -> Self {
-        Self(cell::Cell::new(Some(G::INITIAL)))
-    }
-
-    pub(super) fn vacancy<'a, T, Tag>(
-        &self,
-        inner: Option<slab::Vacant<Pending<'a, T, G>, Tag>>,
-    ) -> Result<Vacancy<'a, T, G, Tag>, slab::Vacancy> {
-        let Some(epoch) = self.0.get() else {
-            return Err(slab::Vacancy::IdentityExhausted);
-        };
-        let Some(inner) = inner else {
-            return Err(slab::Vacancy::Full);
-        };
-        self.0.set(epoch.next());
-        Ok(inner.with_state(epoch))
-    }
-}
-
 impl<'a, T, G: external::Generation, Tag>
     crate::depot::raw::Proof<(&'a shared::Storage<T, G, Tag>, u32), Initialized<entries::Allocated>>
 {
     pub fn vacancy(self) -> Result<Vacancy<'a, T, G, Tag>, slab::Vacancy> {
-        let cursor = &self.source().next;
-        cursor.vacancy(slab::Slots::reserve(self.into_native()))
+        let owner = *self.source();
+        owner.issue(|| slab::Cell::reserve(self.into_native()))
     }
 
     pub fn try_entry(
         self,
     ) -> Result<Borrowed<'a, T, G, Tag>, lookup::Error<(), convert::Infallible>> {
-        Ok(slab::Slots::current(self.into_native())?.into_external())
+        Ok(slab::Cell::current(self.into_native())?.into_external())
     }
 
     pub fn try_key(self, epoch: G) -> Result<Borrowed<'a, T, G, Tag>, errors::Lookup<G, Tag, ()>> {
@@ -91,7 +69,7 @@ impl<'a, T, G: external::Generation, Tag>
 pub struct Storage<T, G: external::Generation, Tag = ()> {
     pub(in crate::depot::arena::slab::external::shared) inner:
         slab::Cell<external::Stamped<T, G>, Tag, 1, true>,
-    pub(in crate::depot::arena::slab::external::shared) next: shared::Cursor<G>,
+    pub(in crate::depot::arena::slab::external::shared) next: cell::Cell<Option<G>>,
 }
 
 impl<T, G: external::Generation, Tag> Storage<T, G, Tag> {
@@ -99,8 +77,18 @@ impl<T, G: external::Generation, Tag> Storage<T, G, Tag> {
         let inner = slab::Cell::<external::Stamped<T, G>, Tag, 1, true>::try_new(cap)?;
         Ok(Self {
             inner,
-            next: shared::Cursor::new(),
+            next: cell::Cell::new(Some(G::INITIAL)),
         })
+    }
+
+    fn issue<'a>(
+        &'a self,
+        acquire: impl FnOnce() -> Option<slab::Vacant<Pending<'a, T, G>, Tag>>,
+    ) -> Result<Vacancy<'a, T, G, Tag>, slab::Vacancy> {
+        let epoch = self.next.get().ok_or(slab::Vacancy::IdentityExhausted)?;
+        let inner = acquire().ok_or(slab::Vacancy::Full)?;
+        self.next.set(epoch.next());
+        Ok(inner.with_state(epoch))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -108,12 +96,11 @@ impl<T, G: external::Generation, Tag> Storage<T, G, Tag> {
     }
 
     pub fn vacancy_at(&self, index: u32) -> Result<Vacancy<'_, T, G, Tag>, slab::Vacancy> {
-        self.next
-            .vacancy(slab::Slots::new(&self.inner).vacancy_at(index))
+        self.issue(|| self.inner.vacancy_at(index))
     }
 
     pub fn vacancy(&self) -> Result<Vacancy<'_, T, G, Tag>, slab::Vacancy> {
-        self.next.vacancy(self.inner.vacancy())
+        self.issue(|| self.inner.vacancy())
     }
 
     /// Acquires one exact logical identity and retains its physical borrow.
@@ -131,9 +118,7 @@ impl<T, G: external::Generation, Tag> Storage<T, G, Tag> {
         &self,
         index: u32,
     ) -> Result<Borrowed<'_, T, G, Tag>, lookup::Error<(), convert::Infallible>> {
-        Ok(slab::Slots::new(&self.inner)
-            .try_entry_at(index)?
-            .into_external())
+        Ok(self.inner.try_entry_at(index)?.into_external())
     }
 }
 

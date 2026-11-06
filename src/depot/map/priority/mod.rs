@@ -213,7 +213,7 @@ impl<'a, K, V, P: Ord> Occupied<'a, K, P, V> {
     }
 
     pub(in crate::depot::map::priority) fn remove_parts(mut self) -> (K, V, P) {
-        heap::raw::Hole::retire(self.entry(()));
+        self.entry(()).clear();
         unsafe { map::raw::Hole::retire(&mut *self.core, self.bucket) };
         let Pair {
             key,

@@ -146,12 +146,12 @@ impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> Exclusive<T, G, Tag, PA
     }
 
     pub fn get(&'a self, key: Key<G, Tag>) -> Option<&'a T> {
-        let stamp = slab::Slots::new(&self.inner).value_at(key.index())?;
+        let stamp = self.inner.value_at(key.index())?;
         (stamp.generation == key.generation()).then_some(&stamp.value)
     }
 
     pub fn current(&'a self, index: u32) -> Option<(&'a T, Key<G, Tag>)> {
-        let stamp = slab::Slots::new(&self.inner).value_at(index)?;
+        let stamp = self.inner.value_at(index)?;
         Some((&stamp.value, Key::new(index, stamp.generation)))
     }
 
@@ -167,7 +167,7 @@ impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> Exclusive<T, G, Tag, PA
     }
 
     pub fn key_at(&'a self, index: u32) -> Option<Key<G, Tag>> {
-        let stamp = slab::Slots::new(&self.inner).value_at(index)?;
+        let stamp = self.inner.value_at(index)?;
         Some(Key::new(index, stamp.generation))
     }
 }
@@ -178,7 +178,8 @@ impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> Exclusive<T, G, Tag, PA
         &'a mut self,
         key: Key<G, Tag>,
     ) -> Result<OccupiedSlot<'a, T, G, Tag, PARTITIONS>, errors::Lookup<G, Tag>> {
-        let inner = slab::Slots::new(&mut self.inner)
+        let inner = self
+            .inner
             .try_entry_at(key.index())
             .map_err(|cause| errors::Lookup::Physical { key, cause })?;
         let actual = inner.get().generation;
@@ -192,7 +193,7 @@ impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> Exclusive<T, G, Tag, PA
         &'a mut self,
         key: Key<G, Tag>,
     ) -> Option<OccupiedSlot<'a, T, G, Tag, PARTITIONS>> {
-        let inner = slab::Slots::new(&mut self.inner).entry_at(key.index())?;
+        let inner = self.inner.entry_at(key.index())?;
         (inner.get().generation == key.generation()).then_some(external::Occupied::from(inner))
     }
 
@@ -201,7 +202,7 @@ impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> Exclusive<T, G, Tag, PA
         &'a mut self,
         index: u32,
     ) -> Option<OccupiedSlot<'a, T, G, Tag, PARTITIONS>> {
-        let inner = slab::Slots::new(&mut self.inner).entry_at(index)?;
+        let inner = self.inner.entry_at(index)?;
         Some(external::Occupied::from(inner))
     }
 
@@ -283,12 +284,9 @@ impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> VacantSlot<'a, T, G, Ta
                 generation: epoch,
                 value,
             })
-            .with_state(Logical)
+            .into_external()
     }
 }
-
-/// Projects the logical identity and payload while keeping physical metadata private.
-pub struct Logical;
 
 impl<'a, T, G: external::Generation, Tag, const PARTITIONS: usize>
     external::Exclusive<T, G, Tag, PARTITIONS>
@@ -303,18 +301,14 @@ impl<'a, T, G: external::Generation, Tag, const PARTITIONS: usize>
         &'a mut self,
         index: u32,
     ) -> Result<external::Grant<'a, T, G, Tag, PARTITIONS>, slab::Vacancy> {
-        external::Grant::try_new(&mut self.next, || {
-            slab::Slots::new(&mut self.inner).vacant_at(index)
-        })
+        external::Grant::try_new(&mut self.next, || self.inner.vacant_at(index))
     }
 
     pub fn try_grant_in(
         &'a mut self,
         range: ops::Range<u32>,
     ) -> Result<external::Grant<'a, T, G, Tag, PARTITIONS>, slab::Vacancy> {
-        external::Grant::try_new(&mut self.next, || {
-            slab::Slots::new(&mut self.inner).vacant_in(range)
-        })
+        external::Grant::try_new(&mut self.next, || self.inner.vacant_in(range))
     }
 
     /// Grants a reusable slot in `range`, excluding one physical position.
@@ -349,4 +343,4 @@ pub type OccupiedSlot<'a, T, G, Tag = (), const N: usize = 1> =
 pub type VacantSlot<'a, T, G, Tag = (), const N: usize = 1> =
     Vacant<Pending<'a, T, G, N>, Tag, true, G>;
 pub type StagedSlot<'a, T, G, Tag = (), const N: usize = 1> =
-    Staged<crate::mem::Lease<Busy<'a, T, G, N>, lease::Open>, Tag, true, Logical>;
+    Staged<crate::mem::Lease<Busy<'a, T, G, N>, lease::Open>, Tag, true>;

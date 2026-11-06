@@ -28,26 +28,6 @@ fn copy_shape() {
 }
 
 #[test]
-fn copies_prefix() {
-    let mut source = copy::Vec::<u64, 4>::from_one(3);
-    source.vacancy().expect("second position").insert(5);
-    let mut target = copy::Vec::from([17, 19, 23, 29]);
-    let ((), counts) = Tracker::measure(|| target.copy_from(&source));
-    assert_eq!(counts, [0; 4]);
-    assert_eq!(target.as_slice(), [3, 5]);
-    assert!(target.extent() == source.extent());
-    assert_eq!(source.as_slice(), [3, 5]);
-    target.copy_from(&copy::Vec::new());
-    assert!(target.is_empty());
-    let mut empty = copy::Vec::<u64, 0>::new();
-    empty.copy_from(&copy::Vec::new());
-    assert!(empty.is_empty());
-    let mut zero = copy::Vec::<(), 2>::new();
-    zero.copy_from(&copy::Vec::from([(), ()]));
-    assert!(zero.extent().is_full());
-}
-
-#[test]
 fn length_overflow() {
     for actual in [3, usize::MAX] {
         let error = Len::<2>::try_from(actual).expect_err("oversized length");

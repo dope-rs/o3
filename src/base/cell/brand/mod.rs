@@ -3,7 +3,7 @@ use std::{marker, pin};
 /// A value accessible only with the matching application [`Token`].
 pub use crate::base::cell::values::Value;
 
-use crate::base::cell::{Sealed, brand, region, values};
+use crate::base::cell::{Sealed, region};
 
 /// One generative application identity, invariant and unforgeable.
 ///
@@ -21,38 +21,21 @@ impl<'id> Sealed for Identity<'id> {}
 impl<'id> Brand for Identity<'id> {}
 
 /// Exclusive permission for one generative application domain.
-#[repr(transparent)]
-pub struct Token<B: Brand> {
-    pub(in crate::base::cell) token: values::Token<B>,
-}
+pub use crate::base::cell::values::Token;
 
-impl<B: Brand> Token<B> {
-    pub const fn bind<T>(&self, value: T) -> brand::Value<B, T> {
-        values::Value::new(value)
-    }
-}
-
-impl Token<Identity<'_>> {
-    /// Creates matching domains and lends one pinned root for their lifetime.
-    pub fn scope_pinned<T: ?Sized, R>(
-        root: pin::Pin<&mut T>,
-        f: impl for<'id> FnOnce(
-            Token<Identity<'id>>,
-            (
-                region::Token<region::Identity<'id>>,
-                region::Token<region::Identity<'id, 1>>,
-            ),
-            pin::Pin<&'id mut T>,
-        ) -> R,
-    ) -> R {
-        f(
-            Token {
-                token: values::Token::new(),
-            },
-            (values::Token::new().into(), values::Token::new().into()),
-            root,
-        )
-    }
+/// Creates matching domains and lends one pinned root for their lifetime.
+pub fn scope_pinned<T: ?Sized, R>(
+    root: pin::Pin<&mut T>,
+    f: impl for<'id> FnOnce(
+        Token<Identity<'id>>,
+        (
+            region::Token<region::Identity<'id>>,
+            region::Token<region::Identity<'id, 1>>,
+        ),
+        pin::Pin<&'id mut T>,
+    ) -> R,
+) -> R {
+    f(Token::new(), (Token::new(), Token::new()), root)
 }
 
 const _: () = {

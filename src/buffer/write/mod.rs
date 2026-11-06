@@ -270,7 +270,7 @@ impl<'a> Spare<'a> {
     }
 
     pub fn remaining(&self) -> usize {
-        buffer::raw::Space::remaining(self)
+        buffer::raw::Exclusive::remaining(self)
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
@@ -336,12 +336,6 @@ impl write::Sink for Spare<'_> {
 
 const _: () = assert!(size_of::<Spare<'static>>() == size_of::<usize>() * 3);
 const _: () = assert!(size_of::<Option<Spare<'static>>>() == size_of::<Spare<'static>>());
-
-impl buffer::raw::Space for Spare<'_> {
-    fn remaining(&self) -> usize {
-        (self.capacity - self.len) as usize
-    }
-}
 
 // SAFETY: Spare retains its original suffix and counts only initialized bytes.
 unsafe impl buffer::raw::Prefix for Spare<'_> {

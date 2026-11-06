@@ -247,8 +247,8 @@ impl<'a, L> Output<'a, L> {
 
     /// # Safety
     /// The foreign operation must prove `len` fits this unchanged output.
-    pub unsafe fn complete(self, len: NonZero<usize>) -> pool::Complete<'a, L> {
-        unsafe { pool::Complete::new(self.target, len) }
+    pub unsafe fn complete(self, len: NonZero<usize>) {
+        *Exclusive::len_mut(self.target) += len.get() as u32;
     }
 }
 
@@ -316,7 +316,7 @@ pub unsafe trait Initializer {
     unsafe fn initialize(&self, target: *mut mem::MaybeUninit<u8>);
 }
 
-pub(in crate::buffer) use store::{Backing, Debit, Header, Heap, Policy, Rc, Space, Unique};
+pub(in crate::buffer) use store::{Backing, Debit, Header, Heap, Policy, Rc, Unique};
 
 mod length;
 pub use length::Length;

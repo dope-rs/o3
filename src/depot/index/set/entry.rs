@@ -3,6 +3,7 @@ use crate::depot::index::{
     bitmap::entry::{Removed, Row},
     set,
 };
+use crate::depot::raw::Proof;
 
 /// A bounded position retaining its original shared or exclusive source.
 pub struct Entry<S, Tag = (), Raw = usize, const N: usize = 1, P = ()> {
@@ -68,9 +69,10 @@ impl<Tag, Raw: crate::depot::raw::Word, const N: usize>
 }
 impl<'a, Tag, Raw, const N: usize> Entry<&'a set::State<Tag, Raw, N>, Tag, Raw, N, set::Id<N>> {
     pub fn into_entry(self) -> Entry<&'a set::State<Tag, Raw, N>, Tag, Raw, N> {
+        let position = self.row.position();
         Entry {
             // SAFETY: project the same source owner with its original lifetime and domain.
-            row: unsafe { self.row.map(std::convert::identity) },
+            row: Row::from_source(unsafe { Proof::new((self.row.source, position)) }),
         }
     }
 }

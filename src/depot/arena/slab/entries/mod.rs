@@ -29,15 +29,6 @@ mod pending;
 
 pub(in crate::depot) const NONE: u32 = u32::MAX;
 
-#[derive(Clone, Copy)]
-pub(in crate::depot) struct SlotIndex(pub(in crate::depot) u32);
-
-impl SlotIndex {
-    pub(in crate::depot) fn get(self) -> u32 {
-        self.0
-    }
-}
-
 pub(in crate::depot) struct Core<
     T,
     const MAX: u32,
@@ -50,7 +41,6 @@ pub(in crate::depot) struct Core<
     pub(in crate::depot) slots: <S as storage::Storage>::Plane<T, MAX, M>,
     free: [cell::Cell<u32>; PARTITIONS],
     len: cell::Cell<u32>,
-    mode: marker::PhantomData<M>,
     _thread: ThreadBound,
 }
 
@@ -99,13 +89,12 @@ where
                 })
             }),
             len: cell::Cell::new(0),
-            mode: marker::PhantomData,
             _thread: ThreadBound::NEW,
         }
     }
 
-    pub(in crate::depot) fn partition(&self, index: SlotIndex) -> &cell::Cell<u32> {
-        if PARTITIONS == 1 || (index.get() as usize) < self.slots.capacity().div_ceil(2) {
+    pub(in crate::depot) fn partition(&self, index: u32) -> &cell::Cell<u32> {
+        if PARTITIONS == 1 || (index as usize) < self.slots.capacity().div_ceil(2) {
             &self.free[0]
         } else {
             &self.free[1]
@@ -320,7 +309,7 @@ where
                 if slot.state.get() != slab::State::Free {
                     return None;
                 }
-                let index = SlotIndex((start + offset) as u32);
+                let index = (start + offset) as u32;
                 // SAFETY: this initialized owner slice retains the slot at this
                 // index, and its free membership is consumed immediately.
                 let free = unsafe { Free::new(self, slot, index) };
@@ -345,7 +334,6 @@ where
         let (owner, index) = live.into_inner();
         // SAFETY: the consumed proof retains this exact initialized backing slot.
         let slot = unsafe { owner.slots.as_ref().get_unchecked(index as usize) };
-        let index = SlotIndex(index);
         if slot.state.get() != slab::State::Free {
             return None;
         }

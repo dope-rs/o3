@@ -28,17 +28,6 @@ mod error;
 pub mod map;
 pub mod phase;
 
-/// Statically builds one payload from its exact topology index.
-pub trait Seed<T> {
-    fn seed(&self, index: links::Index) -> T;
-}
-
-impl<T: Default> Seed<T> for () {
-    fn seed(&self, _: links::Index) -> T {
-        T::default()
-    }
-}
-
 mod state;
 
 #[repr(C)]
@@ -88,13 +77,13 @@ struct Core<T, const PLANES: usize> {
 impl<T, const PLANES: usize> Set<T, PLANES> {
     pub const ENTRY_BYTES: usize = mem::size_of::<Node<T, PLANES>>();
 
-    pub fn try_seed<S: planes::Seed<T>>(len: usize, seed: S) -> Result<Self, alloc::Error> {
+    pub fn try_seed(len: usize, seed: impl Fn(links::Index) -> T) -> Result<Self, alloc::Error> {
         let count = capacity::Count::try_count(len, alloc::Error::Overflow)?;
         let len = count.get();
         let entries = Box::try_from_fn(len, |index| {
             // SAFETY: the admitted capacity covers every initialized compact index.
             let index = unsafe { links::Index::new_usize(index) };
-            Node::new(index, seed.seed(index))
+            Node::new(index, seed(index))
         })?
         .into_vec();
         Ok(Self {
@@ -225,14 +214,15 @@ impl<T, const PLANES: usize> Core<T, PLANES> {
     ) -> (indexed::Entry<'a, P, C>, Entry<'a, T, PLANES>) {
         let entry = Entry::new(self, index);
         // SAFETY: callers retain both disjoint projections of the same coupled owner.
-        let live = unsafe { crate::depot::raw::Proof::new(((heap, entry), index.position())) };
-        indexed::Slot::<_, _, _>::from_source(live).entry()
+        let live: crate::depot::raw::Live<_, _> =
+            unsafe { crate::depot::raw::Proof::new(((heap, entry), index.position())) };
+        live.entry()
     }
     fn grow_with<P: Ord, C: alloc::raw::Extent>(
         &mut self,
         heap: &mut indexed::Min<P, C>,
         len: C,
-        seed: impl planes::Seed<T>,
+        seed: impl Fn(links::Index) -> T,
     ) -> Result<&mut Self, planes::Error<C>> {
         let old = self.entries.len();
         let target = len.len();
@@ -253,8 +243,8 @@ impl<T, const PLANES: usize> Core<T, PLANES> {
                 // SAFETY: admitted capacity covers this compact index and its next vacant slot.
                 unsafe {
                     let compact = links::Index::new_usize(index);
-                    let value = source.seed(compact);
-                    self.entries.vacancy().insert(Node::new(compact, value));
+                    let value = source(compact);
+                    self.entries.vacancy()(Node::new(compact, value));
                 }
             }
         }
@@ -264,10 +254,9 @@ impl<T, const PLANES: usize> Core<T, PLANES> {
             let entry = Entry::<T, PLANES>::new(self, index);
             let priority = timer.take();
             // SAFETY: the new heap covers this payload, and each old priority moves once.
-            let live =
+            let live: crate::depot::raw::Live<_, _, indexed::Empty> =
                 unsafe { crate::depot::raw::Proof::new(((&mut next, entry), index.position())) };
-            let slot = indexed::Slot::<_, _, _, indexed::Empty>::from_source(live);
-            let (vacant, _) = slot.entry();
+            let (vacant, _) = live.entry();
             vacant.set(priority);
         }
         *heap = next;
@@ -299,7 +288,7 @@ impl<T, P: Ord, const PLANES: usize, const MAX: usize>
     /// Creates a fresh domain and links its admitted prefix into one plane.
     pub fn try_seed_in<const PLANE: usize>(
         capacity: capacity::Limit<MAX>,
-        seed: impl Seed<T>,
+        seed: impl Fn(links::Index) -> T,
     ) -> Result<Self, Error<capacity::Limit<MAX>>> {
         let index = indexed::Min::try_new(capacity).map_err(Error::Heap)?;
         let values = Set::<T, PLANES>::try_seed(capacity.get(), seed)
@@ -347,7 +336,7 @@ impl<T, P: Ord, R, const PLANES: usize, const MAX: usize, const N: usize, const 
             groups::Buckets<capacity::Limit<MAX>, MULTIPLIER>,
             links::List,
         >,
-        seed: impl Seed<T>,
+        seed: impl Fn(links::Index) -> T,
     ) -> Result<impl FnOnce() + '_, Error<capacity::Limit<MAX>>> {
         let capacity = records.capacity().0;
         let target = &mut self.index.records;

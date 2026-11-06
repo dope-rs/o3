@@ -74,7 +74,7 @@ unsafe impl<'d> Retain<'d> for storage::Shared<provided::Owner<'d>> {
     {
         let prefix = provided::Prefix {
             bytes: plan.as_slice(),
-            owner: plan.source().owner(),
+            owner: plan.source.owner(),
         };
         let owner = prefix.try_account(budget).map_err(Error::Account)?;
         Ok(resident::Shared::from(owner))

@@ -1,6 +1,6 @@
 //! Fixed-capacity arrays specialized for [`Copy`] elements.
 
-use std::{mem, ops, ptr, slice};
+use std::{mem, ops, slice};
 
 use crate::depot::array::{self, Len, prefix::Prefix};
 
@@ -39,19 +39,6 @@ impl<T: Copy, const N: usize> Default for Vec<T, N> {
 }
 
 impl<T: Copy, const N: usize> Vec<T, N> {
-    /// Copies only the initialized source prefix, retaining the destination allocation.
-    pub fn copy_from(&mut self, source: &Self) {
-        // SAFETY: unique destination and shared source are disjoint; the source length bounds its initialized prefix.
-        unsafe {
-            ptr::copy_nonoverlapping(
-                source.raw.entries.as_ptr(),
-                self.raw.entries.as_mut_ptr(),
-                source.raw.len.get(),
-            );
-        }
-        self.raw.len = source.raw.len;
-    }
-
     pub const fn new() -> Self {
         Self {
             raw: Prefix::empty(),

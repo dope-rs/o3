@@ -385,9 +385,8 @@ fn fixed_drop() {
 fn exact_drop() {
     let drops = Cell::new(Some(0));
     {
-        let arena =
-            provided::Arena::<Item>::try_with(NonZero::<u32>::MIN, || Ok::<(), alloc::Error>(()));
-        let mut arena = arena.expect("the exact fixture must allocate");
+        let mut arena = provided::Arena::<Item>::try_allocate(NonZero::<u32>::MIN)
+            .expect("the exact fixture must allocate")(());
         arena.scope(pin::Pin::new(&mut ()), |_, root, _| {
             let vacant = root
                 .vacant()

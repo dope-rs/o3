@@ -1,6 +1,6 @@
 use std::num::NonZero;
 
-use handles::Descriptor;
+use handles::{Descriptor, Occupied};
 
 use crate::{
     buffer,
@@ -74,11 +74,11 @@ impl<'a, T: buffer::raw::Segment> Original<'a, T> {
     ) -> Self {
         let nodes = handles::nodes(handle);
         let (links, len, resident) = match key.state() {
-            handles::State::Multi(index) => {
+            Some(Occupied::Multi(index)) => {
                 return Self::Multi(Existing { handle, key, index });
             }
-            handles::State::Empty => (ends::Exclusive::empty(), 0, 0),
-            handles::State::Single(index) => {
+            None => (ends::Exclusive::empty(), 0, 0),
+            Some(Occupied::Single(index)) => {
                 let (len, resident) = single(index);
                 let mut links = ends::Exclusive::empty();
                 unsafe { links.append_end(nodes, index) };

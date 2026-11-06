@@ -79,11 +79,9 @@ impl<T: buffer::raw::Segment> Many<T> {
         mut self,
         limit: usize,
     ) -> Result<(T, segments::Nonempty<T>), (rc::Error, Self)> {
-        use segments::Tail;
-
         let mut edit = self.edit();
         let (desc, owner) = edit.front();
-        let Some(tail) = Tail::new(&mut owner.value, limit) else {
+        let Some(tail) = owner.tail(limit) else {
             return Ok(self.take_front());
         };
         let prefix = match tail.try_commit() {

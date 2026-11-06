@@ -110,7 +110,6 @@ pub(super) struct Bound<'a, const LANES: usize> {
     owner: slab::Slot<'a, Entry<LANES>, Tag, { u32::MAX }, links::Hook, 0, capacity::Count<LANES>>,
     branches: &'a mut Branches<LANES>,
     root: Root<'a>,
-    lane: Index<LANES>,
 }
 
 enum Position<'a, 'p, const LANES: usize> {
@@ -204,18 +203,13 @@ impl<const LANES: usize> Tree<LANES> {
         Some(Lease::open(Added { branch, root }, owner))
     }
 
-    pub(in crate::depot::queue::group) fn entry(
-        &mut self,
-        owner: &Node<Tag>,
-        lane: Index<LANES>,
-    ) -> Bound<'_, LANES> {
+    pub(in crate::depot::queue::group) fn entry(&mut self, owner: &Node<Tag>) -> Bound<'_, LANES> {
         Bound {
             owner: owner.bind(&mut self.map).into(),
             branches: &mut self.branches,
             // SAFETY: the affine Node and occupied Slot retain an owner
             // in this exact tree, so its root stays initialized until removal.
             root: Root(unsafe { self.root.assume_init_mut() }),
-            lane,
         }
     }
 
@@ -344,31 +338,33 @@ impl<'a, const LANES: usize> Bound<'a, LANES> {
         self.owner.as_ref().key
     }
 
-    pub(in crate::depot::queue::group) fn lane(&self) -> Index<LANES> {
-        self.lane
-    }
-
-    pub(in crate::depot::queue::group) fn detach(&mut self, next: Option<Node<group::EntryTag>>) {
-        self.owner.as_mut().detach(self.lane, next);
+    pub(in crate::depot::queue::group) fn detach(
+        &mut self,
+        lane: Index<LANES>,
+        next: Option<Node<group::EntryTag>>,
+    ) {
+        self.owner.as_mut().detach(lane, next);
     }
 
     pub(in crate::depot::queue::group) fn restore(
         &mut self,
+        lane: Index<LANES>,
         key: slab::Handle<group::EntryTag>,
-    ) -> Option<Node<group::EntryTag>> {
+    ) -> (Node<Tag>, Option<Node<group::EntryTag>>) {
+        let owner_key = Node::inserted(self.owner.key());
         let owner = self.owner.as_mut();
-        let next = self
-            .lane
-            .get_mut(&mut owner.heads)
-            .replace(Node::inserted(key));
+        let next = lane.get_mut(&mut owner.heads).replace(Node::inserted(key));
         if next.is_none() {
-            *self.lane.get_mut(&mut owner.tails) = Some(Node::inserted(key));
+            *lane.get_mut(&mut owner.tails) = Some(Node::inserted(key));
         }
-        next
+        (owner_key, next)
     }
 
-    pub(in crate::depot::queue::group) fn remove(mut self, next: Option<Node<group::EntryTag>>) {
-        let lane = self.lane;
+    pub(in crate::depot::queue::group) fn remove(
+        mut self,
+        lane: Index<LANES>,
+        next: Option<Node<group::EntryTag>>,
+    ) {
         let entry = self.owner.as_ref();
         if next.is_some()
             || entry
@@ -394,7 +390,7 @@ impl<'a, const LANES: usize> Bound<'a, LANES> {
 }
 
 impl<'a, const LANES: usize> Return for Bound<'a, LANES> {
-    type Item = (&'a mut u32, Node<Tag>);
+    type Item = &'a mut u32;
 
     fn return_item(self, _: Self::Item) {
         if self.owner.as_ref().heads.iter().all(Option::is_none) {

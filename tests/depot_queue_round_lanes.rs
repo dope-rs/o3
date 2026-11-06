@@ -79,7 +79,6 @@ fn callback_changes_front() {
             .try_lane(0)
             .expect("destination")
             .set()
-            == round::Insertion::Inserted
     );
     assert!(
         queue
@@ -88,7 +87,6 @@ fn callback_changes_front() {
             .try_lane(0)
             .expect("destination")
             .set()
-            == round::Insertion::Inserted
     );
     let front = lane.front();
     let front = front.expect("assertion failed: front.is_some()");
@@ -149,7 +147,6 @@ fn relinquishes_handles() {
             .try_lane(0)
             .expect("destination")
             .set()
-            == round::Insertion::Inserted
     );
     let mut selected = round::Lane::try_new(&mut queue, 0).expect("lane");
     let held = selected.dequeue();
@@ -162,16 +159,14 @@ fn relinquishes_handles() {
             .try_lane(0)
             .expect("destination")
             .set()
-            == round::Insertion::Inserted
     );
     assert!(
-        queue
+        !queue
             .try_slot(0)
             .expect("resident")
             .try_lane(0)
             .expect("destination")
             .set()
-            == round::Insertion::Present
     );
     queue.try_slot(0).expect("resident").clear();
     assert!(queue.group::<0>().active().is_none());
@@ -191,18 +186,9 @@ fn values_retain_detached() {
     slot.write(value.saturating_add(1));
     assert_eq!(slot.get(), Some(value.saturating_add(1)));
     assert!(!queue.has_pending());
-    assert!(matches!(
-        first.set(Some),
-        Some((round::Insertion::Inserted, _))
-    ));
-    assert!(matches!(
-        first.set(Some),
-        Some((round::Insertion::Present, _))
-    ));
-    assert!(matches!(
-        second.set(Some),
-        Some((round::Insertion::Inserted, _))
-    ));
+    assert!(matches!(first.set(Some), Some((true, _))));
+    assert!(matches!(first.set(Some), Some((false, _))));
+    assert!(matches!(second.set(Some), Some((true, _))));
     assert!(queue.group::<0>().active().is_none());
     assert!(queue.has_pending());
     assert_eq!(queue.group::<1>().next(), Some(value.saturating_add(1)));

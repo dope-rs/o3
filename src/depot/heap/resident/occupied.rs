@@ -38,7 +38,7 @@ impl<'a, K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position>
         }
     }
     pub fn retire(self) {
-        heap::raw::Hole::retire(self.entry.into_parts().0);
+        self.entry.into_parts().0.clear();
     }
     pub fn retire_min(self) -> heap::Change {
         self.entry.into_parts().0.retire_min()

@@ -48,11 +48,11 @@ fn retains_slots() {
             }
             _ => match pending.pop_front() {
                 Some(index) => {
-                    let (slot, value) = queue.next::<0>().expect("pending value");
-                    assert_eq!(slot.index(), index);
+                    let (observed, state, value) = queue.pop_front::<0>().expect("pending value");
+                    assert_eq!(observed, index);
                     assert_eq!(Some(value), values[index].take());
-                    assert_eq!(slot.state().get(), value);
-                    assert!(slot.get::<0>().is_none());
+                    assert_eq!(state.get(), value);
+                    assert!(slots[index].get::<0>().is_none());
                 }
                 None => assert!(queue.next::<0>().is_none()),
             },

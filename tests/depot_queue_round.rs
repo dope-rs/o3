@@ -234,7 +234,6 @@ fn matches_striped_lanes() {
                         .try_lane(track)
                         .expect("destination")
                         .set()
-                        == round::Insertion::Inserted
                 );
                 model[track].push_back(index);
                 if wake {

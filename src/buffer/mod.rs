@@ -85,10 +85,6 @@ impl<'source, S: ?Sized> View<'source, S> {
             bytes: source.as_ref(),
         }
     }
-
-    const fn source(&self) -> &'source S {
-        self.source
-    }
 }
 
 impl<S: segments::Seal> View<'_, S> {
@@ -112,7 +108,7 @@ impl View<'_, resident::Shared<'_>> {
         if self.is_empty() {
             return Ok(Some(storage::Shared::new()));
         }
-        let owner = match self.source().region.owner() {
+        let owner = match self.source.region.owner() {
             resident::State::Owned(owner) => owner.try_retain()?,
             resident::State::Borrowed(owner) => Some(owner.try_clone()?.into_owned()),
             resident::State::Slice

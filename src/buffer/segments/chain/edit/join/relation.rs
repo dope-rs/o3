@@ -10,7 +10,7 @@ use crate::{
             Key,
             chain::edit::{Cause, Growth, join::incoming::Incoming},
             handles,
-            handles::Descriptor,
+            handles::{Descriptor, Occupied},
         },
     },
     depot::{
@@ -59,15 +59,15 @@ pub(in crate::buffer::segments::chain::edit::join) enum Input {
     },
 }
 
-pub(in crate::buffer::segments) enum Rejected<P> {
+pub(in crate::buffer::segments) enum Rejected {
     Total(total::Error),
-    Capacity(Capacity<P>),
+    Capacity(Growth, Cause),
 }
 
-pub(in crate::buffer::segments) struct Capacity<P> {
-    pub(in crate::buffer::segments::chain::edit::join) pair: P,
+struct Capacity<T: buffer::raw::Segment> {
+    pair: (segments::Many<T>, segments::Many<T>),
     sum: Growth,
-    pub(in crate::buffer::segments::chain::edit::join) cause: Cause,
+    cause: Cause,
 }
 
 impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
@@ -80,27 +80,27 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
         }
     }
 
-    pub(in crate::buffer::segments) fn try_commit(self) -> Result<(), Rejected<Exclusive<'a, T>>> {
+    pub(in crate::buffer::segments) fn try_commit(self) -> Result<(), Rejected> {
         let (mut pair, state) = match self {
             Relation::Same(mut pair) => {
                 let (target, source) = &pair;
                 let links = match (target.key.state(), source.key.state()) {
-                    (_, handles::State::Empty) => return Ok(()),
-                    (handles::State::Empty, _) => {
+                    (_, None) => return Ok(()),
+                    (None, _) => {
                         let (target, source) = &mut pair;
                         mem::swap(&mut target.key, &mut source.key);
                         return Ok(());
                     }
-                    (handles::State::Single(target), handles::State::Single(source)) => {
+                    (Some(Occupied::Single(target)), Some(Occupied::Single(source))) => {
                         Links::Singles { target, source }
                     }
-                    (handles::State::Single(target), handles::State::Multi(source)) => {
+                    (Some(Occupied::Single(target)), Some(Occupied::Multi(source))) => {
                         Links::Prepend { target, source }
                     }
-                    (handles::State::Multi(target), handles::State::Single(source)) => {
+                    (Some(Occupied::Multi(target)), Some(Occupied::Single(source))) => {
                         Links::Push { target, source }
                     }
-                    (handles::State::Multi(target), handles::State::Multi(source)) => {
+                    (Some(Occupied::Multi(target)), Some(Occupied::Multi(source))) => {
                         Links::Splice { target, source }
                     }
                 };
@@ -109,9 +109,9 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
             Relation::Other(pair) => {
                 let (_, source) = &pair;
                 let from = match source.key.state() {
-                    handles::State::Empty => return Ok(()),
-                    handles::State::Single(index) => Input::Single(index),
-                    handles::State::Multi(index) => Input::Multi {
+                    None => return Ok(()),
+                    Some(Occupied::Single(index)) => Input::Single(index),
+                    Some(Occupied::Multi(index)) => Input::Multi {
                         index,
                         count: unsafe { handles::descriptors(&source.handle).value(index) }.count,
                     },
@@ -217,7 +217,7 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                             },
                         )?;
                         let (mut links, output) = match target.key.state() {
-                            handles::State::Empty => {
+                            None => {
                                 let output = if sum.count.get() == 1 {
                                     None
                                 } else {
@@ -231,7 +231,7 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                                 };
                                 (ends::Exclusive::empty(), output)
                             }
-                            handles::State::Single(index) => {
+                            Some(Occupied::Single(index)) => {
                                 let claim = table.vacant().ok_or(Cause::Descriptors(
                                     capacity::Shortage {
                                         requested: NonZero::<usize>::MIN,
@@ -242,7 +242,7 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
                                 unsafe { links.append_end(store, index) };
                                 (links, Some(claim))
                             }
-                            handles::State::Multi(index) => {
+                            Some(Occupied::Multi(index)) => {
                                 let (desc, claim) = unsafe { table.detached(index) }.take();
                                 (desc.links, Some(claim))
                             }
@@ -270,7 +270,7 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
             })();
         match result {
             Ok(()) => Ok(()),
-            Err(cause) => Err(Rejected::Capacity(Capacity { pair, sum, cause })),
+            Err(cause) => Err(Rejected::Capacity(sum, cause)),
         }
     }
 }
@@ -285,7 +285,7 @@ impl<T: buffer::raw::Segment> TryFrom<(Self, Self)> for segments::Many<T> {
                 (first, second),
                 assembly::Error::Total(cause),
             )),
-            Err(Rejected::Capacity(Capacity { sum, cause, .. })) => {
+            Err(Rejected::Capacity(sum, cause)) => {
                 let current = first.0.count();
                 let capacity = Capacity {
                     pair: (first, second),
@@ -298,19 +298,17 @@ impl<T: buffer::raw::Segment> TryFrom<(Self, Self)> for segments::Many<T> {
     }
 }
 
-impl<T> Rejected<(&mut segments::Chain<T>, &mut segments::Chain<T>)> {
+impl Rejected {
     pub(in crate::buffer::segments) fn into_error(self) -> segments::Error {
         match self {
             Self::Total(cause) => cause.into(),
-            Self::Capacity(capacity) => capacity.cause.into_error(),
+            Self::Capacity(_, cause) => cause.into_error(),
         }
     }
 }
 
 // SAFETY: both retained Many chains own at least four owners with their checked exact sum.
-unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
-    for Capacity<(segments::Many<T>, segments::Many<T>)>
-{
+unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T> for Capacity<T> {
     type Item = segments::Item<T>;
     type Error = crate::mem::Rejected<(segments::Many<T>, segments::Many<T>), assembly::Error>;
 
@@ -334,9 +332,7 @@ unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T>
     }
 }
 
-impl<T: buffer::raw::Segment> buffer::raw::Total
-    for Capacity<(segments::Many<T>, segments::Many<T>)>
-{
+impl<T: buffer::raw::Segment> buffer::raw::Total for Capacity<T> {
     fn count(&self) -> segments::Count {
         segments::Count::new(self.sum.count.get())
     }

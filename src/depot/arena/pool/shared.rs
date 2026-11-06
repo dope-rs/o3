@@ -44,13 +44,13 @@ impl<T> Store<T> {
         self.block.vacancies()
     }
 
-    pub fn vacancy(&self) -> Option<pool::Vacant<'_, Resident<T>, Header<T>>> {
+    pub fn vacancy(&self) -> Option<pool::Vacant<'_, Resident<T>>> {
         self.vacancies().vacancy()
     }
 }
 
 impl<T> Header<T> {
-    pub fn vacancy(&self) -> Option<pool::Vacant<'_, Resident<T>, Header<T>>> {
+    pub fn vacancy(&self) -> Option<pool::Vacant<'_, Resident<T>>> {
         pool::Vacant::new(self)
     }
 }
@@ -59,24 +59,18 @@ const _: () = {
     assert!(mem::size_of::<Store<()>>() == mem::size_of::<usize>());
     assert!(mem::size_of::<&'static Header<()>>() == mem::size_of::<usize>());
     assert!(mem::size_of::<Option<&'static Header<()>>>() == mem::size_of::<usize>());
+    assert!(mem::size_of::<pool::Vacant<'static, Resident<()>>>() == 2 * mem::size_of::<usize>());
     assert!(
-        mem::size_of::<pool::Vacant<'static, Resident<()>, Header<()>>>()
+        mem::size_of::<Option<pool::Vacant<'static, Resident<()>>>>()
             == 2 * mem::size_of::<usize>()
     );
+    assert!(mem::size_of::<pool::Unique<'static, Resident<()>>>() == mem::size_of::<usize>());
     assert!(
-        mem::size_of::<Option<pool::Vacant<'static, Resident<()>, Header<()>>>>()
-            == 2 * mem::size_of::<usize>()
-    );
-    assert!(
-        mem::size_of::<pool::Unique<'static, Resident<()>, Header<()>>>()
+        mem::size_of::<pool::Unique<'static, Resident<()>, (), Initialized>>()
             == mem::size_of::<usize>()
     );
     assert!(
-        mem::size_of::<pool::Unique<'static, Resident<()>, Header<()>, Initialized>>()
-            == mem::size_of::<usize>()
-    );
-    assert!(
-        mem::size_of::<Option<pool::Unique<'static, Resident<()>, Header<()>, Initialized>>>()
+        mem::size_of::<Option<pool::Unique<'static, Resident<()>, (), Initialized>>>()
             == mem::size_of::<usize>()
     );
     assert!(mem::size_of::<pool::Shared<'static, ()>>() == mem::size_of::<usize>());
@@ -88,8 +82,8 @@ const _: () = {
 };
 
 // SAFETY: this policy is installed only after the resident value is initialized.
-unsafe impl<T> crate::depot::raw::PoolPolicy<Resident<T>, Header<T>> for Initialized {
-    fn retire(mut entry: pool::Terminal<'_, Resident<T>, Header<T>>) {
+unsafe impl<T> crate::depot::raw::PoolPolicy<Resident<T>, ()> for Initialized {
+    fn retire(mut entry: pool::Terminal<'_, Resident<T>>) {
         // SAFETY: this policy is installed only after the resident value is initialized.
         unsafe { (*entry.get_mut().value.get()).assume_init_drop() };
         entry.recycle();

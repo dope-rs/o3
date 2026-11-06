@@ -4,7 +4,7 @@ use o3::base::cell::{brand, local};
 
 #[test]
 fn borrows_branded_regions() {
-    brand::Token::scope_pinned(Pin::new(&mut ()), |mut token, (mut io, mut state), _| {
+    brand::scope_pinned(Pin::new(&mut ()), |mut token, (mut io, mut state), _| {
         let value = token.bind(1);
         *token.pin_mut(Pin::new(&value)).get_mut() = 2;
         assert_eq!(*token.borrow_pin(Pin::new(&value)), 2);

@@ -19,7 +19,7 @@ impl<'a, K: crate::depot::raw::Key, V, P> Vacant<'a, K, V, P> {
         self.table
     }
 
-    pub fn insert(self, value: V) {
+    pub fn insert(self, value: V) -> direct::Occupied<'a, K, V> {
         // SAFETY: this affine vacancy owns an uninitialized slot, so overwriting
         // its vacant record cannot discard a live value or run drop glue.
         unsafe {
@@ -30,18 +30,6 @@ impl<'a, K: crate::depot::raw::Key, V, P> Vacant<'a, K, V, P> {
         }
         let len = self.table.len() + 1;
         *self.table.block.state_mut() = capacity::Count::new(len as u32);
-    }
-}
-
-impl<'a, K: crate::depot::raw::Key, V> Vacant<'a, K, V> {
-    /// Initializes this slot and retains exclusive access to its exact key.
-    pub fn occupy(self, value: V) -> direct::Occupied<'a, K, V> {
-        Vacant::<K, V> {
-            table: &mut *self.table,
-            key: self.key,
-            plane: marker::PhantomData,
-        }
-        .insert(value);
         direct::Occupied {
             table: self.table,
             key: self.key,

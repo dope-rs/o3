@@ -1,4 +1,4 @@
-use std::{cell, pin, ptr};
+use std::{cell, mem, pin, ptr};
 
 use crate::{
     alloc::tail,
@@ -17,14 +17,15 @@ pub trait Recycle {
 }
 
 #[derive(Debug)]
-pub struct Header<T> {
-    pub(in crate::depot::arena::pool) free: cell::Cell<*mut pool::Entry<T, Header<T>>>,
+pub struct Header<T, C = ()> {
+    pub(in crate::depot::arena::pool) free: cell::Cell<*mut pool::Entry<T, C>>,
+    pub(in crate::depot::arena::pool) context: mem::ManuallyDrop<C>,
 }
 
 /// Fixed initialized storage; leases return slots without changing their contents.
 #[repr(transparent)]
 pub struct Store<T> {
-    block: tail::Block<Header<T>, pool::Entry<T, Header<T>>, capacity::Count>,
+    block: tail::Block<Header<T>, pool::Entry<T>, capacity::Count>,
 }
 
 impl<T> Store<T> {
@@ -46,6 +47,7 @@ impl<T> Store<T> {
                 tail::Plan::try_new(capacity)?.try_allocate()?,
                 Header {
                     free: cell::Cell::new(ptr::null_mut()),
+                    context: mem::ManuallyDrop::new(()),
                 },
                 init,
             ),
@@ -56,17 +58,13 @@ impl<T> Store<T> {
         tail::View::new(&self.block).header()
     }
 
-    pub fn take(&self) -> Option<pool::Unique<'_, T, Header<T>>> {
+    pub fn take(&self) -> Option<pool::Unique<'_, T>> {
         self.vacancies().take()
     }
 }
 
 impl<T> Header<T> {
-    pub fn take(&self) -> Option<pool::Unique<'_, T, Self>> {
+    pub fn take(&self) -> Option<pool::Unique<'_, T>> {
         Some(pool::Vacant::new(self)?.reserve())
-    }
-
-    pub(in crate::depot) fn free_list(&self) -> &cell::Cell<*mut pool::Entry<T, Self>> {
-        &self.free
     }
 }

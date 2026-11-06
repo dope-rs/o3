@@ -294,6 +294,8 @@ fn borrow_front_before_pop() {
         .expect("required fixture outcome");
 
     assert_eq!(pool::View::from(&lane).front(), Some(&1));
+    let tail = pool::View::from(&lane).back();
+    assert_eq!(tail, Some(&2));
     assert_eq!(lane.count().get(), 2);
     assert_eq!(lane.pop_front(), Some(1));
     assert_eq!(lane.pop_front(), Some(2));

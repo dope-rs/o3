@@ -103,7 +103,7 @@ impl<T, Tag, const TRACK: bool> Drop for Arena<T, Tag, TRACK> {
 const _: () = assert!(mem::size_of::<Arena<u64>>() == 3 * mem::size_of::<usize>());
 
 mod pool;
-pub(in crate::depot) use pool::{PoolMutable, PoolOwner, PoolPolicy};
+pub(in crate::depot) use pool::{PoolMutable, PoolPolicy};
 
 mod queues;
 pub(in crate::depot) use queues::{QueueBlock, QueueSlot};

@@ -90,7 +90,7 @@ fn reports_observed_slot() {
         let occupied = table
             .try_vacant(key)
             .expect("direct key must retain its complete identity")
-            .occupy(7);
+            .insert(7);
         assert!(occupied.key() == key);
         assert_eq!(*occupied.get(), 7);
     }

@@ -85,6 +85,13 @@ impl<T: Copy, P, const N: usize> Fifo<T, P, N> {
         Some(self.first::<Q>()?.remove())
     }
 
+    pub fn pop_front<const Q: usize>(&self) -> Option<(usize, &P, T)> {
+        let member = self.first::<Q>()?;
+        let index = member.index.get();
+        let (slot, value) = member.remove();
+        Some((index, slot.state(), value))
+    }
+
     fn first<const Q: usize>(&self) -> Option<Member<'_, T, P, N, Q, Head>> {
         const { assert!(Q < N) };
         let index = self.nodes.state()[Q].first()?;

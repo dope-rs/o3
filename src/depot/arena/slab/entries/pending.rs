@@ -94,8 +94,8 @@ where
     S: storage::Storage,
 {
     fn drop(&mut self) {
-        let index = entries::SlotIndex(self.index().raw());
-        let head = self.core.partition(index).replace(index.get());
+        let index = self.index().raw();
+        let head = self.core.partition(index).replace(index);
         // SAFETY: this reservation owns the non-value union member of its exact slot.
         unsafe {
             self.slot.set_links(crate::depot::raw::SlabLinks {
@@ -111,7 +111,7 @@ where
                     .slots
                     .as_ref()
                     .get_unchecked(head as usize)
-                    .set_prev(index.get());
+                    .set_prev(index);
             }
         }
     }
@@ -225,7 +225,7 @@ impl<'a, T, G: external::Generation, Tag>
                 generation: epoch,
                 value,
             })
-            .with_state(epoch)
+            .into_external()
     }
 }
 
@@ -385,7 +385,6 @@ type Staging<'a, T, G, Tag> = external::Staged<
     >,
     Tag,
     true,
-    G,
 >;
 
 type Replaced<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize> = Result<

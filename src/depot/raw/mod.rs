@@ -22,7 +22,7 @@ pub unsafe trait Project<K, P = ()> {
 use crate::depot::{
     arena::linked::{head, slots},
     capacity,
-    index::{Initialized, Stored, bitmap, bitmap::entry::Row, set},
+    index::{Initialized, Stored, bitmap, set},
     queue::{
         indexed::keyed::{self, lanes},
         links::Index,
@@ -103,32 +103,11 @@ pub unsafe trait Word: Copy + Eq {
 pub(in crate::depot) use hooks::{
     Detach, EndpointHook, EndpointWord, Insert, Neighbor, Pop, Removal, Splice,
 };
-pub(crate) use proof::{Present, Slot};
+pub(crate) use proof::Slot;
 mod arena;
 pub use arena::Arena;
 mod words;
 pub use words::Words;
-/// Unsafe projections that preserve a retained bitmap row.
-pub trait Rows<W: bitmap::Width = usize>: Words<W> + Sized {
-    /// # Safety
-    /// Mutation preserves this source's storage, immutable domain, row, and phase membership.
-    /// Implementations must return this row's exact retained source.
-    unsafe fn source_mut<P, M>(row: &mut Row<Self, P, M, W>) -> &mut Self {
-        &mut row.source
-    }
-
-    /// # Safety
-    /// Projection retains the exact source, immutable domain, and owner lifetime.
-    /// Implementations must retain this row's exact index and projected owner.
-    unsafe fn map_row<T: Words<W>>(
-        row: Row<Self, (), (), W>,
-        map: impl FnOnce(Self) -> T,
-    ) -> Row<T, (), (), W> {
-        unsafe { row.map(map) }
-    }
-}
-
-impl<W: bitmap::Width, S: Words<W>> Rows<W> for S {}
 mod hooks;
 pub use hooks::{Hooks, Node};
 
@@ -446,9 +425,9 @@ pub unsafe trait Reserve<'fifo, 'pool: 'fifo, const TRACK: bool = true>: Sized {
 }
 pub(crate) use arena::{EndsPop, SlotOwner};
 pub(in crate::depot) use arena::{
-    IndexedBlock, IndexedHook, IndexedMeta, IndexedState, PoolMutable, PoolOwner, PoolPolicy,
-    QueueBlock, QueueSlot, Retired, SlabCapacity, SlabLinks, SlabSlot, StagedMove, StagedNode,
-    StagedPhase, StagedState,
+    IndexedBlock, IndexedHook, IndexedMeta, IndexedState, PoolMutable, PoolPolicy, QueueBlock,
+    QueueSlot, Retired, SlabCapacity, SlabLinks, SlabSlot, StagedMove, StagedNode, StagedPhase,
+    StagedState,
 };
 pub(in crate::depot) use hooks::{LaneInit, LaneStore, LaneUndo};
 

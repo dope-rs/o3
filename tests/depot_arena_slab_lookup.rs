@@ -63,7 +63,7 @@ fn retains_free_links() {
         key::Handle::from_parts(key::Parts::new(index as u32, key::Generation::MIN))
     });
     for index in [2, 0, 5, 7, 1, 6, 4, 3] {
-        let vacant = slab::Slots::new(&mut table).vacant_at(index);
+        let vacant = table.vacant_at(index);
         let vacant = vacant.expect("assertion failed: vacant.is_some()");
         let selected = vacant.stage(index).commit();
         assert!((selected.key()) == (keys[index as usize]));
@@ -82,7 +82,7 @@ fn retains_free_links() {
     for index in [5, 2, 1, 6] {
         let old = keys[index];
         {
-            let vacant = slab::Slots::new(&mut table).vacant_at(index as u32);
+            let vacant = table.vacant_at(index as u32);
             let vacant = vacant.expect("assertion failed: vacant.is_some()");
             let selected = vacant.stage(index as u32).commit();
             keys[index] = selected.key();

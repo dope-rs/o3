@@ -183,25 +183,12 @@ fn keeps_u16_layout() {
 }
 
 #[test]
-fn alloc_skips_context() {
-    let called = Cell::new(false);
-    let result = Tracker::fail_after(0, || {
-        provided::Arena::<u8, ()>::try_with(NonZero::<u32>::MIN, || {
-            called.set(true);
-            Ok::<(), alloc::Error>(())
-        })
-    });
-    assert!(result.is_err());
-    assert!(!called.get());
-}
-
-#[test]
 fn context_failure_frees() {
     let (result, stats) = Tracker::activity(|| {
-        hint::black_box(provided::Arena::<u8, ()>::try_with(
-            NonZero::<u32>::MIN,
-            || hint::black_box(Err::<(), _>(alloc::Error::Overflow)),
-        ))
+        let initialize = provided::Arena::<u8, ()>::try_allocate(NonZero::<u32>::MIN)?;
+        Ok::<_, alloc::Error>(initialize(hint::black_box(Err::<(), _>(
+            alloc::Error::Overflow,
+        ))?))
     });
     assert!(matches!(result, Err(alloc::Error::Overflow)));
     assert_eq!(stats.allocations, 1);
@@ -212,9 +199,8 @@ fn context_failure_frees() {
 #[test]
 fn reuses_rejected_slot() {
     let drops = Cell::new(Some(0));
-    let arena =
-        provided::Arena::<Item, _>::try_with(NonZero::<u32>::MIN, || Ok::<_, alloc::Error>(7_u8));
-    let mut arena = arena.expect("the single slot must allocate");
+    let mut arena = provided::Arena::<Item, _>::try_allocate(NonZero::<u32>::MIN)
+        .expect("the single slot must allocate")(7_u8);
     let buffer = Item::try_new(b"body", &drops).expect("fixture buffer must allocate");
     let pointer = buffer.bytes.as_ptr();
     let measured = Tracker::begin();

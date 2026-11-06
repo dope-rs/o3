@@ -189,8 +189,7 @@ fn commits_exact_source() {
                 .expect("bounded copy source")
                 .expect("nonempty copy source");
             assert_eq!(source.len().get(), 6);
-            let admitted = pool::Copy::try_new(source, target).expect("complete copy fits");
-            let owner = admitted.commit();
+            let owner = target.try_copy(source).expect("complete copy fits");
             assert_eq!(owner.as_ref(), b"abcdefgh");
             assert_eq!(owner.as_ref().as_ptr(), pointer);
             assert_eq!(pool.available(), 0);
@@ -209,26 +208,12 @@ fn rejects_short_tail() {
     let source = buffer::raw::Slices::try_new([b"1234567".as_slice()])
         .expect("bounded copy source")
         .expect("nonempty copy source");
-    let (admitted, activity) = Tracker::usage(|| pool::Copy::try_new(source, target));
+    let (admitted, activity) = Tracker::usage(|| target.try_copy(source));
     let result = admitted;
-    let error = result.err().expect("copy exceeds remaining capacity");
+    let error = result.expect_err("copy exceeds remaining capacity");
     let (required, room) = error.into_parts();
     assert_eq!((required.get(), room), (7, 6));
     assert_eq!(activity, (0, 0));
-    assert_eq!(pool.available(), 1);
-}
-
-#[test]
-fn drop_releases_admission() {
-    let pool = pool::Pool::try_new(1, 8).expect("copy pool");
-    let target = pool.acquire().expect("free copy slot");
-    let source = buffer::raw::Slices::try_new([b"bytes".as_slice()])
-        .expect("bounded copy source")
-        .expect("nonempty copy source");
-    assert!(
-        pool::Copy::try_new(source, target).is_ok(),
-        "complete copy fits"
-    );
     assert_eq!(pool.available(), 1);
 }
 

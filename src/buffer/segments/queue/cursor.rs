@@ -91,7 +91,12 @@ impl<'p, 'a, T> Position<'p, 'a, T> {
         let floor = location.start as usize;
         let ceiling = location.queue.len();
         if offset < floor || offset > ceiling || len > ceiling - offset {
-            return Err(queue::Bounds::new(offset, len, floor, ceiling));
+            return Err(queue::Bounds {
+                offset,
+                amount: len,
+                floor,
+                ceiling,
+            });
         }
         Ok(Self {
             location,

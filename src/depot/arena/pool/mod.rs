@@ -6,7 +6,7 @@ use crate::{
         arena::pool::{
             self,
             recycle::release,
-            shared::{Header, Initialized, Resident},
+            shared::{Initialized, Resident},
         },
         capacity,
     },
@@ -16,28 +16,20 @@ use crate::{
 pub mod recycle;
 pub mod shared;
 
-pub struct Vacant<
-    'a,
-    T,
-    O: crate::depot::raw::PoolOwner<T>,
-    P: crate::depot::raw::PoolPolicy<T, O> = (),
-> {
-    entry: ptr::NonNull<pool::Entry<T, O>>,
-    owner: &'a O,
+pub struct Vacant<'a, T, C = (), P: crate::depot::raw::PoolPolicy<T, C> = ()> {
+    entry: ptr::NonNull<pool::Entry<T, C>>,
+    owner: &'a recycle::Header<T, C>,
     policy: marker::PhantomData<P>,
 }
 
 #[repr(transparent)]
-pub struct Unique<
-    'a,
-    T,
-    O: crate::depot::raw::PoolOwner<T>,
-    P: crate::depot::raw::PoolPolicy<T, O> = (),
-    M = (),
-> {
-    entry: ptr::NonNull<pool::Entry<T, O>>,
-    owner: marker::PhantomData<fn(&'a O, P, M) -> &'a O>,
+pub struct Unique<'a, T, C = (), P: crate::depot::raw::PoolPolicy<T, C> = (), M = ()> {
+    entry: ptr::NonNull<pool::Entry<T, C>>,
+    owner: Domain<'a, T, C, P, M>,
 }
+
+type Domain<'a, T, C, P, M> =
+    marker::PhantomData<fn(&'a recycle::Header<T, C>, P, M) -> &'a recycle::Header<T, C>>;
 
 #[derive(Debug)]
 #[repr(transparent)]
@@ -46,11 +38,9 @@ pub struct Shared<'a, T> {
     owner: marker::PhantomData<fn(&'a T) -> &'a T>,
 }
 
-impl<'a, T, O: crate::depot::raw::PoolOwner<T>, P: crate::depot::raw::PoolPolicy<T, O>>
-    Vacant<'a, T, O, P>
-{
-    pub(crate) fn new(owner: &'a O) -> Option<Self> {
-        let free = unsafe { owner.free() };
+impl<'a, T, C, P: crate::depot::raw::PoolPolicy<T, C>> Vacant<'a, T, C, P> {
+    pub(crate) fn new(owner: &'a recycle::Header<T, C>) -> Option<Self> {
+        let free = &owner.free;
         let entry = ptr::NonNull::new(free.get())?;
         free.set(unsafe { entry.as_ref().state.get().cast() });
         Some(Self {
@@ -60,7 +50,7 @@ impl<'a, T, O: crate::depot::raw::PoolOwner<T>, P: crate::depot::raw::PoolPolicy
         })
     }
 
-    pub fn reserve(self) -> Unique<'a, T, O, P> {
+    pub fn reserve(self) -> Unique<'a, T, C, P> {
         let this = mem::ManuallyDrop::new(self);
         unsafe {
             this.entry
@@ -75,33 +65,27 @@ impl<'a, T, O: crate::depot::raw::PoolOwner<T>, P: crate::depot::raw::PoolPolicy
     }
 }
 
-impl<T, O: crate::depot::raw::PoolOwner<T>, P: crate::depot::raw::PoolPolicy<T, O>> Drop
-    for Vacant<'_, T, O, P>
-{
+impl<T, C, P: crate::depot::raw::PoolPolicy<T, C>> Drop for Vacant<'_, T, C, P> {
     fn drop(&mut self) {
-        unsafe { pool::Entry::recycle(self.entry, self.owner.free()) };
+        unsafe { pool::Entry::recycle(self.entry, &self.owner.free) };
     }
 }
 
-impl<'a, T, O: crate::depot::raw::PoolOwner<T>, P: crate::depot::raw::PoolPolicy<T, O>, M>
-    Unique<'a, T, O, P, M>
-{
+impl<'a, T, C, P: crate::depot::raw::PoolPolicy<T, C>, M> Unique<'a, T, C, P, M> {
     pub fn get(&self) -> pin::Pin<&T> {
         // SAFETY: the owned entry is structurally pinned for the retained borrow.
         unsafe { pin::Pin::new_unchecked(&self.entry.as_ref().value) }
     }
 }
 
-impl<T, O: crate::depot::raw::PoolOwner<T>, P: crate::depot::raw::PoolMutable<T, O>>
-    Unique<'_, T, O, P>
-{
+impl<T, C, P: crate::depot::raw::PoolMutable<T, C>> Unique<'_, T, C, P> {
     pub fn get_mut(&mut self) -> pin::Pin<&mut T> {
         // SAFETY: the owned entry is structurally pinned for the retained mutable borrow.
         unsafe { pin::Pin::new_unchecked(&mut self.entry.as_mut().value) }
     }
 }
 
-impl<'a, T> Unique<'a, Resident<T>, Header<T>, Initialized> {
+impl<'a, T> Unique<'a, Resident<T>, (), Initialized> {
     pub fn freeze(self) -> Shared<'a, T> {
         // SAFETY: begin/try_unique retain an initialized value with an empty reference domain.
         unsafe { self.get().get_ref().activate() };
@@ -132,9 +116,7 @@ impl<'a, T> Unique<'a, Resident<T>, Header<T>, Initialized> {
     }
 }
 
-impl<T, O: crate::depot::raw::PoolOwner<T>, P: crate::depot::raw::PoolPolicy<T, O>, M> Drop
-    for Unique<'_, T, O, P, M>
-{
+impl<T, C, P: crate::depot::raw::PoolPolicy<T, C>, M> Drop for Unique<'_, T, C, P, M> {
     fn drop(&mut self) {
         P::retire(pool::Terminal {
             entry: self.entry,
@@ -159,7 +141,7 @@ impl<'a, T> Shared<'a, T> {
         })
     }
 
-    pub fn try_unique(self) -> Result<Unique<'a, Resident<T>, Header<T>, Initialized>, Self> {
+    pub fn try_unique(self) -> Result<Unique<'a, Resident<T>, (), Initialized>, Self> {
         if !self.get().is_unique() {
             return Err(self);
         }
@@ -171,8 +153,8 @@ impl<'a, T> Shared<'a, T> {
     }
 }
 
-impl<'owner, T> pool::Unique<'owner, Resident<T>, Header<T>> {
-    pub fn begin(mut self, value: T) -> pool::Unique<'owner, Resident<T>, Header<T>, Initialized> {
+impl<'owner, T> pool::Unique<'owner, Resident<T>> {
+    pub fn begin(mut self, value: T) -> pool::Unique<'owner, Resident<T>, (), Initialized> {
         let resident = self.get_mut();
         unsafe { resident.value.get().write(mem::MaybeUninit::new(value)) };
         // SAFETY: the exclusive resident now contains exactly one initialized value.
@@ -184,7 +166,7 @@ impl<'owner, T> pool::Unique<'owner, Resident<T>, Header<T>> {
     }
 }
 
-impl<T> ops::Deref for pool::Unique<'_, Resident<T>, Header<T>, Initialized> {
+impl<T> ops::Deref for pool::Unique<'_, Resident<T>, (), Initialized> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -192,7 +174,7 @@ impl<T> ops::Deref for pool::Unique<'_, Resident<T>, Header<T>, Initialized> {
     }
 }
 
-impl<T> ops::DerefMut for pool::Unique<'_, Resident<T>, Header<T>, Initialized> {
+impl<T> ops::DerefMut for pool::Unique<'_, Resident<T>, (), Initialized> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { (*self.get().value.get()).assume_init_mut() }
     }
@@ -206,15 +188,12 @@ impl<T> ops::Deref for pool::Shared<'_, T> {
     }
 }
 
-impl<'owner, T, C> pool::Unique<'owner, T, release::Header<T, C>, release::Notify<'owner>>
+impl<'owner, T, C> pool::Unique<'owner, T, C, release::Notify<'owner>>
 where
     T: recycle::Recycle + 'owner,
     C: release::Context<'owner, T>,
 {
-    pub fn commit(
-        self,
-    ) -> pool::Unique<'owner, T, release::Header<T, C>, release::Notify<'owner>, release::Frozen>
-    {
+    pub fn commit(self) -> pool::Unique<'owner, T, C, release::Notify<'owner>, release::Frozen> {
         let this = mem::ManuallyDrop::new(self);
         Unique {
             entry: this.entry,
@@ -223,13 +202,11 @@ where
     }
 }
 
-impl<'a, T, O: crate::depot::raw::PoolOwner<T>, P: crate::depot::raw::PoolPolicy<T, O>, M>
-    Unique<'a, T, O, P, M>
-{
+impl<'a, T, C, P: crate::depot::raw::PoolPolicy<T, C>, M> Unique<'a, T, C, P, M> {
     /// The value must satisfy the destination policy's initialized-state invariant.
-    pub(crate) unsafe fn map<Q: crate::depot::raw::PoolPolicy<T, O>>(
+    pub(crate) unsafe fn map<Q: crate::depot::raw::PoolPolicy<T, C>>(
         self,
-    ) -> Unique<'a, T, O, Q, M> {
+    ) -> Unique<'a, T, C, Q, M> {
         let this = mem::ManuallyDrop::new(self);
         Unique {
             entry: this.entry,
@@ -241,57 +218,54 @@ impl<'a, T, O: crate::depot::raw::PoolOwner<T>, P: crate::depot::raw::PoolPolicy
 /// Physical slot shared by stable-address local pool policies.
 #[derive(Debug)]
 #[repr(C)]
-pub struct Entry<T, O> {
+pub struct Entry<T, C = ()> {
     pub(in crate::depot::arena::pool) value: T,
-    pub(in crate::depot::arena::pool) state: cell::Cell<*mut O>,
+    pub(in crate::depot::arena::pool) state: cell::Cell<*mut recycle::Header<T, C>>,
 }
 
 /// Counted view of the same initialized shared-value slot.
 #[derive(Debug)]
 #[repr(transparent)]
 struct Counted<T> {
-    entry: Entry<Resident<T>, Header<T>>,
+    entry: Entry<Resident<T>>,
 }
 
 // SAFETY: this view retains an initialized value and its original pool owner
 // until the final counted edge transfers the slot to its retirement policy.
 unsafe impl<T> crate::mem::raw::Target for Counted<T> {
     unsafe fn destroy(pointer: ptr::NonNull<Self>) {
-        <Initialized as crate::depot::raw::PoolPolicy<Resident<T>, Header<T>>>::retire(Terminal {
+        <Initialized as crate::depot::raw::PoolPolicy<Resident<T>, ()>>::retire(Terminal {
             entry: pointer.cast(),
             owner: marker::PhantomData,
         });
     }
 }
 
-pub struct Terminal<'a, T, O: crate::depot::raw::PoolOwner<T>> {
-    pub(in crate::depot::arena::pool) entry: ptr::NonNull<Entry<T, O>>,
-    pub(in crate::depot::arena::pool) owner: marker::PhantomData<&'a O>,
+pub struct Terminal<'a, T, C = ()> {
+    pub(in crate::depot::arena::pool) entry: ptr::NonNull<Entry<T, C>>,
+    pub(in crate::depot::arena::pool) owner: marker::PhantomData<&'a recycle::Header<T, C>>,
 }
 
-impl<'a, T, O: crate::depot::raw::PoolOwner<T>> Terminal<'a, T, O> {
+impl<'a, T, C> Terminal<'a, T, C> {
     pub fn get_mut(&mut self) -> pin::Pin<&mut T> {
         // SAFETY: the terminal entry is structurally pinned for the retained mutable borrow.
         unsafe { pin::Pin::new_unchecked(&mut self.entry.as_mut().value) }
     }
 
-    pub(crate) fn recycle(self) -> &'a O {
+    pub(crate) fn recycle(self) -> &'a recycle::Header<T, C> {
         // SAFETY: this terminal entry retains its initialized owner's original loan.
         let owner = unsafe { &*self.entry.as_ref().state.get() };
-        unsafe { Entry::recycle(self.entry, owner.free()) };
+        unsafe { Entry::recycle(self.entry, &owner.free) };
         owner
     }
 }
 
-impl<T, O> Entry<T, O> {
+impl<T, C> Entry<T, C> {
     pub(crate) fn init(
-        memory: tail::Uninit<O, Self, capacity::Count>,
-        header: O,
+        memory: tail::Uninit<recycle::Header<T, C>, Self, capacity::Count>,
+        header: recycle::Header<T, C>,
         mut init: impl FnMut(u32) -> T,
-    ) -> tail::Block<O, Self, capacity::Count>
-    where
-        O: crate::depot::raw::PoolOwner<T>,
-    {
+    ) -> tail::Block<recycle::Header<T, C>, Self, capacity::Count> {
         let mut block = memory.init(header);
         let indices = 0..block.extent().raw();
         let (header, entries) = block.parts_mut();
@@ -303,7 +277,7 @@ impl<T, O> Entry<T, O> {
             }));
         }
         // SAFETY: each initialized slot belongs to this retained pinned owner.
-        unsafe { header.free() }.set(free);
+        header.free.set(free);
         // SAFETY: every admitted slot was initialized once in index order.
         unsafe { block.assume_init() }
     }

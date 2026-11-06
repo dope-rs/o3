@@ -2,7 +2,6 @@ use std::{convert, iter, marker, pin::Pin};
 
 pub use cell::Cell;
 use cycle::Policy;
-pub use slots::Slots;
 use storage::Plane as _;
 
 use crate::depot::{

@@ -106,7 +106,7 @@ impl<'d> Shared<'d> {
         Ok(Self {
             // SAFETY: the source-bound selection retains the same immutable
             // region throughout retention; no independent owner can be supplied.
-            region: unsafe { view.source().region.try_view(view.as_slice())? },
+            region: unsafe { view.source.region.try_view(view.as_slice())? },
         })
     }
 }

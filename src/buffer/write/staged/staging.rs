@@ -8,7 +8,7 @@ pub(in crate::buffer) struct Staging<'a, 'source, W, const N: usize> {
     len: usize,
 }
 
-impl<'a, 'source, W: crate::buffer::raw::Space, const N: usize> Staging<'a, 'source, W, N> {
+impl<'a, 'source, W: crate::buffer::raw::Exclusive, const N: usize> Staging<'a, 'source, W, N> {
     pub(in crate::buffer) fn try_new(
         writer: &'a mut W,
         slices: [&'source [u8]; N],
@@ -27,7 +27,7 @@ impl<'a, 'source, 'target> Staging<'a, 'source, write::Spare<'target>, 1> {
         writer: &'a mut write::Spare<'target>,
         src: &'source [u8],
     ) -> (Self, &'source [u8]) {
-        let len = src.len().min(crate::buffer::raw::Space::remaining(writer));
+        let len = src.len().min(writer.remaining());
         let (head, tail) = src.split_at(len);
         (
             Self {

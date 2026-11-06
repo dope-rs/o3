@@ -1,5 +1,4 @@
 use std::{
-    alloc::Layout,
     marker,
     mem::{ManuallyDrop, MaybeUninit, offset_of, take},
     num, ptr, vec,
@@ -179,17 +178,14 @@ impl Header {
             *source = T::default();
             return Ok(regions::Shared::empty(None));
         }
-        let pointer =
-            crate::alloc::raw::LayoutExt::try_allocate::<Header>(Layout::new::<Header>())?;
+        let allocation = crate::alloc::BoxExt::try_new(MaybeUninit::uninit())?;
         let (bytes, len, capacity) = take(source).into().into_raw_parts();
-        // SAFETY: this control block owns the exact Header layout. The full
-        // vector capacity has the same allocation layout as these uninitialized bytes.
-        unsafe {
-            pointer.write(Header {
-                refs: mem::raw::Count::one(),
-                buf: Box::from_raw(ptr::slice_from_raw_parts_mut(bytes.cast(), capacity)),
-            })
-        };
+        let pointer = ptr::NonNull::from(Box::leak(allocation).write(Header {
+            refs: mem::raw::Count::one(),
+            // SAFETY: this control block owns the exact Header layout. The full
+            // vector capacity has the same allocation layout as these uninitialized bytes.
+            buf: unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(bytes.cast(), capacity)) },
+        }));
         // SAFETY: derive coordinates after the Box reaches its final address;
         // the original initialized prefix remains within its complete allocation.
         let extent =

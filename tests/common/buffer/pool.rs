@@ -71,14 +71,15 @@ unsafe impl GlobalAlloc for Reentrant {
 }
 
 /// Fills and completes the admitted nonzero prefix of the same initialized output.
-pub fn try_fill<'a, const N: usize, L>(
-    mut output: buffer::raw::Output<'a, L>,
+pub fn try_fill<const N: usize, L>(
+    mut output: buffer::raw::Output<'_, L>,
     fill: impl FnOnce(&mut [u8]),
-) -> Result<pool::Complete<'a, L>, consume::Error> {
+) -> Result<(), consume::Error> {
     const { assert!(N > 0) };
     consume::Error::check(N, output.len())?;
     fill(&mut output.as_mut_slice()[..N]);
     // SAFETY: N is nonzero and the same exclusive initialized output retains
     // the checked N-byte prefix throughout the fixture's write.
-    Ok(unsafe { output.complete(NonZero::new_unchecked(N)) })
+    unsafe { output.complete(NonZero::new_unchecked(N)) };
+    Ok(())
 }

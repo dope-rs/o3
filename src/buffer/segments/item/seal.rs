@@ -35,16 +35,12 @@ impl Seal for storage::Shared {
             .map_err(storage::AllocError::Exhausted)
             .map_err(hold::CopyError::Storage)?
             .into_shared();
-        Ok(Item {
-            value,
-            nonempty: (),
-        })
+        Ok(Item { value })
     }
 
     fn try_share(view: regions::NonEmpty<'_, '_, Self>) -> Result<Item<Self>, rc::Error> {
         Ok(Item {
             value: view.view().try_clone()?,
-            nonempty: (),
         })
     }
 }
@@ -69,16 +65,12 @@ impl<'d> Seal for resident::Shared<'d> {
             .map_err(resident::AllocError::from)
             .map_err(hold::CopyError::Resident)?
             .into_shared();
-        Ok(Item {
-            value,
-            nonempty: (),
-        })
+        Ok(Item { value })
     }
 
     fn try_share(view: regions::NonEmpty<'_, '_, Self>) -> Result<Item<Self>, rc::Error> {
         Ok(Item {
             value: resident::Shared::try_share(view)?,
-            nonempty: (),
         })
     }
 }

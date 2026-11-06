@@ -51,9 +51,29 @@ impl<W: bitmap::Width, S: crate::depot::raw::Words<W>> Row<S, (), (), W> {
         // SAFETY: the same retained domain admits this one-based row position.
         Self::from_source(unsafe { crate::depot::raw::Proof::new((source, index)) })
     }
+
+    /// # Safety
+    /// The projection must retain the exact source, immutable domain, and owner lifetime.
+    pub unsafe fn map<T: crate::depot::raw::Words<W>>(
+        self,
+        map: impl FnOnce(S) -> T,
+    ) -> Row<T, (), (), W> {
+        Row {
+            source: map(self.source),
+            index: self.index,
+            plane: (),
+            phase: marker::PhantomData,
+        }
+    }
 }
 
 impl<W: bitmap::Width, S: crate::depot::raw::Words<W>, P, M> Row<S, P, M, W> {
+    /// # Safety
+    /// Mutation preserves this source's storage, immutable domain, row, and phase membership.
+    pub unsafe fn source_mut(&mut self) -> &mut S {
+        &mut self.source
+    }
+
     pub(in crate::depot) const fn plane(&self) -> P
     where
         P: Copy,
@@ -86,20 +106,6 @@ impl<W: bitmap::Width, S: crate::depot::raw::Words<W>, P, M> Row<S, P, M, W> {
 impl<W: bitmap::Width, S: crate::depot::raw::Words<W>, P> Row<S, P, (), W> {
     pub const fn source(&self) -> &S {
         &self.source
-    }
-
-    /// # Safety
-    /// The projection must retain the exact source, immutable domain, and owner lifetime.
-    pub(in crate::depot) unsafe fn map<T: crate::depot::raw::Words<W>>(
-        self,
-        map: impl FnOnce(S) -> T,
-    ) -> Row<T, (), (), W> {
-        Row {
-            source: map(self.source),
-            index: self.index,
-            plane: (),
-            phase: marker::PhantomData,
-        }
     }
 }
 

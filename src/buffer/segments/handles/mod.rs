@@ -76,12 +76,6 @@ impl<T> Parts<T> {
 #[repr(transparent)]
 pub(in crate::buffer::segments) struct Key(usize);
 
-pub(in crate::buffer::segments) enum State {
-    Empty,
-    Single(slots::Index),
-    Multi(slots::Index),
-}
-
 /// A decoded key whose retained owner is known to be nonempty.
 pub(in crate::buffer::segments) enum Occupied {
     Single(slots::Index),
@@ -97,15 +91,12 @@ impl Key {
         self.0 == 0
     }
 
-    pub(in crate::buffer::segments) const fn state(&self) -> State {
+    pub(in crate::buffer::segments) const fn state(&self) -> Option<Occupied> {
         if self.0 == 0 {
-            return State::Empty;
+            return None;
         }
         // SAFETY: the empty key was excluded above.
-        match unsafe { self.occupied() } {
-            Occupied::Single(index) => State::Single(index),
-            Occupied::Multi(index) => State::Multi(index),
-        }
+        Some(unsafe { self.occupied() })
     }
 
     /// # Safety

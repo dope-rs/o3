@@ -14,9 +14,9 @@ pub mod staged;
 mod store;
 
 /// A fixed-capacity FIFO whose physical index is supplied by the caller.
-pub struct List<T = (), I: crate::depot::raw::Compact = u32, P = ()> {
+pub struct List<T = (), I: crate::depot::raw::Compact = u32> {
     pub(in crate::depot::queue::indexed) store: fifo::Store<T>,
-    index: marker::PhantomData<fn() -> (I, P)>,
+    index: marker::PhantomData<fn() -> I>,
 }
 
 #[derive(Clone, Copy)]
@@ -53,7 +53,7 @@ impl<T> List<T> {
     }
 }
 
-impl<T, I: crate::depot::raw::Compact, P> List<T, I, P> {
+impl<T, I: crate::depot::raw::Compact> List<T, I> {
     pub fn try_new(capacity: usize) -> Result<Self, crate::alloc::Error> {
         Self::try_count(Counted::try_new(capacity)?)
     }
@@ -82,9 +82,7 @@ impl<T, I: crate::depot::raw::Compact, P> List<T, I, P> {
     pub fn is_empty(&self) -> bool {
         self.store.state().is_empty()
     }
-}
 
-impl<T, I: crate::depot::raw::Compact> List<T, I> {
     pub fn entry(&mut self, index: I) -> Option<Entry<'_, T, I>> {
         let entry = self.store.get(index.into_raw() as usize)?;
         Some(if entry.slot().hook.previous.get() == entry.index().raw() {

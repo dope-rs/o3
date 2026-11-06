@@ -2,7 +2,6 @@ use std::{mem, ptr};
 
 pub use error::Error;
 pub use gap::Gap;
-pub use vacant::Vacant;
 
 use crate::alloc;
 
@@ -11,7 +10,6 @@ mod error;
 mod gap;
 pub mod raw;
 pub mod tail;
-mod vacant;
 
 /// The allocator could not satisfy a validated layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,6 +18,15 @@ pub struct Exhausted;
 /// Capacity or layout arithmetic exceeded a representable bound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Overflow;
+
+/// Reserves one insertion before constructing its value.
+pub fn try_vacant<T>(values: &mut Vec<T>) -> Result<impl FnOnce(T) + '_, Error> {
+    use raw::VecExt as _;
+
+    VecExt::try_reserve(values, 1)?;
+    // SAFETY: successful reservation admits the exact retained next slot.
+    Ok(unsafe { values.vacancy() })
+}
 
 /// Fallible allocation for one boxed value.
 pub trait BoxExt<T>: Sized {
