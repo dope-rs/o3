@@ -3,10 +3,7 @@ use std::{array, cell, mem, slice};
 use crate::{
     alloc,
     depot::{
-        arena::slab::{
-            entries,
-            key::{self, cycle},
-        },
+        arena::slab::{entries, key::cycle},
         capacity,
     },
 };
@@ -48,16 +45,16 @@ impl Storage for Lazy {
 
 impl entries::Sealed for Lazy {}
 
-type Slot<T, const MAX: u32, M> = crate::depot::raw::SlabSlot<
+pub(in crate::depot) type Slot<T, const MAX: u32, M> = crate::depot::raw::SlabSlot<
     T,
-    key::Generation<MAX>,
+    <<M as entries::Mode>::Cycle as cycle::Policy>::Stored<MAX>,
     <M as entries::Mode>::Busy,
     <<M as entries::Mode>::Cycle as cycle::Policy>::Retired,
 >;
 
 type Shape<T, const MAX: u32, M> = crate::depot::raw::SlabCapacity<
     T,
-    key::Generation<MAX>,
+    <<M as entries::Mode>::Cycle as cycle::Policy>::Stored<MAX>,
     <M as entries::Mode>::Busy,
     <<M as entries::Mode>::Cycle as cycle::Policy>::Retired,
 >;

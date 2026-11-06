@@ -1,6 +1,7 @@
 use std::{marker, ops};
 
 pub use grant::Grant;
+pub use pinned::{Anchor, Anchored, Pinned};
 
 use crate::{
     base::num,
@@ -15,6 +16,7 @@ use crate::{
 
 pub mod errors;
 mod grant;
+pub(in crate::depot) mod pinned;
 pub mod shared;
 
 /// A closed non-wrapping logical generation; `None` permanently exhausts identity.
@@ -56,20 +58,13 @@ pub struct Key<G: Generation, Tag = ()> {
 }
 
 pub struct Stamped<T, G: Generation> {
-    pub(in crate::depot::arena::slab) generation: G,
-    pub(in crate::depot::arena::slab) value: T,
+    pub(in crate::depot) generation: G,
+    pub(in crate::depot) value: T,
 }
 
-/// Exclusive storage whose private physical generations may recycle while
-/// externally visible logical generations never do.
-pub struct Exclusive<
-    T,
-    G: Generation,
-    Tag = (),
-    const PHYSICAL_MAX: u32 = { u32::MAX },
-    const PARTITIONS: usize = 1,
-> {
-    inner: slab::Store<Stamped<T, G>, Tag, PHYSICAL_MAX, true, PARTITIONS>,
+/// Exclusive storage with non-wrapping logical identities.
+pub struct Exclusive<T, G: Generation, Tag = (), const PARTITIONS: usize = 1> {
+    inner: slab::Store<Stamped<T, G>, Tag, 1, true, PARTITIONS>,
     next: Option<G>,
 }
 
@@ -110,9 +105,7 @@ impl<G: Generation, Tag> PartialEq for Key<G, Tag> {
 
 impl<G: Generation, Tag> Eq for Key<G, Tag> {}
 
-impl<T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
-    Exclusive<T, G, Tag, PHYSICAL_MAX, PARTITIONS>
-{
+impl<T, G: Generation, Tag, const PARTITIONS: usize> Exclusive<T, G, Tag, PARTITIONS> {
     pub fn try_new(cap: capacity::Count) -> Result<Self, crate::alloc::Error> {
         let inner = slab::Store {
             core: entries::Core::try_new(cap)?,
@@ -125,9 +118,7 @@ impl<T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
     }
 }
 
-impl<T, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
-    Exclusive<T, num::Epoch, Tag, PHYSICAL_MAX, PARTITIONS>
-{
+impl<T, Tag, const PARTITIONS: usize> Exclusive<T, num::Epoch, Tag, PARTITIONS> {
     pub const fn next_generation(&self) -> Option<num::Epoch> {
         self.next
     }
@@ -141,9 +132,7 @@ impl<T, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
     }
 }
 
-impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
-    Exclusive<T, G, Tag, PHYSICAL_MAX, PARTITIONS>
-{
+impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> Exclusive<T, G, Tag, PARTITIONS> {
     pub fn capacity(&self) -> capacity::Count {
         self.inner.core.slots.count()
     }
@@ -183,14 +172,12 @@ impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize
     }
 }
 
-impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
-    Exclusive<T, G, Tag, PHYSICAL_MAX, PARTITIONS>
-{
+impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> Exclusive<T, G, Tag, PARTITIONS> {
     /// Validates an identity once and retains exclusive access to its live slot.
     pub fn try_occupied(
         &'a mut self,
         key: Key<G, Tag>,
-    ) -> Result<OccupiedSlot<'a, T, G, Tag, PHYSICAL_MAX, PARTITIONS>, errors::Lookup<G, Tag>> {
+    ) -> Result<OccupiedSlot<'a, T, G, Tag, PARTITIONS>, errors::Lookup<G, Tag>> {
         let inner = slab::Slots::new(&mut self.inner)
             .try_entry_at(key.index())
             .map_err(|cause| errors::Lookup::Physical { key, cause })?;
@@ -204,7 +191,7 @@ impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize
     pub fn occupied(
         &'a mut self,
         key: Key<G, Tag>,
-    ) -> Option<OccupiedSlot<'a, T, G, Tag, PHYSICAL_MAX, PARTITIONS>> {
+    ) -> Option<OccupiedSlot<'a, T, G, Tag, PARTITIONS>> {
         let inner = slab::Slots::new(&mut self.inner).entry_at(key.index())?;
         (inner.get().generation == key.generation()).then_some(external::Occupied::from(inner))
     }
@@ -213,7 +200,7 @@ impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize
     pub fn occupied_at(
         &'a mut self,
         index: u32,
-    ) -> Option<OccupiedSlot<'a, T, G, Tag, PHYSICAL_MAX, PARTITIONS>> {
+    ) -> Option<OccupiedSlot<'a, T, G, Tag, PARTITIONS>> {
         let inner = slab::Slots::new(&mut self.inner).entry_at(index)?;
         Some(external::Occupied::from(inner))
     }
@@ -223,9 +210,7 @@ impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize
     }
 }
 
-impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
-    OccupiedSlot<'a, T, G, Tag, PHYSICAL_MAX, PARTITIONS>
-{
+impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> OccupiedSlot<'a, T, G, Tag, PARTITIONS> {
     pub fn key(&self) -> Key<G, Tag> {
         Key::new(self.entry.index(), self.entry.value().generation)
     }
@@ -278,20 +263,7 @@ impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize
     }
 }
 
-impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
-    external::Vacant<
-        entries::Pending<
-            'a,
-            external::Stamped<T, G>,
-            PHYSICAL_MAX,
-            entries::Exclusive<true>,
-            PARTITIONS,
-        >,
-        Tag,
-        true,
-        G,
-    >
-{
+impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> VacantSlot<'a, T, G, Tag, PARTITIONS> {
     pub fn key(&self) -> Key<G, Tag> {
         Key::new(self.entry.index().raw(), self.state)
     }
@@ -304,15 +276,7 @@ impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize
         });
     }
 
-    pub fn stage(
-        self,
-        value: T,
-    ) -> external::Staged<
-        crate::mem::Lease<Busy<'a, T, G, PHYSICAL_MAX, PARTITIONS>, lease::Open>,
-        Tag,
-        true,
-        external::Logical,
-    > {
+    pub fn stage(self, value: T) -> StagedSlot<'a, T, G, Tag, PARTITIONS> {
         let epoch = self.state;
         self.into_native()
             .stage(Stamped {
@@ -326,19 +290,19 @@ impl<'a, T, G: Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize
 /// Projects the logical identity and payload while keeping physical metadata private.
 pub struct Logical;
 
-impl<'a, T, G: external::Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
-    external::Exclusive<T, G, Tag, PHYSICAL_MAX, PARTITIONS>
+impl<'a, T, G: external::Generation, Tag, const PARTITIONS: usize>
+    external::Exclusive<T, G, Tag, PARTITIONS>
 {
     pub fn try_grant(
         &'a mut self,
-    ) -> Result<external::Grant<'a, T, G, Tag, PHYSICAL_MAX, PARTITIONS>, slab::Vacancy> {
+    ) -> Result<external::Grant<'a, T, G, Tag, PARTITIONS>, slab::Vacancy> {
         external::Grant::try_new(&mut self.next, || self.inner.try_vacant().ok())
     }
 
     pub fn try_grant_at(
         &'a mut self,
         index: u32,
-    ) -> Result<external::Grant<'a, T, G, Tag, PHYSICAL_MAX, PARTITIONS>, slab::Vacancy> {
+    ) -> Result<external::Grant<'a, T, G, Tag, PARTITIONS>, slab::Vacancy> {
         external::Grant::try_new(&mut self.next, || {
             slab::Slots::new(&mut self.inner).vacant_at(index)
         })
@@ -347,7 +311,7 @@ impl<'a, T, G: external::Generation, Tag, const PHYSICAL_MAX: u32, const PARTITI
     pub fn try_grant_in(
         &'a mut self,
         range: ops::Range<u32>,
-    ) -> Result<external::Grant<'a, T, G, Tag, PHYSICAL_MAX, PARTITIONS>, slab::Vacancy> {
+    ) -> Result<external::Grant<'a, T, G, Tag, PARTITIONS>, slab::Vacancy> {
         external::Grant::try_new(&mut self.next, || {
             slab::Slots::new(&mut self.inner).vacant_in(range)
         })
@@ -360,7 +324,7 @@ impl<'a, T, G: external::Generation, Tag, const PHYSICAL_MAX: u32, const PARTITI
         &'a mut self,
         range: ops::Range<u32>,
         excluded: u32,
-    ) -> Result<external::Grant<'a, T, G, Tag, PHYSICAL_MAX, PARTITIONS>, slab::Vacancy> {
+    ) -> Result<external::Grant<'a, T, G, Tag, PARTITIONS>, slab::Vacancy> {
         let free = entries::Free::in_range(&mut self.inner.core, range, excluded)
             .ok_or(slab::Vacancy::Full)?;
         external::Grant::try_new(&mut self.next, || {
@@ -376,7 +340,13 @@ mod vacant;
 pub use self::{borrowed::Borrowed, occupied::Occupied, staged::Staged, vacant::Vacant};
 
 /// Exclusive physical phases retain the exact stamped payload and partition domain.
-type Busy<'a, T, G, const MAX: u32, const N: usize> =
-    entries::Busy<'a, Stamped<T, G>, MAX, entries::Exclusive<true>, N>;
-type OccupiedSlot<'a, T, G, Tag, const MAX: u32, const N: usize> =
-    Occupied<Busy<'a, T, G, MAX, N>, Tag, true>;
+type Busy<'a, T, G, const N: usize> =
+    entries::Busy<'a, Stamped<T, G>, 1, entries::Exclusive<true>, N>;
+type Pending<'a, T, G, const N: usize> =
+    entries::Pending<'a, Stamped<T, G>, 1, entries::Exclusive<true>, N>;
+pub type OccupiedSlot<'a, T, G, Tag = (), const N: usize = 1> =
+    Occupied<Busy<'a, T, G, N>, Tag, true>;
+pub type VacantSlot<'a, T, G, Tag = (), const N: usize = 1> =
+    Vacant<Pending<'a, T, G, N>, Tag, true, G>;
+pub type StagedSlot<'a, T, G, Tag = (), const N: usize = 1> =
+    Staged<crate::mem::Lease<Busy<'a, T, G, N>, lease::Open>, Tag, true, Logical>;

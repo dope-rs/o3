@@ -27,12 +27,7 @@ pub struct Pending<
 {
     pub(in crate::depot::arena::slab::entries) plane: marker::PhantomData<fn(P) -> P>,
     pub(in crate::depot::arena::slab) core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
-    pub(in crate::depot::arena::slab::entries) slot: &'a crate::depot::raw::SlabSlot<
-        T,
-        key::Generation<MAX>,
-        M::Busy,
-        <M::Cycle as Policy>::Retired,
-    >,
+    pub(in crate::depot::arena::slab::entries) slot: &'a storage::Slot<T, MAX, M>,
 }
 
 impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S>
@@ -46,7 +41,7 @@ where
     }
 
     pub(in crate::depot::arena::slab) fn generation(&self) -> key::Generation<MAX> {
-        self.slot.generation.get()
+        <M::Cycle as Policy>::generation(self.slot.generation.get())
     }
 
     /// Initializes the reservation and publishes its dense position.
@@ -80,7 +75,7 @@ where
     }
 
     pub(in crate::depot::arena::slab) fn reject(self) {
-        match <M::Cycle as Policy>::next(self.generation()) {
+        match <M::Cycle as Policy>::next::<MAX>(self.slot.generation.get()) {
             Ok(epoch) => self.slot.generation.set(epoch),
             Err(retired) => {
                 let hold = mem::ManuallyDrop::new(self);
@@ -205,9 +200,9 @@ where
     }
 }
 
-impl<'a, T, G: external::Generation, Tag, const PHYSICAL_MAX: u32>
+impl<'a, T, G: external::Generation, Tag>
     external::Vacant<
-        entries::Pending<'a, external::Stamped<T, G>, PHYSICAL_MAX, entries::Interior<true>, 1>,
+        entries::Pending<'a, external::Stamped<T, G>, 1, entries::Interior<true>, 1>,
         Tag,
         true,
         G,
@@ -223,7 +218,7 @@ impl<'a, T, G: external::Generation, Tag, const PHYSICAL_MAX: u32>
         key
     }
 
-    pub fn stage(self, value: T) -> Staging<'a, T, G, Tag, PHYSICAL_MAX> {
+    pub fn stage(self, value: T) -> Staging<'a, T, G, Tag> {
         let epoch = self.state;
         self.into_native()
             .stage(external::Stamped {
@@ -383,9 +378,9 @@ where
     }
 }
 
-type Staging<'a, T, G, Tag, const MAX: u32> = external::Staged<
+type Staging<'a, T, G, Tag> = external::Staged<
     crate::mem::Lease<
-        entries::Busy<'a, external::Stamped<T, G>, MAX, entries::Interior<true>, 1>,
+        entries::Busy<'a, external::Stamped<T, G>, 1, entries::Interior<true>, 1>,
         lease::Open,
     >,
     Tag,

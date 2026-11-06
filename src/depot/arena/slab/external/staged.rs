@@ -21,10 +21,10 @@ impl<B, Tag, const ROOT: bool, S> Staged<B, Tag, ROOT, S> {
     }
 }
 
-impl<T, G: external::Generation, Tag, const PHYSICAL_MAX: u32>
+impl<T, G: external::Generation, Tag>
     external::Staged<
         crate::mem::Lease<
-            entries::Busy<'_, external::Stamped<T, G>, PHYSICAL_MAX, entries::Interior<true>, 1>,
+            entries::Busy<'_, external::Stamped<T, G>, 1, entries::Interior<true>, 1>,
             lease::Open,
         >,
         Tag,
@@ -45,13 +45,8 @@ impl<T, G: external::Generation, Tag, const PHYSICAL_MAX: u32>
     }
 }
 
-impl<'a, T, G: external::Generation, Tag, const PHYSICAL_MAX: u32, const PARTITIONS: usize>
-    external::Staged<
-        crate::mem::Lease<external::Busy<'a, T, G, PHYSICAL_MAX, PARTITIONS>, lease::Open>,
-        Tag,
-        true,
-        external::Logical,
-    >
+impl<'a, T, G: external::Generation, Tag, const PARTITIONS: usize>
+    external::StagedSlot<'a, T, G, Tag, PARTITIONS>
 {
     pub fn get(&self) -> &T {
         &self.entry.sink().value().value
@@ -65,9 +60,7 @@ impl<'a, T, G: external::Generation, Tag, const PHYSICAL_MAX: u32, const PARTITI
         self.into_native().publish();
     }
 
-    pub fn commit(
-        self,
-    ) -> external::Occupied<external::Busy<'a, T, G, PHYSICAL_MAX, PARTITIONS>, Tag, true> {
+    pub fn commit(self) -> external::OccupiedSlot<'a, T, G, Tag, PARTITIONS> {
         self.into_native().commit().into()
     }
 

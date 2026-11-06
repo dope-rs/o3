@@ -25,12 +25,7 @@ pub struct Busy<
 {
     pub(in crate::depot) plane: marker::PhantomData<fn(P) -> P>,
     pub(in crate::depot) core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
-    pub(in crate::depot) slot: &'a crate::depot::raw::SlabSlot<
-        T,
-        key::Generation<MAX>,
-        M::Busy,
-        <M::Cycle as Policy>::Retired,
-    >,
+    pub(in crate::depot) slot: &'a storage::Slot<T, MAX, M>,
 }
 
 impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S>
@@ -44,7 +39,7 @@ where
     }
 
     pub(in crate::depot) fn generation(&self) -> key::Generation<MAX> {
-        self.slot.generation.get()
+        <M::Cycle as Policy>::generation(self.slot.generation.get())
     }
 
     pub(in crate::depot) fn value(&self) -> &T {
@@ -132,7 +127,10 @@ where
         // SAFETY: Live retains an initialized slot in this exact core and a shared
         // reborrow of the root guard's exclusive loan through the returned reference.
         let slot = unsafe { slots.get_unchecked(live.key().get()) };
-        (slot.generation.get(), unsafe { slot.value() })
+        (
+            <cycle::Mode<RECYCLE> as Policy>::generation(slot.generation.get()),
+            unsafe { slot.value() },
+        )
     }
 
     pub(in crate::depot) fn into_mut(self) -> &'a mut T {
@@ -143,7 +141,9 @@ where
 
     pub(in crate::depot) fn replace(mut self, next: key::Generation<MAX>, value: T) -> (Self, T) {
         let prior = mem::replace(self.value_mut(), value);
-        self.slot.generation.set(next);
+        self.slot
+            .generation
+            .set(<cycle::Mode<RECYCLE> as Policy>::stored(next));
         (self, prior)
     }
 }

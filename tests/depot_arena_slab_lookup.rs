@@ -195,11 +195,10 @@ fn rejects_absence() {
 
 #[test]
 fn excludes_before_identity() {
-    let mut table = external::Exclusive::<(), Wide, (), 1, 2>::try_new(capacity::Count::new(5))
+    let mut table = external::Exclusive::<(), Wide, (), 2>::try_new(capacity::Count::new(5))
         .expect("odd partitioned extent");
-    let mut finite =
-        external::Exclusive::<(), Generation, (), 1, 2>::try_new(capacity::Count::new(2))
-            .expect("two partitioned slots");
+    let mut finite = external::Exclusive::<(), Generation, (), 2>::try_new(capacity::Count::new(2))
+        .expect("two partitioned slots");
     let ((), counts) = Tracker::measure(|| {
         for (range, excluded, expected) in [
             (0..5, 0, 1),

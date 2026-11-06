@@ -18,6 +18,53 @@ use crate::depot::{
 mod storages;
 pub(in crate::depot) use storages::{SlabCapacity, SlabLinks, SlabSlot};
 
+impl<T, G: external::Generation, Tag> external::Pinned<T, G, Tag> {
+    pub(in crate::depot) fn split(
+        self: Pin<&mut Self>,
+    ) -> (&mut Option<G>, Pin<&mut external::pinned::Inner<T, G, Tag>>) {
+        // SAFETY: inner remains pinned; next is a disjoint, unpinned identity field.
+        let owner = unsafe { self.get_unchecked_mut() };
+        (&mut owner.next, unsafe {
+            Pin::new_unchecked(&mut owner.inner)
+        })
+    }
+}
+
+impl<T, G: external::Generation> external::Stamped<T, G> {
+    pub(in crate::depot) fn pinned(self: Pin<&mut Self>) -> Pin<&mut T> {
+        // SAFETY: the pinned stamp never moves or replaces its payload before in-place Drop.
+        unsafe { self.map_unchecked_mut(|stamp| &mut stamp.value) }
+    }
+}
+
+// SAFETY: the proof retains this exact pinned owner's initialized slot and shared loan.
+unsafe impl<'a, T, G: external::Generation, Tag> crate::depot::raw::Project<u32>
+    for &'a external::Pinned<T, G, Tag>
+{
+    type Output = &'a T;
+
+    unsafe fn project(self, index: u32) -> Self::Output {
+        // SAFETY: the underlying pinned owner retains the same initialized physical index.
+        &unsafe { (&self.inner).project(index) }.value
+    }
+}
+
+// SAFETY: the original exclusive pinned loan survives in the projected occupied phase.
+unsafe impl<'a, T, G: external::Generation, Tag> crate::depot::raw::Project<u32>
+    for Pin<&'a mut external::Pinned<T, G, Tag>>
+{
+    type Output = external::Anchored<'a, T, G, Tag>;
+
+    unsafe fn project(self, index: u32) -> Self::Output {
+        let (_, inner) = self.split();
+        external::Occupied {
+            // SAFETY: the underlying pinned owner retains this same live slot and exclusive loan.
+            entry: unsafe { inner.project(index) },
+            tag: marker::PhantomData,
+        }
+    }
+}
+
 // SAFETY: Live retains initialization, the exact core, its outer owner, and the operation plane.
 unsafe impl<'a, T, const MAX: u32, C, P> crate::depot::raw::Project<links::Index, P>
     for (&'a Core<T, MAX, Interior<false>>, C)
@@ -145,11 +192,11 @@ unsafe impl<'a, T, Tag, const MAX: u32, C, P> crate::depot::raw::Project<links::
 }
 
 // SAFETY: the allocated index retains this storage's exact physical extent.
-unsafe impl<'a, T, G: external::Generation, Tag, const MAX: u32>
-    crate::depot::raw::Project<u32, entries::Allocated> for &'a shared::Storage<T, G, Tag, MAX>
+unsafe impl<'a, T, G: external::Generation, Tag> crate::depot::raw::Project<u32, entries::Allocated>
+    for &'a shared::Storage<T, G, Tag>
 {
     type Output = crate::depot::raw::Proof<
-        (&'a shared::Storage<T, G, Tag, MAX>, u32),
+        (&'a shared::Storage<T, G, Tag>, u32),
         Initialized<entries::Allocated>,
     >;
 

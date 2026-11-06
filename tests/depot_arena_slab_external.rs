@@ -1,10 +1,13 @@
 pub mod common;
 
-use std::mem;
+#[global_allocator]
+static ALLOCATOR: common::alloc::system::Tracker = common::alloc::system::Tracker;
+
+use std::{cell::Cell, mem, pin::pin, ptr};
 
 use common::depot::arena::slab::{
     Short,
-    external::{Generation, Wide},
+    external::{Generation, Pinned, Wide},
 };
 use o3::depot::{
     arena::slab::{
@@ -13,11 +16,97 @@ use o3::depot::{
         lookup,
     },
     capacity::{self, Count},
+    index::Initialized,
+    raw::Proof,
 };
 
 #[test]
+fn pinned_issuance() {
+    let drops = Cell::new(0);
+    let ((), counts) = common::alloc::system::Tracker::counts(|| {
+        let mut owner = pin!(
+            external::Pinned::<_, Generation>::try_new(Count::new(1)).expect("one physical slot")
+        );
+        let mut owner = std::hint::black_box(owner.as_mut());
+        let initial = external::Key::new(0, Generation::MIN);
+        assert!(matches!(
+            owner.as_mut().try_occupied(initial),
+            Err(Lookup::Physical {
+                cause: lookup::Error::Free { index: 0 },
+                ..
+            })
+        ));
+        assert!(matches!(
+            owner.as_mut().try_occupied(external::Key::new(1, Generation::MIN)),
+            Err(Lookup::Physical { cause: lookup::Error::Index { index: 1, capacity }, .. })
+                if capacity == Count::new(1)
+        ));
+        drop(owner.as_mut().try_grant().expect("cancelled preparation"));
+        let grant = owner.as_mut().try_grant().expect("unspent identity");
+        assert_eq!(grant.index(), 0);
+        let (first, value) = grant.occupy(Pinned::new(&drops));
+        let address = ptr::from_ref(value.as_ref().get_ref());
+        value.address.set(address);
+        assert_eq!(first, initial);
+        assert!(matches!(
+            owner.as_mut().try_grant(),
+            Err(slab::Vacancy::Full)
+        ));
+        let value = owner
+            .as_mut()
+            .try_occupied(first)
+            .expect("current identity")
+            .into_value();
+        assert!(ptr::eq(value.as_ref().get_ref(), address));
+        owner
+            .as_mut()
+            .try_occupied(first)
+            .expect("retained identity")
+            .discard();
+        assert_eq!(drops.get(), 1);
+
+        let (second, value) = owner
+            .as_mut()
+            .try_grant()
+            .expect("recycled slot")
+            .occupy(Pinned::new(&drops));
+        value.address.set(ptr::from_ref(value.as_ref().get_ref()));
+        assert_eq!(second.generation().get(), 2);
+        assert!(matches!(
+            owner.as_mut().try_occupied(first),
+            Err(Lookup::Generation { key, actual }) if key == first && actual == second.generation()
+        ));
+        // SAFETY: second's index is initialized in this same retained owner.
+        let live =
+            unsafe { Proof::<_, Initialized<()>>::new((owner.as_ref().get_ref(), second.index())) };
+        let value = live.into();
+        assert!(ptr::eq(value, address));
+        // SAFETY: the same live index remains under this owner's exclusive pinned loan.
+        let live = unsafe { Proof::<_, Initialized<()>>::new((owner.as_mut(), second.index())) };
+        let mut entry = live.into();
+        assert!(ptr::eq(entry.value().as_ref().get_ref(), address));
+        entry.discard();
+        assert_eq!(drops.get(), 2);
+
+        let (last, value) = owner
+            .as_mut()
+            .try_grant()
+            .expect("last logical identity")
+            .occupy(Pinned::new(&drops));
+        value.address.set(ptr::from_ref(value.as_ref().get_ref()));
+        assert_eq!(last.generation().get(), 3);
+        assert!(matches!(
+            owner.as_mut().try_grant(),
+            Err(slab::Vacancy::IdentityExhausted)
+        ));
+    });
+    assert_eq!(counts, [1, 1]);
+    assert_eq!(drops.get(), 3);
+}
+
+#[test]
 fn partition_ranges() {
-    let mut slab = (Exclusive::<u32, Wide, (), { u32::MAX }, 2>::try_new(capacity::Count::new(8)))
+    let mut slab = (Exclusive::<u32, Wide, (), 2>::try_new(capacity::Count::new(8)))
         .expect("eight partitioned slab slots must fit");
 
     {
@@ -65,7 +154,7 @@ fn partition_ranges() {
 
 #[test]
 fn stale_after_wrap() {
-    let mut slab = (Exclusive::<u32, Generation, (), 2>::try_new(capacity::Count::new(1)))
+    let mut slab = (Exclusive::<u32, Generation>::try_new(capacity::Count::new(1)))
         .expect("one wrapping slab slot must fit");
 
     let first = (slab.try_grant()).expect("the first logical identity must be available");
@@ -223,7 +312,7 @@ fn shared_transactions() {
 
 #[test]
 fn shared_reuse() {
-    let slab = Storage::<u32, slab::key::Generation<6>, (), 1>::try_new(Count::new(2))
+    let slab = Storage::<u32, slab::key::Generation<6>>::try_new(Count::new(2))
         .expect("two shared slots must fit");
     let first = (slab.vacancy_at(0).map(|vacant| vacant.insert(1)))
         .expect("the empty shared slab must admit its first value");

@@ -298,68 +298,26 @@ fn parts_track_generation() {
 }
 
 #[unsafe(export_name = "external_proof_read")]
-fn read(
-    entry: &external::Occupied<
-        entries::Busy<'_, external::Stamped<u64, Wide>, { u32::MAX }, entries::Exclusive<true>, 1>,
-        (),
-        true,
-    >,
-) -> u64 {
+fn read(entry: &external::OccupiedSlot<'_, u64, Wide>) -> u64 {
     *entry.get()
 }
 
 #[unsafe(export_name = "external_proof_write")]
-fn write(
-    entry: &mut external::Occupied<
-        entries::Busy<'_, external::Stamped<u64, Wide>, { u32::MAX }, entries::Exclusive<true>, 1>,
-        (),
-        true,
-    >,
-    value: u64,
-) {
+fn write(entry: &mut external::OccupiedSlot<'_, u64, Wide>, value: u64) {
     *entry.get_mut() = value;
 }
 
 #[test]
 fn lookup_retains_storage() {
+    assert_eq!(mem::size_of::<external::OccupiedSlot<'_, u64, Wide>>(), 16);
     assert_eq!(
-        mem::size_of::<
-            external::Occupied<
-                entries::Busy<
-                    '_,
-                    external::Stamped<u64, Wide>,
-                    { u32::MAX },
-                    entries::Exclusive<true>,
-                    1,
-                >,
-                (),
-                true,
-            >,
-        >(),
-        16
-    );
-    assert_eq!(
-        mem::size_of::<
-            Option<
-                external::Occupied<
-                    entries::Busy<
-                        '_,
-                        external::Stamped<u64, Wide>,
-                        { u32::MAX },
-                        entries::Exclusive<true>,
-                        1,
-                    >,
-                    (),
-                    true,
-                >,
-            >,
-        >(),
+        mem::size_of::<Option<external::OccupiedSlot<'_, u64, Wide>>>(),
         16
     );
     let (built, cold) =
         Tracker::measure(|| external::Exclusive::<u64, Wide>::try_new(capacity::Count::new(4)));
     let mut slab = (built).expect("four external slots must allocate");
-    assert_eq!(cold, [1, 144, 0, 0]);
+    assert_eq!(cold, [1, 112, 0, 0]);
     let grant = (slab.try_grant_at(3)).expect("the last slot must be vacant");
     let key = {
         let vacant = grant.reserve();
@@ -379,16 +337,15 @@ fn lookup_retains_storage() {
     assert_eq!(hot, [0; 4]);
     let ((), freed) =
         Tracker::measure(move || assert_eq!(slab.len(), o3::depot::capacity::Count::EMPTY));
-    assert_eq!(freed, [0, 0, 1, 144]);
+    assert_eq!(freed, [0, 0, 1, 112]);
 }
 
 #[test]
 fn retains_rollback_owner() {
     let drops = Cell::new(Some(0));
     {
-        let mut slab =
-            (external::Exclusive::<(u32, _), Wide, (), 1>::try_new(capacity::Count::new(1)))
-                .expect("one external slot must allocate");
+        let mut slab = (external::Exclusive::<(u32, _), Wide>::try_new(capacity::Count::new(1)))
+            .expect("one external slot must allocate");
         let grant = (slab.try_grant_at(0)).expect("initial slot must be vacant");
         let vacant = grant.reserve();
         let key = vacant.key();

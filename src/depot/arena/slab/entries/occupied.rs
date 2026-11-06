@@ -24,12 +24,7 @@ pub(in crate::depot) struct Occupied<
     S: storage::Storage,
 {
     pub(in crate::depot) core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
-    pub(in crate::depot) slot: &'a crate::depot::raw::SlabSlot<
-        T,
-        key::Generation<MAX>,
-        M::Busy,
-        <M::Cycle as Policy>::Retired,
-    >,
+    pub(in crate::depot) slot: &'a storage::Slot<T, MAX, M>,
 }
 
 impl<'a, T, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S>
@@ -44,21 +39,27 @@ where
     }
 }
 
-impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize>
-    Occupied<'a, T, MAX, M, PARTITIONS>
+impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, S>
+    Occupied<'a, T, MAX, M, PARTITIONS, S>
+where
+    S: storage::Storage,
 {
     pub(in crate::depot) fn try_at(
-        core: &'a entries::Core<T, MAX, M, PARTITIONS>,
+        core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
         index: u32,
     ) -> lookup::Result<Self, M> {
         let slots = &core.slots;
-        if index as usize >= slots.capacity() {
-            return Err(lookup::Error::Index {
-                index,
-                capacity: slots.count(),
+        if index >= slots.built() {
+            return Err(if index as usize >= slots.capacity() {
+                lookup::Error::Index {
+                    index,
+                    capacity: slots.count(),
+                }
+            } else {
+                lookup::Error::Free { index }
             });
         }
-        // SAFETY: eager storage initialized every slot of this admitted extent.
+        // SAFETY: this index is within the owner's initialized backing prefix.
         let live = unsafe { crate::depot::raw::Proof::new((core, index)) };
         entries::Core::try_occupied(live)
     }
@@ -86,7 +87,7 @@ where
         epoch: key::Generation<MAX>,
     ) -> Option<Self> {
         let entry = Self::at(core, index)?;
-        (entry.slot.generation.get() == epoch).then_some(entry)
+        (entry.generation() == epoch).then_some(entry)
     }
 
     pub(in crate::depot) fn take(self) -> entries::Busy<'a, T, MAX, M, PARTITIONS, (), S> {
@@ -115,7 +116,7 @@ where
             key,
             capacity: slots.count(),
         })?;
-        let actual = slot.generation.get();
+        let actual = <M::Cycle as Policy>::generation(slot.generation.get());
         slot.state
             .get()
             .classify(actual, key.generation())
@@ -124,7 +125,7 @@ where
     }
 
     pub(in crate::depot) fn generation(&self) -> key::Generation<MAX> {
-        self.slot.generation.get()
+        <M::Cycle as Policy>::generation(self.slot.generation.get())
     }
 }
 

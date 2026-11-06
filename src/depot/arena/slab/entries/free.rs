@@ -1,10 +1,7 @@
 use std::{marker, ops};
 
-use cycle::Policy;
-
 use crate::depot::arena::slab::{
     self, entries,
-    key::{self, cycle},
     storage::{self, Plane},
 };
 
@@ -19,12 +16,7 @@ pub(in crate::depot::arena::slab) struct Free<
     S: storage::Storage,
 {
     core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
-    slot: &'a crate::depot::raw::SlabSlot<
-        T,
-        key::Generation<MAX>,
-        M::Busy,
-        <M::Cycle as Policy>::Retired,
-    >,
+    slot: &'a storage::Slot<T, MAX, M>,
     index: entries::SlotIndex,
 }
 
@@ -37,12 +29,7 @@ where
     /// `slot` is this core's free entry at `index`, with reciprocal free neighbors.
     pub(in crate::depot::arena::slab) unsafe fn new(
         core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
-        slot: &'a crate::depot::raw::SlabSlot<
-            T,
-            key::Generation<MAX>,
-            M::Busy,
-            <M::Cycle as Policy>::Retired,
-        >,
+        slot: &'a storage::Slot<T, MAX, M>,
         index: entries::SlotIndex,
     ) -> Self {
         Self { core, slot, index }

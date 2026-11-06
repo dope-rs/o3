@@ -168,7 +168,7 @@ where
     S::Plane<T, MAX, M>: HeapPlane<T, MAX, M>,
 {
     pub(in crate::depot) fn try_new(cap: capacity::Count) -> Result<Self, alloc::Error> {
-        let epoch = key::Generation::<MAX>::MIN;
+        let epoch = <M::Cycle as Policy>::stored(const { key::Generation::<MAX>::MIN });
         let () = Self::VALID_PARTITIONS;
         let slots = S::Plane::<T, MAX, M>::try_alloc(cap, |index| {
             let links = Self::links(index, cap.get());
@@ -182,7 +182,7 @@ impl<T, const MAX: u32, M: Mode, const PARTITIONS: usize, const N: usize>
     Core<T, MAX, M, PARTITIONS, storage::Inline<N>>
 {
     pub(in crate::depot) fn new() -> Self {
-        let epoch = key::Generation::<MAX>::MIN;
+        let epoch = <M::Cycle as Policy>::stored(const { key::Generation::<MAX>::MIN });
         let () = Self::VALID_PARTITIONS;
         let slots = <storage::Inline<N> as Storage>::Plane::<T, MAX, M>::inline(|index| {
             let links = Self::links(index, N);
@@ -250,7 +250,8 @@ where
         if !S::LAZY {
             return None;
         }
-        let slot = crate::depot::raw::SlabSlot::free(key::Generation::<MAX>::MIN, NONE, NONE);
+        let epoch = <M::Cycle as Policy>::stored(const { key::Generation::<MAX>::MIN });
+        let slot = crate::depot::raw::SlabSlot::free(epoch, NONE, NONE);
         slot.state.set(slab::State::Reserved);
         let slot = self.slots.push(slot)?;
         Some(Pending {
