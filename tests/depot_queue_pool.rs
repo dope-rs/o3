@@ -6,7 +6,7 @@ use common::{
     alloc::system::Tracker,
     depot::{
         arena::pool::Pinned,
-        model::drops::Tracked,
+        model::drops::{Aligned, Tracked},
         queue::{Error, Source},
     },
 };
@@ -411,6 +411,21 @@ fn zero_lanes_are_inert() {
     assert_eq!(pool.available(), 0);
     assert!(pool.get_mut(0).is_none());
     assert!(pool.get(0).is_none());
+}
+
+#[test]
+fn reports_node_allocation_layout() {
+    for count in [0, 3] {
+        let count = std::hint::black_box(count);
+        let ((layout, _arena), allocated) = Tracker::measure(|| {
+            let layout = depot::raw::Arena::<Aligned<'_>>::try_layout(count)
+                .expect("representable node layout");
+            let arena = depot::raw::Arena::<Aligned<'_>>::try_new(count).expect("node allocation");
+            (layout, arena)
+        });
+        assert_eq!(allocated, [usize::from(count != 0), layout.size(), 0, 0]);
+        assert_eq!(layout.align(), mem::align_of::<Aligned<'_>>());
+    }
 }
 
 #[test]
