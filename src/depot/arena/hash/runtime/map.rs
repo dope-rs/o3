@@ -44,6 +44,10 @@ impl<T, Tag, P> Store<T, Tag, P> {
         self.core.key_value_at(index)
     }
 
+    pub fn values(&self) -> impl Iterator<Item = &T> {
+        self.core.values()
+    }
+
     pub fn key(
         &self,
         hash: u64,
@@ -81,10 +85,6 @@ impl<T, Tag> Map<T, Tag> {
                 map::Entry::Vacant(entry) => map::Entry::Vacant(entry),
             },
         )
-    }
-
-    pub fn values(&self) -> impl Iterator<Item = &T> {
-        self.core.values()
     }
 
     pub fn try_insert(

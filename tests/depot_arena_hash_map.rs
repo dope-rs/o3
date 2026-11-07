@@ -160,6 +160,7 @@ fn staged_repairs_shift() {
         let key = (store.insert([value])).expect("the staged registry must admit each model value");
         keys.push(key);
     }
+    assert!(store.values().any(|value| *value == [7]));
     for (value, key) in keys.iter().copied().enumerate() {
         let entry = store.entry(key).expect("the inserted resident is live");
         assert!(matches!(entry, entry::Entry::Staged(_)));
@@ -181,6 +182,7 @@ fn staged_repairs_shift() {
             Some(entry::Entry::Staged(_))
         ));
     }
+    assert!(store.values().any(|value| *value == [3]));
     for key in keys {
         assert!(store.entry(key).map(|entry| entry.remove()).is_some());
     }
