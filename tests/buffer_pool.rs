@@ -123,10 +123,9 @@ fn zero_slots_stays_empty() {
     let lease = result.expect("an empty pool acquisition must require no allocation");
     assert!(lease.is_none());
     let ((), activity) = Tracker::activity(|| {
-        assert_eq!(pool.capacity().get(), 8);
         assert_eq!(pool.available(), 0);
+        assert!(pool.is_full());
         assert!(pool.try_borrow().expect("empty borrowed pool").is_none());
-        assert!(pool.try_view().expect("empty cursor pool").is_none());
     });
     assert_eq!(activity, common::alloc::system::Activity::default());
 }
@@ -325,11 +324,12 @@ fn borrows_across_growth() {
     let growing = pool::Growing::try_warm(plan, warm).expect("warm pool");
     assert_eq!(growing.available(), 5);
     let warm = Tracker::begin();
-    let mut cursor = growing.try_view().expect("first warm slot").expect("slot");
-    let mut spare = cursor.spare();
-    assert_eq!(spare.write(b"body"), 4);
-    spare.commit();
-    let first = cursor.freeze();
+    let mut span = growing
+        .try_borrow()
+        .expect("first warm slot")
+        .expect("slot");
+    span.try_append(b"body").expect("body fits").commit();
+    let first = span.freeze();
     let pointer = first.as_slice().as_ptr();
     let clone = first.try_clone().expect("retained warm slot");
     let second = growing
@@ -337,17 +337,19 @@ fn borrows_across_growth() {
         .expect("second warm slot")
         .expect("slot");
     assert_eq!(warm.finish(), Activity::default());
-    let (failed, activity) = Tracker::activity(|| Tracker::fail_after(0, || growing.try_view()));
+    let (failed, activity) = Tracker::activity(|| Tracker::fail_after(0, || growing.try_borrow()));
     assert!(matches!(failed, Err(alloc::Exhausted)));
     assert_eq!(activity, Activity::default());
     assert_eq!(growing.available(), 3);
-    let third = growing.try_view().expect("first growth").expect("slot");
+    assert!(!growing.is_full());
+    let third = growing.try_borrow().expect("first growth").expect("slot");
     let fourth = growing.try_borrow().expect("grown slot").expect("slot");
     let fifth = growing
-        .try_view()
+        .try_borrow()
         .expect("bounded final growth")
         .expect("slot");
     assert_eq!(growing.available(), 0);
+    assert!(growing.is_full());
     assert!(growing.try_borrow().expect("logical exhaustion").is_none());
     assert_eq!(first.as_slice(), b"body");
     assert_eq!(first.as_slice().as_ptr(), pointer);
@@ -355,12 +357,13 @@ fn borrows_across_growth() {
     assert_eq!(growing.available(), 0);
     assert_eq!(clone.as_slice(), b"body");
     drop(clone);
+    assert!(!growing.is_full());
     let ((), activity) = Tracker::activity(|| {
-        let cursor = growing
-            .try_view()
+        let span = growing
+            .try_borrow()
             .expect("released warm slot")
             .expect("slot");
-        assert_eq!(cursor.as_ref().as_ptr(), pointer);
+        assert_eq!(span.as_slice().as_ptr(), pointer);
         assert_eq!(growing.available(), 0);
     });
     assert_eq!(activity, Activity::default());

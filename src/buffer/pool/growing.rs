@@ -56,10 +56,6 @@ impl Growing {
         Ok(pool)
     }
 
-    pub fn capacity(&self) -> num::NonZero<u32> {
-        self.plan.capacity()
-    }
-
     /// Returns unclaimed slots, including groups not yet allocated.
     /// Allocating those groups may still exhaust memory.
     pub fn available(&self) -> usize {
@@ -70,6 +66,12 @@ impl Growing {
                 .iter()
                 .map(pool::Pool::available)
                 .sum::<usize>()
+    }
+
+    /// Returns whether every configured slot is already claimed.
+    pub fn is_full(&self) -> bool {
+        self.plan.slots() == self.allocated.get()
+            && self.initialized().iter().all(|pool| pool.available() == 0)
     }
 
     /// Acquires an owned lease, growing only when existing groups are full.
@@ -86,13 +88,6 @@ impl Growing {
         Ok(self
             .try_take()?
             .map(|active| pool::Span::new(active, pool::Borrowed(marker::PhantomData))))
-    }
-
-    /// Acquires a writable cursor tied to this pool borrow.
-    pub fn try_view(
-        &self,
-    ) -> Result<Option<pool::Cursor<pool::Layout, pool::Borrowed<'_>>>, alloc::Exhausted> {
-        Ok(self.try_borrow()?.map(pool::Cursor::from))
     }
 
     fn try_take(
