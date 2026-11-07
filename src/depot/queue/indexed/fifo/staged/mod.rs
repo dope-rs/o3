@@ -9,6 +9,7 @@ pub use state::State;
 pub use table::Table;
 
 use crate::depot::{
+    arena,
     queue::{indexed::fifo::staged, links},
     raw::Live,
 };
@@ -84,7 +85,12 @@ impl<'a, K, Q, P, S: crate::depot::raw::StagedPhase<K, Q, P>, I: crate::depot::r
         &S::payload(self).key
     }
     pub fn remove(self) -> Removal<'a, K, Q, P, I, S::Value> {
-        crate::depot::raw::Retired::<_, _, _, S, _>::new(self).into_parts()
+        self.retire(|payload| {
+            // SAFETY: retirement retains this phase's initialized key and value.
+            let value = unsafe { S::take(payload) };
+            let key = unsafe { payload.take_key() };
+            (key, value)
+        })
     }
 
     pub fn take(self) -> (K, S::Value) {
@@ -92,7 +98,24 @@ impl<'a, K, Q, P, S: crate::depot::raw::StagedPhase<K, Q, P>, I: crate::depot::r
     }
 
     pub fn clear(self) {
-        crate::depot::raw::Retired::<_, _, _, S, _>::new(self).destroy();
+        // SAFETY: retirement precedes destruction of this phase's key and value.
+        let _ = self.retire(|payload| unsafe { S::clear(payload) });
+    }
+
+    fn retire<R>(
+        self,
+        finish: impl FnOnce(&mut arena::raw::StagedValue<K, Q, P>) -> R,
+    ) -> (Slot<'a, K, Q, P, (), I>, R) {
+        let occupied = S::occupied(&self);
+        // SAFETY: this occupied phase retains its reciprocal slot; the private
+        // transition finishes its payload before returning the vacancy.
+        let slot = unsafe { S::unlink(self) }.release(occupied);
+        // SAFETY: retirement changed only metadata; this exclusive loan still
+        // owns the initialized key and active value consumed by finish.
+        let payload = unsafe {
+            (&mut *crate::depot::raw::StagedNode::of(&slot).value.get()).assume_init_mut()
+        };
+        (slot, finish(payload))
     }
 }
 

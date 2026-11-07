@@ -423,8 +423,7 @@ pub unsafe trait Reserve<'fifo, 'pool: 'fifo, const TRACK: bool = true>: Sized {
 pub(crate) use arena::{EndsPop, SlotOwner};
 pub(in crate::depot) use arena::{
     IndexedBlock, IndexedHook, IndexedMeta, IndexedState, PoolMutable, PoolPolicy, QueueBlock,
-    QueueSlot, Retired, SlabCapacity, SlabLinks, SlabSlot, StagedMove, StagedNode, StagedPhase,
-    StagedState,
+    QueueSlot, SlabCapacity, SlabLinks, SlabSlot, StagedMove, StagedNode, StagedPhase, StagedState,
 };
 pub(in crate::depot) use hooks::{LaneInit, LaneStore, LaneUndo};
 

@@ -120,7 +120,7 @@ mod indexed;
 pub(in crate::depot) use indexed::{IndexedBlock, IndexedHook, IndexedMeta, IndexedState};
 
 mod staged;
-pub(in crate::depot) use staged::{Retired, StagedMove, StagedNode, StagedPhase, StagedState};
+pub(in crate::depot) use staged::{StagedMove, StagedNode, StagedPhase, StagedState};
 
 mod owners;
 pub(crate) use owners::SlotOwner;
