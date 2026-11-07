@@ -12,7 +12,7 @@ pub mod runtime;
 
 pub(in crate::depot) use cores::Core;
 pub(in crate::depot) use entries::{Bucket, Meta};
-pub(in crate::depot) use slot::Slot;
+pub use slot::Vacant;
 
 mod borrows;
 mod cores;

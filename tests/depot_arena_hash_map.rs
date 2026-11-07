@@ -250,15 +250,21 @@ fn fullness_tracks_reuse() {
             (runtime::Registry::<usize>::try_new(plan)).expect("registry must allocate");
         let ((), hot) = Tracker::measure(|| {
             assert_eq!(store.is_full(), capacity == 0);
+            assert_eq!(store.vacant().is_some(), capacity != 0);
             let mut first = None;
             for value in 0..capacity {
-                let key = (store.insert(value)).expect("remaining slot must admit its value");
+                let key = store
+                    .vacant()
+                    .expect("remaining slot must admit its value")
+                    .insert(value)
+                    .key();
                 if value == 0 {
                     first = Some(key);
                 }
                 assert_eq!(store.is_full(), value + 1 == capacity);
             }
             assert!(matches!(store.insert(99), Err(99)));
+            assert!(store.vacant().is_none());
             assert!(store.is_full());
             if let Some(first) = first {
                 let entry = (store.entry(first)).expect("first generation must remain live");
