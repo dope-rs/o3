@@ -38,7 +38,6 @@ impl Id<'_> {
 // decoding maps only the reserved raw identity to vacancy.
 unsafe impl depot::raw::Key for Id<'_> {
     type Raw = u64;
-    type Live = Self;
 
     const VACANT: Self::Raw = 0;
 
@@ -61,13 +60,5 @@ unsafe impl depot::raw::Key for Id<'_> {
 
     fn decode(raw: Self::Raw) -> Option<Self> {
         num::NonZero::<u64>::new(raw).map(|raw| Self(raw, marker::PhantomData))
-    }
-
-    fn into_live(self) -> Self::Live {
-        self
-    }
-
-    fn from_live(live: Self::Live) -> Self {
-        live
     }
 }

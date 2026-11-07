@@ -80,7 +80,7 @@ impl<K: crate::depot::raw::Key, V> Table<K, V> {
     }
 
     pub fn key_at(&self, index: usize) -> Option<K> {
-        self.block.get(index)?.key.present().map(K::from_live)
+        self.block.get(index)?.key.present()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (K, &V)> {
@@ -95,7 +95,7 @@ impl<K: crate::depot::raw::Key, V> Table<K, V> {
             live.map(|(read, index)| {
                 let slot = read.block.get_unchecked(index.get());
                 let key = slot.key.live();
-                (slot.value.assume_init_ref(), K::from_live(key))
+                (slot.value.assume_init_ref(), key)
             })
         }
     }
@@ -121,10 +121,7 @@ impl<K: crate::depot::raw::Key, V> Table<K, V> {
         if !slot.key.is_vacant() {
             // SAFETY: initialized table slots contain only stored keys or the vacancy sentinel.
             let stored = unsafe { slot.key.live() };
-            return Err(direct::Error::Occupied {
-                key,
-                stored: K::from_live(stored),
-            });
+            return Err(direct::Error::Occupied { key, stored });
         }
         Ok(direct::Vacant {
             table: self,

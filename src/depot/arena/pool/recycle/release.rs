@@ -1,4 +1,4 @@
-use std::{cell, marker, mem, ptr};
+use std::{marker, mem};
 
 use crate::{
     alloc::tail,
@@ -28,14 +28,7 @@ impl<T: recycle::Recycle, C> Store<T, C> {
         seed: T::Seed,
     ) -> Result<Self, crate::alloc::Error> {
         Ok(Self {
-            block: pool::Entry::init(
-                tail::Plan::try_new(capacity)?.try_allocate()?,
-                recycle::Header {
-                    free: cell::Cell::new(ptr::null_mut()),
-                    context: mem::ManuallyDrop::new(context),
-                },
-                |_| T::from_seed(seed),
-            ),
+            block: pool::Entry::try_init(capacity, context, |_| T::from_seed(seed))?,
         })
     }
 

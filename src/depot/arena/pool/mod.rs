@@ -261,12 +261,18 @@ impl<'a, T, C> Terminal<'a, T, C> {
 }
 
 impl<T, C> Entry<T, C> {
-    pub(crate) fn init(
-        memory: tail::Uninit<recycle::Header<T, C>, Self, capacity::Count>,
-        header: recycle::Header<T, C>,
+    pub(crate) fn try_init(
+        capacity: capacity::Count,
+        context: C,
         mut init: impl FnMut(u32) -> T,
-    ) -> tail::Block<recycle::Header<T, C>, Self, capacity::Count> {
-        let mut block = memory.init(header);
+    ) -> Result<tail::Block<recycle::Header<T, C>, Self, capacity::Count>, crate::alloc::Error>
+    {
+        let mut block = tail::Plan::try_new(capacity)?
+            .try_allocate()?
+            .init(recycle::Header {
+                free: cell::Cell::new(ptr::null_mut()),
+                context: mem::ManuallyDrop::new(context),
+            });
         let indices = 0..block.extent().raw();
         let (header, entries) = block.parts_mut();
         let mut free: *mut Self = ptr::null_mut();
@@ -279,7 +285,7 @@ impl<T, C> Entry<T, C> {
         // SAFETY: each initialized slot belongs to this retained pinned owner.
         header.free.set(free);
         // SAFETY: every admitted slot was initialized once in index order.
-        unsafe { block.assume_init() }
+        Ok(unsafe { block.assume_init() })
     }
 
     pub(in crate::depot::arena::pool) unsafe fn recycle(

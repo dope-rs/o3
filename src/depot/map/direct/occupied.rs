@@ -15,7 +15,7 @@ impl<'a, K: crate::depot::raw::Key, V> Occupied<'a, K, V> {
     ) -> (Occupied<'a, K, V, P>, C) {
         let ((table, context), index) = live.into_inner();
         let slot = unsafe { table.block.get_unchecked(index.get()) };
-        let key = K::from_live(unsafe { slot.key.live() });
+        let key = unsafe { slot.key.live() };
         (
             Occupied {
                 table,

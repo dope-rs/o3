@@ -25,7 +25,7 @@ impl<K: crate::depot::raw::Key, V> Entry<K, V> {
     }
 
     pub(in crate::depot) fn read(&self) -> Option<(K, &V)> {
-        let key = K::from_live(self.key.present()?);
+        let key = self.key.present()?;
         Some((key, unsafe { self.value.assume_init_ref() }))
     }
 

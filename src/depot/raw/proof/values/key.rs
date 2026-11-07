@@ -8,7 +8,6 @@ use crate::depot::{
 // SAFETY: Parts validates the nonzero generation and retains the exact u64 identity.
 unsafe impl<Tag, const MAX: u32> crate::depot::raw::Key for Handle<Tag, MAX> {
     type Raw = u64;
-    type Live = Self;
 
     const VACANT: Self::Raw = 0;
 
@@ -28,13 +27,5 @@ unsafe impl<Tag, const MAX: u32> crate::depot::raw::Key for Handle<Tag, MAX> {
         NonZero::<u64>::new(raw)
             .and_then(Parts::from_raw)
             .map(Self::from_parts)
-    }
-
-    fn into_live(self) -> Self::Live {
-        self
-    }
-
-    fn from_live(live: Self::Live) -> Self {
-        live
     }
 }

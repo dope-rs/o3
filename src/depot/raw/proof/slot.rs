@@ -28,17 +28,17 @@ impl<K: crate::depot::raw::Key> Slot<K> {
     /// Reconstructs the live key from a caller-proven occupied slot.
     /// # Safety
     /// This slot must contain an identity stored from a live key in this `K` domain.
-    pub(crate) unsafe fn live(self) -> K::Live {
+    pub(crate) unsafe fn live(self) -> K {
         // SAFETY: the caller proves this slot contains an identity emitted by K.
         let raw = unsafe { Stored::new(self.raw) };
-        K::from_raw(raw).into_live()
+        K::from_raw(raw)
     }
 
     pub(crate) fn is_vacant(self) -> bool {
         self.raw == K::VACANT
     }
 
-    pub(crate) fn present(self) -> Option<K::Live> {
+    pub(crate) fn present(self) -> Option<K> {
         if self.is_vacant() {
             return None;
         }

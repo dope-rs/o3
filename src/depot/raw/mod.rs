@@ -49,7 +49,6 @@ pub unsafe trait Address: Copy + Eq {
 /// `index` obeys [`Address`]'s projection contract.
 pub unsafe trait Key: Copy + Eq {
     type Raw: Copy + Eq;
-    type Live: Copy + Eq;
     const VACANT: Self::Raw;
     fn index(self) -> usize;
     fn into_raw(self) -> Self::Raw;
@@ -63,8 +62,6 @@ pub unsafe trait Key: Copy + Eq {
         Self::from_raw(unsafe { Stored::new(stored.into_raw()) })
     }
     fn decode(raw: Self::Raw) -> Option<Self>;
-    fn into_live(self) -> Self::Live;
-    fn from_live(live: Self::Live) -> Self;
 }
 
 /// Stored representation of one external forward link.

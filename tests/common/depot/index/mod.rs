@@ -40,7 +40,6 @@ impl Id {
 
 unsafe impl depot::raw::Key for Id {
     type Raw = u64;
-    type Live = Self;
 
     const VACANT: Self::Raw = 0;
 
@@ -60,14 +59,6 @@ unsafe impl depot::raw::Key for Id {
 
     fn decode(raw: Self::Raw) -> Option<Self> {
         NonZero::<u64>::new(raw).map(Self)
-    }
-
-    fn into_live(self) -> Self::Live {
-        self
-    }
-
-    fn from_live(live: Self::Live) -> Self {
-        live
     }
 }
 
