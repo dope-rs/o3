@@ -57,7 +57,7 @@ impl<C: crate::depot::raw::ChainCount> Chain<C> {
         use crate::depot::raw::Insert;
 
         // SAFETY: caller supplies this chain's vacant-hook and reciprocal-endpoint proof.
-        let change = unsafe { Insert::<C, false>::new(self, hooks, index) };
+        let change = unsafe { Insert::<C>::new(self, hooks, index) };
         Insert::commit(change);
     }
 
@@ -105,9 +105,19 @@ impl Chain {
         hooks: &H,
         index: links::Index,
     ) {
+        use crate::depot::raw::{Detach, EndpointHook, Removal};
+
         // SAFETY: caller supplies exact store identity and reciprocal source/target edges.
-        let change = unsafe { crate::depot::raw::Relink::new(self, target, hooks, index) };
-        change.commit();
+        let removal = unsafe { Detach::new(self, hooks, index) };
+        // SAFETY: the original target tail belongs to this same retained hook store.
+        let adjacent = target
+            .last()
+            .map(|tail| (tail, EndpointHook::from(unsafe { hooks.hook_raw(tail) })));
+        let (hook, index) = Removal::commit(removal).into_parts();
+        // SAFETY: detachment preserves the target tail because index is not that tail.
+        unsafe {
+            EndpointHook::from(hook).push::<false, _>(target, index, links::Index::END, adjacent)
+        };
     }
 }
 

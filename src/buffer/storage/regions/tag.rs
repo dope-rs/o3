@@ -1,7 +1,6 @@
 use std::{
-    alloc::Layout,
     marker,
-    mem::{ManuallyDrop, offset_of, take},
+    mem::{ManuallyDrop, MaybeUninit, offset_of, take},
     num, ptr, vec,
 };
 
@@ -145,6 +144,7 @@ impl<'d> backing::Owner<'d> for Tag<pool::Borrowed<'d>> {
 }
 
 impl<'d> backing::Owner<'d> for Option<regions::Tag> {
+    #[inline]
     fn root<'a>(&'a self) -> Option<backing::Root<'a, 'd>>
     where
         'd: 'a,
@@ -158,6 +158,7 @@ impl regions::End for Option<regions::Tag> {
 }
 
 impl buffer::Residency for Option<regions::Tag> {
+    #[inline]
     fn resident(&self) -> usize {
         self.as_ref().map_or(0, regions::Tag::bytes)
     }
@@ -166,38 +167,39 @@ impl buffer::Residency for Option<regions::Tag> {
 #[repr(C, align(8))]
 pub(in crate::buffer) struct Header {
     refs: mem::raw::Count,
-    buf: vec::Vec<u8>,
+    buf: Box<[MaybeUninit<u8>]>,
 }
 
 impl Header {
     pub(in crate::buffer) fn try_new<T: AsRef<[u8]> + Default + Into<vec::Vec<u8>>>(
         source: &mut T,
-    ) -> Result<regions::Value<Option<regions::Tag>>, crate::alloc::Exhausted> {
+    ) -> Result<regions::Shared<Option<regions::Tag>>, crate::alloc::Exhausted> {
         if source.as_ref().is_empty() {
             *source = T::default();
-            return Ok(regions::Value::empty(None));
+            return Ok(regions::Shared::empty(None));
         }
-        let pointer =
-            crate::alloc::raw::LayoutExt::try_allocate::<Header>(Layout::new::<Header>())?;
-        let buf = take(source).into();
-        let extent = regions::Extent::from_bytes(buf.as_slice());
-        // SAFETY: this control block owns the exact Header layout.
-        unsafe {
-            pointer.write(Header {
-                refs: mem::raw::Count::one(),
-                buf,
-            })
-        };
+        let allocation = crate::alloc::BoxExt::try_new(MaybeUninit::uninit())?;
+        let (bytes, len, capacity) = take(source).into().into_raw_parts();
+        let pointer = ptr::NonNull::from(Box::leak(allocation).write(Header {
+            refs: mem::raw::Count::one(),
+            // SAFETY: this control block owns the exact Header layout. The full
+            // vector capacity has the same allocation layout as these uninitialized bytes.
+            buf: unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(bytes.cast(), capacity)) },
+        }));
+        // SAFETY: derive coordinates after the Box reaches its final address;
+        // the original initialized prefix remains within its complete allocation.
+        let extent =
+            unsafe { regions::Extent::new(ptr::NonNull::from(&*pointer.as_ref().buf).cast(), len) };
         // SAFETY: the initialized header transfers its initial counted edge.
         let owner = Some(regions::Tag::vec(unsafe {
             mem::raw::Owner::from_raw(pointer)
         }));
         // SAFETY: the vector owner retains this exact initialized extent.
-        Ok(unsafe { regions::Value::new(owner, extent) })
+        Ok(unsafe { regions::Shared::from_extent(owner, extent) })
     }
 
     pub(in crate::buffer) fn capacity(&self) -> usize {
-        self.buf.capacity()
+        self.buf.len()
     }
 }
 
@@ -217,7 +219,7 @@ unsafe impl mem::raw::Target for Header {
 }
 
 const _: () = {
-    assert!(size_of::<Header>() == 4 * size_of::<usize>());
+    assert!(size_of::<Header>() == 3 * size_of::<usize>());
     assert!(align_of::<Header>() >= 8);
     assert!(offset_of!(Header, refs) == 0);
 };

@@ -21,14 +21,6 @@ impl<'view, 'source, S: ?Sized> NonEmpty<'view, 'source, S> {
         Self(view)
     }
 
-    pub(in crate::buffer) fn as_slice(&self) -> &'source [u8] {
-        self.0.as_slice()
-    }
-
-    pub(in crate::buffer) fn source(&self) -> &'source S {
-        self.0.source()
-    }
-
     pub(in crate::buffer) fn view(&self) -> &'view buffer::View<'source, S> {
         self.0
     }

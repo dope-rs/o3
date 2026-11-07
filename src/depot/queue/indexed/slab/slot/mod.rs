@@ -10,7 +10,7 @@ use crate::depot::{
     queue::{indexed::slab, tagged},
 };
 
-/// An initialized slot retaining its owner and exact membership phase.
+/// An admitted slot retaining its owner and exact membership phase.
 #[must_use]
 pub struct Slot<
     'a,
@@ -42,7 +42,7 @@ impl<
         // SAFETY: this admitted slot belongs to an allocated block.
         unsafe { self.core.block.values().as_ptr().add(self.index.get()) }
     }
-    pub fn key(&self) -> slab::Handle<Tag, MAX> {
+    pub(in crate::depot) fn handle(&self) -> slab::Handle<Tag, MAX> {
         // SAFETY: this slot retains its exact initialized metadata and generation.
         let epoch = unsafe { self.core.block.metadata.add(self.index.get()).as_ref() }.generation;
         slab::Handle::new(self.index, epoch)
@@ -101,6 +101,9 @@ impl<
     C: crate::depot::raw::Count,
 > Slot<'a, T, Tag, MAX, H, N, C>
 {
+    pub fn key(&self) -> slab::Handle<Tag, MAX> {
+        self.handle()
+    }
     pub fn into_mut(self) -> &'a mut T {
         // SAFETY: this consuming transition retains the original exclusive source lifetime.
         unsafe { (&mut *self.value()).assume_init_mut() }
@@ -126,12 +129,7 @@ impl<
         // SAFETY: the consumed detached phase owns one initialized value.
         let value = unsafe { (&*self.value()).assume_init_read() };
         self.state_mut().len -= 1;
-        (
-            value,
-            slab::Vacant {
-                entry: self.into_phase(phase::Vacant),
-            },
-        )
+        (value, self.into_phase(phase::Vacant))
     }
     pub(in crate::depot::queue) fn discard(mut self) {
         unsafe { (&mut *self.value()).assume_init_drop() };
@@ -171,7 +169,7 @@ impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
     /// Appends this initialized slot to the destination without retiring its key.
     pub fn move_back(self, lane: Index<N>) {
         // SAFETY: the occupied slot retains this owner's exact live membership.
-        unsafe { tagged::Linked::new(self) }
+        unsafe { tagged::Linked::new(self.into_phase(phase::Metadata)) }
             .unlink()
             .select(lane)
             .push::<false>();
@@ -184,7 +182,7 @@ impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
         T,
         Vacant<'a, T, Tag, MAX, tagged::Hook, N, C, phase::Restore<N>>,
     ) {
-        let detached = unsafe { tagged::Linked::new(self) }
+        let detached = unsafe { tagged::Linked::new(self.into_phase(phase::Metadata)) }
             .unlink()
             .into_inner()
             .into_phase(phase::Detached);
@@ -192,7 +190,7 @@ impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
         (value, slot.into_phase(phase::Restore(lane)))
     }
     pub fn remove(self) -> T {
-        unsafe { tagged::Linked::new(self) }
+        unsafe { tagged::Linked::new(self.into_phase(phase::Metadata)) }
             .unlink()
             .into_inner()
             .into_phase(phase::Detached)
@@ -236,27 +234,38 @@ impl<
 }
 
 pub(in crate::depot) enum Splice<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count> {
-    Root(Vacant<'a, T, Tag, MAX, links::Hook, 0, C, phase::Vacant>),
-    Parent(
-        Live<Vacant<'a, T, Tag, MAX, links::Hook, 0, C, phase::Vacant>, links::Index, links::Hook>,
-    ),
+    Root(Vacant<'a, T, Tag, MAX, links::Hook, 0, C>),
+    Parent(Live<Vacant<'a, T, Tag, MAX, links::Hook, 0, C>, links::Index, links::Hook>),
 }
 
 impl<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count> Splice<'a, T, Tag, MAX, C> {
+    /// # Safety
+    /// A present parent is initialized in this slot's exact owner and distinct
+    /// from its vacancy; it remains live until this phase is consumed.
+    pub(in crate::depot) unsafe fn new(
+        slot: Vacant<'a, T, Tag, MAX, links::Hook, 0, C>,
+        parent: Option<links::Index>,
+    ) -> Self {
+        match parent {
+            Some(parent) => Self::Parent(unsafe { crate::depot::raw::Proof::new((slot, parent)) }),
+            None => Self::Root(slot),
+        }
+    }
+
     pub(in crate::depot) fn insert(
         self,
         build: impl FnOnce(Option<&mut T>, slab::Handle<Tag, MAX>) -> T,
     ) -> Slot<'a, T, Tag, MAX, links::Hook, 0, C> {
         match self {
             Self::Root(slot) => {
-                let key = slot.key();
+                let key = slot.handle();
                 slot.insert(build(None, key))
             }
             Self::Parent(parent) => {
                 let (slot, index) = parent.into_inner();
-                let key = slot.key();
+                let key = slot.handle();
                 let parent = Slot {
-                    core: &mut *slot.entry.core,
+                    core: &mut *slot.core,
                     index,
                     phase: phase::Occupied,
                 }
@@ -280,7 +289,7 @@ impl<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count> Splice<'a, T, Tag,
             Self::Parent(parent) => {
                 let (slot, index) = parent.into_inner();
                 let parent = Slot {
-                    core: &mut *slot.entry.core,
+                    core: &mut *slot.core,
                     index,
                     phase: phase::Occupied,
                 }

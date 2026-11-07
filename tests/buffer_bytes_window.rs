@@ -40,10 +40,8 @@ fn freeze_retains_extent() {
 #[test]
 fn spare_preserves_views() {
     let mut arena =
-        provided::Arena::<[u8; 2]>::try_with(num::NonZero::<u32>::MIN.saturating_add(1), || {
-            Ok::<(), alloc::Error>(())
-        })
-        .expect("provided arena");
+        provided::Arena::<[u8; 2]>::try_allocate(num::NonZero::<u32>::MIN.saturating_add(1))
+            .expect("provided arena")(());
     let mut domain = resident::Domain::new();
     arena.scope(pin::Pin::new(&mut domain), |token, arena, domain| {
         let budget = domain

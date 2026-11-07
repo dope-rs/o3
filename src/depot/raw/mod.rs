@@ -22,7 +22,7 @@ pub unsafe trait Project<K, P = ()> {
 use crate::depot::{
     arena::linked::{head, slots},
     capacity,
-    index::{Initialized, Stored, bitmap, bitmap::entry::Row, set},
+    index::{Initialized, Stored, bitmap, set},
     queue::{
         indexed::keyed::{self, lanes},
         links::Index,
@@ -101,36 +101,15 @@ pub unsafe trait Word: Copy + Eq {
 }
 
 pub(in crate::depot) use hooks::{
-    Detach, EndpointHook, EndpointWord, Insert, Membership, Neighbor, Pop, Relink, Removal, Splice,
+    Detach, EndpointHook, EndpointWord, Insert, Neighbor, Pop, Removal, Splice,
 };
-pub(crate) use proof::{Present, Slot};
+pub(crate) use proof::Slot;
 mod arena;
 pub use arena::Arena;
 mod words;
 pub use words::Words;
-/// Unsafe projections that preserve a retained bitmap row.
-pub trait Rows<W: bitmap::Width = usize>: Words<W> + Sized {
-    /// # Safety
-    /// Mutation preserves this source's storage, immutable domain, row, and phase membership.
-    /// Implementations must return this row's exact retained source.
-    unsafe fn source_mut<P, M>(row: &mut Row<Self, P, M, W>) -> &mut Self {
-        &mut row.source
-    }
-
-    /// # Safety
-    /// Projection retains the exact source, immutable domain, and owner lifetime.
-    /// Implementations must retain this row's exact index and projected owner.
-    unsafe fn map_row<T: Words<W>>(
-        row: Row<Self, (), (), W>,
-        map: impl FnOnce(Self) -> T,
-    ) -> Row<T, (), (), W> {
-        unsafe { row.map(map) }
-    }
-}
-
-impl<W: bitmap::Width, S: Words<W>> Rows<W> for S {}
 mod hooks;
-pub use hooks::Hooks;
+pub use hooks::{Hooks, Node};
 
 /// An immutable u32 count retaining its original domain proof.
 /// # Safety
@@ -193,11 +172,13 @@ pub unsafe trait BitIndex<const N: usize>: Copy {
     unsafe fn from_index(index: usize) -> Self;
 }
 
-/// A retained capability for one stationary planar owner.
+/// A retained capability for one stationary set owner.
 /// # Safety
 /// Projections are pure; every projection and move retains the same live owner, extent, and lifetime.
 pub unsafe trait SetSource<Tag, Raw, const N: usize> {
-    fn planes(&self) -> &set::State<Tag, Raw, N>;
+    type Mode;
+
+    fn planes(&self) -> &set::State<Tag, Raw, N, Self::Mode>;
 }
 
 /// A storage owner whose exclusive borrow excludes every other plane access.
@@ -222,17 +203,6 @@ pub unsafe trait TagStore {
 /// The lane belongs to TagEntry::store; its projection returns normally without topology reentry or mutation.
 pub unsafe trait TagTarget: TagEntry {
     fn lane(&self) -> tagged::Endpoint<&Self::Store>;
-}
-/// # Safety
-/// Storage owns the exact entry and completes its phase once on drop; projections preserve it.
-/// into_inner disarms completion and transfers that entry with its owner and membership unchanged.
-pub unsafe trait TagFinish<E: TagEntry> {
-    type Storage;
-
-    fn new(entry: E) -> Self::Storage;
-    fn entry(storage: &Self::Storage) -> &E;
-    fn entry_mut(storage: &mut Self::Storage) -> &mut E;
-    fn into_inner(storage: Self::Storage) -> E;
 }
 mod tagentry;
 pub use tagentry::TagEntry;
@@ -302,7 +272,7 @@ pub unsafe trait RingEdit: crate::depot::raw::RingStore {
 }
 mod ringcell;
 pub use ringcell::RingCell;
-pub(crate) use ringcell::{RingDestroy, RingRead, drop_ring};
+pub(crate) use ringcell::drop_ring;
 
 /// Detaches one exact external head slot.
 /// # Safety
@@ -314,7 +284,7 @@ pub unsafe trait HeadPop<L: Link, I = ()>: Sized {
     unsafe fn pop(self, item: L::Item, input: I) -> (L, Self::Output);
     /// # Safety
     /// This transition owns this exact current front and cannot reenter its head.
-    unsafe fn apply<O: head::Owner<L>>(self, front: head::Front<O, L>, input: I) -> Self::Output {
+    unsafe fn apply(self, front: head::Front<'_, L>, input: I) -> Self::Output {
         unsafe { front.pop(self, input) }
     }
 }
@@ -328,9 +298,9 @@ pub unsafe trait HeadPush<L: Link, I = ()>: Sized {
     unsafe fn push(self, input: I, head: L) -> L::Item;
     /// # Safety
     /// This transition owns a detached slot in this exact head's storage and cannot reenter it.
-    unsafe fn apply<O: head::Owner<L>>(self, head: O, input: I) {
+    unsafe fn apply(self, head: &head::Cell<L>, input: I) {
         let item = unsafe { self.push(input, head.raw()) };
-        head.store(unsafe { L::some(item) });
+        head.0.set(unsafe { L::some(item) });
     }
 }
 
@@ -344,37 +314,16 @@ pub unsafe trait KeyFinish<const LINKED: bool, P = ()>: Sized {
     unsafe fn finish(self) -> Self::Output;
 }
 /// # Safety
-/// This exclusive root retains its exact initialized slot, key, link and FIFO.
-/// All safe borrows and escaping values preserve retained slot/link authority and membership; indices exclude `Fifo` endpoint tags.
+/// This exclusive root retains its selected slot authority, exact key/link pair and FIFO.
+/// The key index is below `u32::MAX` and excludes the FIFO's endpoint tags.
+/// Shared loans retain the initialized link and plane; escaping values preserve authority and membership.
+/// Neighbor projection returns the exact initialized slot's link without changing or reentering the topology.
 pub unsafe trait KeyOwner<P = ()>: Sized {
     type Key: Key;
     type Fifo;
     fn parts(&self) -> (Self::Key, &keyed::Link<Self::Key, P>);
-    fn slot(&self) -> keyed::Entry<'_, Self::Key, P> {
-        keyed::Entry::from_source(self)
-    }
     fn fifo(&self) -> &Self::Fifo;
-    fn entry<'a>(slot: Proof<(&'a Self, Index), Initialized<P>>) -> keyed::Entry<'a, Self::Key, P>;
-}
-/// # Safety
-/// Consumption retains the exact key/link pair (index below `u32::MAX`), initialized storage and plane for `'a`.
-pub unsafe trait KeyBorrow<'a, P = ()> {
-    type Key: Key;
-    fn parts(self) -> (Self::Key, &'a keyed::Link<Self::Key, P>);
-}
-// SAFETY: the shared loan retains the owner's exact selected key and link plane.
-unsafe impl<'a, O: KeyOwner<P>, P> KeyBorrow<'a, P> for &'a O {
-    type Key = O::Key;
-    fn parts(self) -> (Self::Key, &'a keyed::Link<Self::Key, P>) {
-        O::parts(self)
-    }
-}
-// SAFETY: Entry already retains this exact initialized key and co-located link.
-unsafe impl<'a, K: Key, P> KeyBorrow<'a, P> for keyed::Entry<'a, K, P> {
-    type Key = K;
-    fn parts(self) -> (K, &'a keyed::Link<K, P>) {
-        (self.key(), self.link())
-    }
+    fn link(live: Proof<(&Self, Index), Initialized<P>>) -> &keyed::Link<Self::Key, P>;
 }
 /// # Safety
 /// Routing preserves this exact live slot, vacancy and exclusive root in its destination FIFO.
@@ -391,9 +340,10 @@ pub unsafe trait KeySource<P = ()> {
     fn fifo(&self) -> &keyed::Fifo<Self::Key, P>;
 }
 /// # Safety
-/// Shared traversal preserves membership, links and identities; projection resolves the exact live slot.
+/// Shared traversal preserves membership, links and identities.
+/// Projection returns the exact initialized slot's link without changing or reentering the topology.
 pub unsafe trait KeyRead<P = ()>: KeySource<P> {
-    fn entry<'a>(live: Proof<(&'a Self, Index), Initialized<P>>) -> keyed::Entry<'a, Self::Key, P>;
+    fn link(live: Proof<(&Self, Index), Initialized<P>>) -> &keyed::Link<Self::Key, P>;
 }
 /// # Safety
 /// Every FIFO edge is live in this exact owner; selection retains its exclusive authority.
@@ -475,11 +425,11 @@ pub unsafe trait Reserve<'fifo, 'pool: 'fifo, const TRACK: bool = true>: Sized {
 }
 pub(crate) use arena::{EndsPop, SlotOwner};
 pub(in crate::depot) use arena::{
-    IndexedBlock, IndexedHook, IndexedMeta, IndexedState, PoolMutable, PoolOwner, PoolPolicy,
-    PoolSharing, QueueBlock, QueueSlot, Retired, SlabCapacity, SlabLinks, SlabSlot, StagedMove,
-    StagedNode, StagedPhase, StagedState,
+    IndexedBlock, IndexedHook, IndexedMeta, IndexedState, PoolMutable, PoolPolicy, QueueBlock,
+    QueueSlot, Retired, SlabCapacity, SlabLinks, SlabSlot, StagedMove, StagedNode, StagedPhase,
+    StagedState,
 };
-pub(in crate::depot) use hooks::{LaneInit, LaneStore};
+pub(in crate::depot) use hooks::{LaneInit, LaneStore, LaneUndo};
 
 mod entry;
 mod links;

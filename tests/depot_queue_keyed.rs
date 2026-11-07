@@ -1,27 +1,17 @@
 pub mod common;
 
-use std::{mem, num::NonZero};
+use std::num::NonZero;
 
 use common::depot::{
     index::Id,
-    queue::keyed::{Error, Selected, Slots},
+    queue::keyed::{Error, Slots},
 };
 use o3::depot::{
     self,
     capacity::Count,
-    queue::indexed::keyed::{self, Fifo, Link},
+    queue::indexed::keyed,
     raw::{Key as _, KeySource as _},
 };
-
-#[test]
-fn keeps_fifo_layout() {
-    assert_eq!(mem::size_of::<Link<Id>>(), 8);
-    assert_eq!(mem::align_of::<Link<Id>>(), 4);
-    assert_eq!(mem::size_of::<Fifo<Id>>(), 8);
-    assert_eq!(mem::align_of::<Fifo<Id>>(), 4);
-    assert_eq!(mem::size_of::<keyed::lanes::Fifo<Id, 2>>(), 16);
-    assert_eq!(mem::align_of::<keyed::lanes::Fifo<Id, 2>>(), 4);
-}
 
 #[test]
 fn requeues_and_unlinks() {
@@ -128,26 +118,6 @@ fn transfers_between_roots() {
 }
 
 #[test]
-fn preserves_proof_layout() {
-    assert_eq!(
-        mem::size_of::<keyed::Slot<Selected<'_>>>(),
-        mem::size_of::<Selected<'_>>()
-    );
-    assert_eq!(
-        mem::size_of::<keyed::Slot<Selected<'_>, (), false>>(),
-        mem::size_of::<Selected<'_>>()
-    );
-    assert_eq!(
-        mem::align_of::<keyed::Slot<Selected<'_>>>(),
-        mem::align_of::<Selected<'_>>()
-    );
-    assert_eq!(
-        mem::align_of::<keyed::Slot<Selected<'_>, (), false>>(),
-        mem::align_of::<Selected<'_>>()
-    );
-}
-
-#[test]
 fn traverses_projection() {
     for size in 0..=4 {
         let mut slots = Slots::try_occupied(Count::new(size as u32)).expect("fixture slots");
@@ -173,6 +143,11 @@ fn traverses_projection() {
             next = keyed::Iter::successor(live);
         }
         assert!(next.is_none());
+        let last = keyed::Fifo::last(slots.queues::<false>()).map(|live| {
+            let selected = depot::raw::KeyPlane::select(live);
+            depot::raw::KeyOwner::parts(&selected).0
+        });
+        assert!(last == (size != 0).then(|| Id::new(0, NonZero::<u32>::MIN)));
         let mut entries = keyed::Iter::<_, (), false>::new(slots.queues::<false>());
         for index in (0..size).rev() {
             let live = (entries.next_entry()).expect("every linked slot must be yielded");

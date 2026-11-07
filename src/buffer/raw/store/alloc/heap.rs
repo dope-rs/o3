@@ -2,7 +2,7 @@ use std::{mem, num, ptr};
 
 use storage::alloc;
 
-use crate::buffer::{resident, storage, storage::regions};
+use crate::buffer::{raw::Policy as _, resident, storage};
 
 #[repr(transparent)]
 #[derive(Debug)]
@@ -11,32 +11,28 @@ pub(in crate::buffer) struct Heap<P: crate::buffer::raw::Policy = ()> {
 }
 
 impl<P: crate::buffer::raw::Policy> Heap<P> {
+    #[inline]
     pub(in crate::buffer) fn try_new(
-        seed: P::Seed,
+        seed: P,
         capacity: num::NonZero<u32>,
     ) -> Result<Self, alloc::Error<P::Failure>> {
-        let debit = P::try_acquire(crate::buffer::raw::Debit::new(seed, capacity))
-            .map_err(alloc::Error::Policy)?;
+        let debit =
+            crate::buffer::raw::Debit::try_new(seed, capacity).map_err(alloc::Error::Budget)?;
         Self::try_charged(debit).map_err(alloc::Error::Allocation)
     }
 
+    #[inline]
     pub(in crate::buffer) fn try_charged(
-        debit: P::Charge,
+        debit: crate::buffer::raw::Debit<P>,
     ) -> Result<Self, crate::alloc::Exhausted> {
-        use crate::buffer::raw::Token as _;
-
-        let capacity = debit.debit().amount();
+        let capacity = *debit.item();
         let layout = crate::buffer::raw::Header::<P>::layout(capacity);
         // SAFETY: this admitted header includes a nonzero byte capacity.
         let pointer = unsafe { crate::alloc::raw::try_new(layout, false)? };
-        let (policy, capacity) = debit.commit();
         // SAFETY: the fresh region fits this header and the exact committed
         // capacity; initialization is infallible and precedes owner publication.
         unsafe {
-            pointer.write(crate::buffer::raw::Header {
-                prefix: regions::Prefix::one(capacity),
-                policy,
-            });
+            crate::buffer::raw::Header::write(pointer, capacity, debit);
         }
         Ok(Self { pointer })
     }
@@ -56,11 +52,11 @@ impl<P: crate::buffer::raw::Policy> Heap<P> {
         else {
             return Ok(());
         };
-        let debit = P::try_acquire(crate::buffer::raw::Debit::grow(&header.policy, amount))
-            .map_err(alloc::Error::Policy)?;
+        let debit = crate::buffer::raw::Debit::try_new(header.policy, amount)
+            .map_err(alloc::Error::Budget)?;
         // SAFETY: this sole owner retains the source policy's exact admitted delta.
         self.pointer =
-            unsafe { crate::buffer::raw::Growth::try_resize(self.pointer, target, debit) }
+            unsafe { crate::buffer::raw::Header::try_resize(self.pointer, target, debit) }
                 .map_err(alloc::Error::Allocation)?;
         Ok(())
     }
@@ -96,7 +92,7 @@ impl<P: crate::buffer::raw::Policy> Drop for Heap<P> {
 
 const _: () = assert!(size_of::<Heap<()>>() == size_of::<ptr::NonNull<()>>());
 const _: () = assert!(size_of::<Option<Heap<()>>>() == size_of::<ptr::NonNull<()>>());
-impl<'d> Heap<resident::Lease<'d>> {
+impl<'d> Heap<resident::Budget<'d>> {
     pub(in crate::buffer) fn try_compact(
         &mut self,
         capacity: num::NonZero<u32>,
@@ -105,16 +101,21 @@ impl<'d> Heap<resident::Lease<'d>> {
         if capacity == current {
             return Ok(());
         }
-        let old = crate::buffer::raw::Header::<resident::Lease<'d>>::layout(current);
-        let new = crate::buffer::raw::Header::<resident::Lease<'d>>::layout(capacity);
+        let old = crate::buffer::raw::Header::<resident::Budget<'d>>::layout(current);
+        let new = crate::buffer::raw::Header::<resident::Budget<'d>>::layout(capacity);
         // SAFETY: Heap owns the live pointer-layout pair exclusively, and the
         // caller retains this allocation's nonzero initialized prefix.
         self.pointer = unsafe { crate::alloc::raw::resize(old, self.pointer.cast(), new)? }.cast();
         // SAFETY: the successful shrink retains this initialized header exclusively.
         let header = unsafe { self.pointer.as_mut() };
-        // SAFETY: this compaction exclusively owns the header's configuration.
-        unsafe { header.set_capacity(capacity) };
-        resident::Domain::shrink(&mut header.policy, capacity);
+        // SAFETY: the retained nonzero prefix and unequal capacity prove a
+        // strict shrink. This owner transfers only the released capacity.
+        unsafe {
+            header.set_capacity(capacity);
+            header.policy.refund(crate::mem::raw::Counter::nonzero(
+                current.get() - capacity.get(),
+            ));
+        }
         Ok(())
     }
 }

@@ -17,23 +17,12 @@ pub struct Node<T> {
 
 pub type Pool<T> = depot::raw::Arena<Node<T>, Tag>;
 
+#[derive(Default)]
 pub struct Head {
     raw: head::List<Tag>,
 }
 
-impl Default for Head {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Head {
-    pub const fn new() -> Self {
-        Self {
-            raw: head::List::new(),
-        }
-    }
-
     /// # Safety
     /// The topology and every retained node must belong to this exact pool.
     pub unsafe fn try_insert<T>(

@@ -1,11 +1,11 @@
 use std::{marker, mem};
 
-pub use entry::Entry;
-
 use crate::{alloc, base::marker::ThreadBound, depot::map};
 
-mod entry;
 pub mod errors;
+
+pub type Entry<'a, V> =
+    map::Entry<map::Found<&'a mut Table<V>>, map::Vacancy<&'a mut Table<V>, u64>>;
 
 pub struct Table<V> {
     pub(in crate::depot::map::flat) table: map::raw::Table<V>,
@@ -36,8 +36,8 @@ impl<V> Table<V> {
         let (table, context) = source.into_inner();
         // SAFETY: the consumed admission retains logical and directory capacity.
         let entry = match unsafe { map::raw::Probe::spare(table, hash, matches) } {
-            map::Entry::Occupied(entry) => Entry::Occupied(entry),
-            map::Entry::Vacant(entry) => Entry::Vacant(entry),
+            Ok(entry) => map::Entry::Vacant(entry),
+            Err(entry) => map::Entry::Occupied(entry),
         };
         (entry, context)
     }
@@ -208,7 +208,9 @@ const _: () = {
 
 impl<'a, V> map::Found<&'a mut Table<V>> {
     pub fn into_mut(self) -> &'a mut V {
-        value(self)
+        let (map, bucket) = self.into_parts();
+        // SAFETY: the consumed capability retains this initialized payload's original exclusive loan.
+        unsafe { map.table.payload_mut(&bucket) }
     }
 }
 
@@ -218,7 +220,7 @@ impl<V> map::Found<&mut Table<V>> {
     }
 
     pub fn get_mut(&mut self) -> &mut V {
-        value(self.reborrow())
+        self.reborrow().into_mut()
     }
 
     pub fn remove(self) -> V {
@@ -252,12 +254,6 @@ impl<'a, V> map::Vacancy<&'a mut Table<V>, u64> {
         map.len += 1;
         value
     }
-}
-
-fn value<V>(entry: map::Found<&mut Table<V>>) -> &mut V {
-    let (map, bucket) = entry.into_parts();
-    // SAFETY: the consumed capability retains this initialized payload's original exclusive loan.
-    unsafe { map.table.payload_mut(&bucket) }
 }
 
 pub mod raw;

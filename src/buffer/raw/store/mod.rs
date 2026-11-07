@@ -86,8 +86,6 @@ mod loans;
 mod tags;
 
 mod alloc;
-pub(in crate::buffer) use alloc::{Debit, Growth, Header, Heap, Policy, Rc, Token, Unique};
-mod writing;
-pub(in crate::buffer) use writing::Space;
+pub(in crate::buffer) use alloc::{Debit, Header, Heap, Policy, Rc, Unique};
 mod pooling;
 pub(in crate::buffer) use pooling::Backing;

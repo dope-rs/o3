@@ -17,16 +17,12 @@ pub struct Cursor<L = pool::Layout, M = pool::Owned> {
     head: u32,
 }
 
-// SAFETY: Cursor retains the initialized suffix beginning at its admitted head.
-unsafe impl<L, M> pool::raw::Init for Cursor<L, M> {
-    type Backing = owners::Plain<L>;
-    type Root = M;
-    type State = state::Uninit;
-
-    fn into_parts(self) -> (pool::Span<owners::Plain<L>, M>, usize, usize) {
+impl<L, M> Cursor<L, M> {
+    fn into_shared(self) -> storage::Shared<owners::Edge<owners::Plain<L>, M>> {
         let start = self.head as usize;
         let len = self.lease.len() - start;
-        (self.lease, start, len)
+        // SAFETY: consuming the cursor retains the initialized suffix at its admitted head.
+        unsafe { pool::raw::into_shared(self.lease, start, len) }
     }
 }
 
@@ -108,20 +104,16 @@ impl<L, M> Cursor<L, M> {
 }
 
 impl<L> Cursor<L> {
-    pub fn recycle(self) {
-        self.lease.recycle();
-    }
-
     #[must_use]
     pub fn freeze(self) -> storage::Shared {
-        pool::raw::Init::into_shared(self).into()
+        self.into_shared().into()
     }
 }
 
 impl<'pool, L> Cursor<L, pool::Borrowed<'pool>> {
     #[must_use]
     pub fn freeze(self) -> storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>> {
-        pool::raw::Init::into_shared(self)
+        self.into_shared()
     }
 }
 
@@ -159,8 +151,8 @@ impl<L, M> write::Sink for Cursor<L, M> {
     }
 
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
-        let input = owners::Input::try_measure(slices)?;
-        buffer::raw::Copy::copy(pool::Append::try_input(self, input)?);
+        let input = owners::Measured::try_slices(slices, usize::MAX)?;
+        pool::Append::try_input(self, input)?.copy();
         Ok(())
     }
 }

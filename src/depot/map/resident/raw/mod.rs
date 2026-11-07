@@ -34,11 +34,11 @@ pub(super) unsafe fn insert<T, H, const MAX: u32>(
             // initialized prefix is shorter than the original allocation.
             let index = unsafe { links::Index::new_usize(next) };
             // SAFETY: the same retained credit admits this exact vector's next slot.
-            unsafe { table.records.vacancy() }.insert(Record::new(id, value));
+            (unsafe { table.records.vacancy() })(Record::new(id, value));
             index
         }
     };
-    table.len = table.len.wrapping_add(1);
+    table.available = table.available.wrapping_sub(1);
     unsafe { *table.buckets.get_unchecked_mut(bucket.index()) = index.raw() };
     index
 }
@@ -59,10 +59,9 @@ pub(super) unsafe fn remove<T, H: map::Hasher<resident::Id>, const MAX: u32>(
         record.generation = next;
         record.id = FREE | u64::from(links::Index::encode(table.free));
         table.free = Some(index);
+        table.available = table.available.wrapping_add(1);
     } else {
         record.id = FREE | u64::from(links::Index::END);
-        table.usable = table.usable.wrapping_sub(1);
     }
-    table.len = table.len.wrapping_sub(1);
     value
 }

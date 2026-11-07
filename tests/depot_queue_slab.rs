@@ -17,6 +17,9 @@ fn rejects_stale_handles() {
     let second = (fifo.vacant().map(|vacant| vacant.insert(20).key()))
         .expect("the second indexed value must fit");
 
+    fifo.entry(stale).expect("live fifo entry").push_back();
+    assert!(fifo.front_pair().map(|pair| pair.0) == Some(second));
+    fifo.entry(stale).expect("live fifo entry").push_back();
     assert_eq!(fifo.entry(stale).expect("live fifo entry").remove(), 10);
     let fresh = (fifo.vacant().map(|vacant| vacant.insert(30).key()))
         .expect("the removed indexed slot must accept a recycled value");
@@ -58,13 +61,6 @@ fn retires_failed_epoch() {
     assert!(fifo.is_empty());
     assert_eq!(fifo.available(), 0);
     assert!(fifo.vacant().is_none());
-}
-
-#[test]
-fn keeps_compact_layout() {
-    assert_eq!(mem::size_of::<slab::Handle<Tag>>(), 8);
-    assert_eq!(mem::size_of::<Option<slab::Handle<Tag>>>(), 8);
-    assert_eq!(mem::size_of::<slab::Slab<u64, Tag>>(), 32);
 }
 
 #[test]

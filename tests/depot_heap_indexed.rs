@@ -346,6 +346,7 @@ fn resident_phases() {
         slot.schedule(1, payload(15, &drops));
         owner.clear(|_, _| payload(16, &drops));
         assert!(owner.peek().is_none());
+        owner.clear(|_, _| unreachable!("empty"));
         for (index, id, next) in [(1, 12, 17), (0, 15, 18)] {
             let slot = owner
                 .control()

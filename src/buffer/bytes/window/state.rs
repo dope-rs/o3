@@ -9,7 +9,7 @@ pub(in crate::buffer) struct State<P: crate::buffer::raw::Policy, const MAX_CAPA
 }
 
 impl<P: crate::buffer::raw::Policy, const MAX_CAPACITY: usize> State<P, MAX_CAPACITY> {
-    pub(in crate::buffer) fn seed(&self) -> P::Seed {
+    pub(in crate::buffer) fn seed(&self) -> P {
         self.buf.seed()
     }
 

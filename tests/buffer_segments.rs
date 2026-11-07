@@ -7,7 +7,7 @@ use std::mem;
 
 use common::{
     alloc::system::Tracker,
-    buffer::{Bytes as _, Fill as _},
+    buffer::{try_bytes, try_fill},
 };
 use o3::{
     buffer::{
@@ -32,9 +32,7 @@ fn snapshots_retain_owners() {
     for count in 0..=values.len() {
         {
             let mut chain = (pool.try_chain()).expect("the chain edge must be available");
-            chain
-                .try_fill(&values[..count])
-                .expect("fixture segments fit");
+            try_fill(&mut chain, &values[..count]).expect("fixture segments fit");
             let ((), activity) = Tracker::measure(|| {
                 let mut cursor = chain.segments();
                 for position in 0..=count {
@@ -63,6 +61,7 @@ fn snapshots_retain_owners() {
 #[test]
 fn retries_range_retention() {
     for (spans, expected) in [
+        (&[][..], &b""[..]),
         (&[(1, 3)][..], &b"ab"[..]),
         (&[(1, 3), (5, 8)][..], &b"abcde"[..]),
     ] {
@@ -71,33 +70,33 @@ fn retries_range_retention() {
                 (storage::Shared::try_copy(b"_ab__cde_")).expect("range source allocation");
             let plan = (ranges::Set::<_, u16>::try_new(&source, spans, expected.len()))
                 .expect("complete source ranges");
-            let (failed, hot) = Tracker::measure(|| Tracker::fail_after(0, || plan.try_retain()));
-            assert!(matches!(
-                failed,
-                Err(ranges::retain::Error::Metadata(o3::alloc::Error::Exhausted))
-            ));
-            assert_eq!(hot, [0; 4]);
-            assert_eq!(plan.len(), expected.len());
-            assert_eq!(plan.count().into_raw() as usize, spans.len());
+            if spans.len() > 1 {
+                let (failed, hot) =
+                    Tracker::measure(|| Tracker::fail_after(0, || plan.try_retain()));
+                assert!(matches!(
+                    failed,
+                    Err(ranges::retain::Error::Metadata(o3::alloc::Error::Exhausted))
+                ));
+                assert_eq!(hot, [0; 4]);
+            }
 
             let (result, hot) = Tracker::measure(|| plan.try_retain());
             let retained = (result).expect("the unchanged plan must retry successfully");
-            assert_eq!(hot[0], 1);
+            assert_eq!(hot[0], usize::from(spans.len() > 1));
             assert_eq!(hot[2], 0);
             assert!(retained.count() == plan.count());
             assert_eq!(retained.len(), plan.len());
-            assert_eq!(retained.resident(), source.resident() * spans.len());
+            if let segments::Shape::Many(parts) = &retained {
+                assert_eq!(parts.as_chain().resident(), source.resident() * spans.len());
+            }
             assert!(
                 plan.iter()
                     .zip(retained.segments())
-                    .all(|(view, owner)| { view.as_slice().as_ptr() == owner.as_slice().as_ptr() })
+                    .all(|(view, owner)| { view.as_slice().as_ptr() == owner.as_ptr() })
             );
             retained
         };
-        assert_eq!(
-            retained.try_bytes().expect("chain bytes must allocate"),
-            expected
-        );
+        assert!(retained.segments().flatten().eq(expected));
     }
 }
 
@@ -117,12 +116,10 @@ fn drains_every_boundary() {
             }))
             .expect("pool allocation");
             let mut chain = (pool.try_chain()).expect("chain edge");
-            chain
-                .try_fill(&values[..count])
-                .expect("fixture segments fit");
+            try_fill(&mut chain, &values[..count]).expect("fixture segments fit");
             assert!(segments::Drain::try_new(&mut chain, len + 1).is_err());
             assert_eq!(
-                chain.try_bytes().expect("chain bytes must allocate"),
+                try_bytes(&chain).expect("chain bytes must allocate"),
                 &whole[..len]
             );
             let ((), hot) = Tracker::measure(|| {
@@ -133,7 +130,7 @@ fn drains_every_boundary() {
             });
             assert_eq!(hot, [0; 4]);
             assert_eq!(
-                chain.try_bytes().expect("chain bytes must allocate"),
+                try_bytes(&chain).expect("chain bytes must allocate"),
                 &whole[amount..len]
             );
             let left = chain.count().into_raw() as usize;
@@ -188,9 +185,7 @@ fn transfers_every_boundary() {
                             .as_ref()
                             .expect("required fixture outcome");
                     }
-                    target
-                        .try_fill(&values[..present])
-                        .expect("fixture segments fit");
+                    try_fill(&mut target, &values[..present]).expect("fixture segments fit");
                     let ranges: Vec<_> = source
                         .segments()
                         .chain(target.segments())
@@ -210,11 +205,11 @@ fn transfers_every_boundary() {
                     assert_eq!(required.get(), whole.len() + 1);
                     assert_eq!(room, whole.len());
                     assert_eq!(
-                        source.try_bytes().expect("chain bytes must allocate"),
+                        try_bytes(&source).expect("chain bytes must allocate"),
                         whole
                     );
                     assert_eq!(
-                        target.try_bytes().expect("chain bytes must allocate"),
+                        try_bytes(&target).expect("chain bytes must allocate"),
                         values[..present].concat()
                     );
                     let mut wanted = values[..present].concat();
@@ -224,11 +219,11 @@ fn transfers_every_boundary() {
                     result.as_ref().expect("required fixture outcome");
                     assert_eq!(hot, [0; 4]);
                     assert_eq!(
-                        source.try_bytes().expect("chain bytes must allocate"),
+                        try_bytes(&source).expect("chain bytes must allocate"),
                         &whole[amount..]
                     );
                     assert_eq!(
-                        target.try_bytes().expect("chain bytes must allocate"),
+                        try_bytes(&target).expect("chain bytes must allocate"),
                         wanted
                     );
                     assert_eq!(
@@ -323,16 +318,13 @@ fn scopes_preserve_owners() {
     let mut visited = 0;
     let (source, hot) = Tracker::measure(|| {
         for owner in source.segments() {
-            match owner.scope() {
-                resident::Scope::Independent => {}
-                resident::Scope::Bound(owner) => {
-                    assert!(
-                        visited < expected.len(),
-                        "each borrowed slot is visited once"
-                    );
-                    assert_eq!(owner.as_slice(), expected[visited]);
-                    visited += 1;
-                }
+            if let Some(owner) = owner.scope() {
+                assert!(
+                    visited < expected.len(),
+                    "each borrowed slot is visited once"
+                );
+                assert_eq!(owner.as_slice(), expected[visited]);
+                visited += 1;
             }
         }
         source

@@ -207,7 +207,7 @@ impl<I: buffer::raw::SliceExt> Reserve<&mut Buf<'_>, owners::Measured<I>> {
                 Ok(())
             }
             State::Cold(seed) => {
-                let next = window::Fresh::try_staged(Reserve {
+                let next = window::try_staged(Reserve {
                     buf: *seed,
                     target,
                     source: (&[][..], src),
@@ -219,13 +219,12 @@ impl<I: buffer::raw::SliceExt> Reserve<&mut Buf<'_>, owners::Measured<I>> {
             }
             State::Empty => {
                 let next = if target <= buf.pool.plan().warm()
-                    && let Some(cursor) = buf.pool.warm().acquire()
-                {
-                    Backing::Warm(pool::Span::staged(Reserve {
-                        buf: cursor,
+                    && let Some(cursor) = pool::Pool::staged(Reserve {
+                        buf: buf.pool.warm(),
                         target,
-                        source: src,
-                    }))
+                        source: &src,
+                    }) {
+                    Backing::Warm(cursor)
                 } else {
                     Backing::try_fresh(Reserve {
                         buf: &buf.pool,
@@ -369,34 +368,28 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
     fn try_retain<'a>(
         plan: &Self::View<'a>,
         budget: &resident::Budget<'d>,
-    ) -> Result<resident::Shared<'d>, hold::Error>
+    ) -> Result<hold::Retained<'d>, hold::Error>
     where
         Self: 'a,
     {
         use buffer::raw::Retain as _;
         use storage::regions::NonEmpty;
 
-        let source = match &plan.source().backing {
-            State::Empty | State::Cold(_) => return Ok(resident::Shared::new()),
-            State::Live(source) => source,
+        let Some(view) = NonEmpty::new(plan) else {
+            return Ok(resident::Shared::new().into());
         };
-        let plan = buffer::View {
-            source,
-            bytes: plan.as_slice(),
-        };
-        let Some(view) = NonEmpty::new(&plan) else {
-            return Ok(resident::Shared::new());
-        };
-        let owner = match view.source() {
-            Backing::Warm(cursor) | Backing::Accounted(cursor) => {
+        let view = view.view();
+        let owner = match &view.source.backing {
+            State::Empty | State::Cold(_) => return Ok(resident::Shared::new().into()),
+            State::Live(Backing::Warm(cursor) | Backing::Accounted(cursor)) => {
                 let Some(owner) = owners::Account::try_bind(cursor, budget)? else {
-                    return resident::Exact::try_copy(budget, view.as_slice())
-                        .map(resident::Exact::into_shared)
+                    return storage::Owned::try_from_slice(budget, view.as_slice())
+                        .map(Into::into)
                         .map_err(hold::Error::Resident);
                 };
                 resident::State::Accounted(owner)
             }
-            Backing::Local(state) => {
+            State::Live(Backing::Local(state)) => {
                 let owner = state
                     .buf
                     .try_retain()
@@ -407,9 +400,10 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
         Ok(resident::Shared {
             // SAFETY: the selected backing retains this exact initialized view.
             region: unsafe {
-                regions::Value::new(owner, regions::Extent::from_bytes(view.as_slice()))
+                regions::Shared::from_extent(owner, regions::Extent::from_bytes(view.as_slice()))
             },
-        })
+        }
+        .into())
     }
 }
 

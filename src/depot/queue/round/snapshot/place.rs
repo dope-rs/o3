@@ -15,21 +15,26 @@ impl<'a, T, const G: usize, const N: usize> round::Snapshot<&'a round::Lanes<T, 
     }
 
     /// Preserves existing membership in this destination.
-    pub fn set(&self) -> round::Insertion {
-        let entry = self.snapshot();
-        let lane = entry.access().linked_lane(entry.position.index);
-        if lane == Some(entry.position.lane) {
-            return round::Insertion::Present;
+    /// Returns true when inserted and false when already present.
+    pub fn set(&self) -> bool {
+        let lane = self.slot().linked_lane();
+        if lane == Some(self.position.lane) {
+            return false;
         }
-        entry.push_from(lane);
-        round::Insertion::Inserted
+        let round::Lanes { block, groups } = self.owner;
+        // SAFETY: this snapshot admits both indices to these same-owner fields;
+        // membership was just resolved without an intervening callback.
+        unsafe { round::lanes::push_from(block, groups, self.position, lane) };
+        true
     }
 
     /// Moves this resident to its destination's tail.
     pub fn push(&self) {
-        let entry = self.snapshot();
-        let lane = entry.access().linked_lane(entry.position.index);
-        entry.push_from(lane);
+        let lane = self.slot().linked_lane();
+        let round::Lanes { block, groups } = self.owner;
+        // SAFETY: this snapshot admits both indices to these same-owner fields;
+        // membership was just resolved without an intervening callback.
+        unsafe { round::lanes::push_from(block, groups, self.position, lane) };
     }
 }
 

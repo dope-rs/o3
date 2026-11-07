@@ -23,12 +23,9 @@ pub(in crate::depot::queue::group) struct Draft<'a, 'id, 'b, const LANES: usize,
         slab::Scope<'a, 'id, map::Entry<LANES>, map::Tag, { u32::MAX }, capacity::Count<LANES>>,
 }
 
-enum Added<'id> {
-    Root,
-    Branch {
-        edit: slab::Edit<'id, map::BranchTag>,
-        key: u64,
-    },
+struct Added<'id> {
+    edit: slab::Edit<'id, map::BranchTag>,
+    key: u64,
 }
 
 struct Undo<'a, 'id, const LANES: usize, const N: usize> {
@@ -40,18 +37,13 @@ impl<'a, 'id, const LANES: usize, const N: usize> Return for Undo<'a, 'id, LANES
     type Item = [Option<Added<'id>>; N];
 
     fn return_item(mut self, changes: Self::Item) {
-        for change in changes.into_iter().rev().flatten() {
-            match change {
-                Added::Root => return,
-                Added::Branch { edit, key } => {
-                    let (parent, branch) = edit.get(&mut self.scope);
-                    let target = match parent {
-                        Some(parent) => parent.child_mut(key),
-                        None => self.root.0,
-                    };
-                    branch.collapse(key, target);
-                }
-            }
+        for Added { edit, key } in changes.into_iter().rev().flatten() {
+            let (parent, branch) = edit.get(&mut self.scope);
+            let target = match parent {
+                Some(parent) => parent.child_mut(key),
+                None => self.root.0,
+            };
+            branch.collapse(key, target);
         }
     }
 }
@@ -85,7 +77,7 @@ impl<const LANES: usize, const N: usize> Draft<'_, '_, '_, LANES, N> {
                     ops::ControlFlow::Continue(slot) => slot,
                 };
                 let (lane, key) = *slot.get(&keys);
-                let (mut draft, next) = match start {
+                let (root, next) = match start {
                     Start::Empty(root) => {
                         let empty = map::Entry::new(key);
                         let owner = match entries.try_insert(empty) {
@@ -104,34 +96,18 @@ impl<const LANES: usize, const N: usize> Draft<'_, '_, '_, LANES, N> {
                         let root = map::Root(
                             root.write(map::Link::Owner(map::Node::inserted(entries.key(owner)))),
                         );
-                        let mut changes = [const { None }; N];
-                        *slot.get_mut(&mut changes) = Some(Added::Root);
-                        (
-                            Draft {
-                                entries,
-                                branches: Lease::open(
-                                    Undo {
-                                        scope: branches,
-                                        root,
-                                    },
-                                    changes,
-                                ),
-                            },
-                            slot.insert(owner).next(),
-                        )
+                        (root, slot.insert(owner).next())
                     }
-                    Start::Occupied(root) => (
-                        Draft {
-                            entries,
-                            branches: Lease::open(
-                                Undo {
-                                    scope: branches,
-                                    root,
-                                },
-                                [const { None }; N],
-                            ),
+                    Start::Occupied(root) => (root, ops::ControlFlow::Continue(slot)),
+                };
+                let mut draft = Draft {
+                    entries,
+                    branches: Lease::open(
+                        Undo {
+                            scope: branches,
+                            root,
                         },
-                        ops::ControlFlow::Continue(slot),
+                        [const { None }; N],
                     ),
                 };
                 let bound = match next {
@@ -146,7 +122,7 @@ impl<const LANES: usize, const N: usize> Draft<'_, '_, '_, LANES, N> {
                             None => match draft.intern(key, &slot) {
                                 Ok(key) => key,
                                 Err(cause) => {
-                                    return Err((group::Error::owner(lane, cause), input));
+                                    return Err((group::Error::owner(lane, key, cause), input));
                                 }
                             },
                         };
@@ -189,10 +165,7 @@ impl<'id, const LANES: usize, const N: usize> Draft<'_, 'id, '_, LANES, N> {
         let owner = self
             .entries
             .try_insert(empty)
-            .map_err(|rejected| map::Error::Owners {
-                capacity: *rejected.error(),
-                key: rejected.value().key,
-            })?;
+            .map_err(|rejected| map::Error::Owners(*rejected.error()))?;
         let parent = path.and_then(|mut path| path.rewind(mask));
         let edit = undo
             .scope
@@ -206,8 +179,8 @@ impl<'id, const LANES: usize, const N: usize> Draft<'_, 'id, '_, LANES, N> {
                     key,
                 )
             })
-            .map_err(|slab::Full { capacity }| map::Error::Branches { capacity, key })?;
-        *slot.get_mut(journal) = Some(Added::Branch { edit, key });
+            .map_err(|slab::Full { capacity }| map::Error::Branches(capacity))?;
+        *slot.get_mut(journal) = Some(Added { edit, key });
         Ok(owner)
     }
 }

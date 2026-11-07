@@ -6,15 +6,9 @@ mod shape;
 
 pub(in crate::buffer::pool) use shape::Shape;
 
-#[derive(Clone, Copy)]
-enum State {
-    Owned,
-    Detached,
-}
-
 #[repr(C, align(8))]
 pub(in crate::buffer::pool) struct Header<K = super::Plain> {
-    state: cell::Cell<State>,
+    detached: cell::Cell<bool>,
     pub(super) free: Free,
     pub(super) available: cell::Cell<u32>,
     shape: super::Shape<K>,
@@ -24,7 +18,7 @@ impl<K> Header<K> {
     pub(super) const fn new(shape: super::Shape<K>) -> Self {
         let slots = shape.slots();
         Self {
-            state: cell::Cell::new(State::Owned),
+            detached: cell::Cell::new(false),
             free: Free::new(slots),
             available: cell::Cell::new(slots),
             shape,
@@ -32,20 +26,18 @@ impl<K> Header<K> {
     }
 
     pub(super) fn is_detached(&self) -> bool {
-        matches!(self.state.get(), State::Detached)
+        self.detached.get()
     }
 }
 
 impl<K: crate::buffer::raw::Backing> Header<K> {
-    pub(in crate::buffer::pool) fn release<S>(core: super::Ptr<K, S>) {
-        core.header().state.set(State::Detached);
-        Self::retire(core);
+    pub(in crate::buffer::pool) fn detach<S>(core: super::Ptr<K, S>) {
+        core.header().detached.set(true);
     }
 
-    pub(super) fn retire<S>(core: super::Ptr<K, S>) {
+    pub(in crate::buffer::pool) fn retire<S>(core: super::Ptr<K, S>) {
         let header = core.header();
-        if header.available.get() == header.slots() && matches!(header.state.get(), State::Detached)
-        {
+        if header.available.get() == header.slots() && header.is_detached() {
             // SAFETY: this exact core has no root or live slot remaining; the
             // terminal ownership check immediately consumes that allocation.
             unsafe { K::release(core) };

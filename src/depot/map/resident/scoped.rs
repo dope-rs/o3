@@ -36,9 +36,9 @@ pub struct Retirement<'a, 'id, T, H, const MAX: u32> {
 
 /// Keeps the actual owner loan until a record is published or released.
 pub struct Occupied<'a, 'id, T, H, const MAX: u32> {
+    // Only a new unpublished record retains a bucket and its rollback authority.
     entry: resident::Occupied<'a, T, H, MAX>,
     brand: Brand<'id>,
-    fresh: bool,
 }
 
 pub struct Vacant<'a, 'id, T, H, const MAX: u32> {
@@ -59,11 +59,13 @@ impl<'a, 'id, T, H: map::Hasher<resident::Id>, const MAX: u32> Scope<'a, 'id, T,
         id: resident::Id,
     ) -> map::Entry<Occupied<'_, 'id, T, H, MAX>, Option<Vacant<'_, 'id, T, H, MAX>>> {
         match self.table.entry(id) {
-            map::Entry::Occupied(entry) => map::Entry::Occupied(Occupied {
-                entry,
-                brand: self.brand,
-                fresh: false,
-            }),
+            map::Entry::Occupied(mut entry) => {
+                entry.bucket = None;
+                map::Entry::Occupied(Occupied {
+                    entry,
+                    brand: self.brand,
+                })
+            }
             map::Entry::Vacant(entry) => map::Entry::Vacant(entry.map(|entry| Vacant {
                 entry,
                 brand: self.brand,
@@ -80,7 +82,6 @@ impl<'a, 'id, T, H: map::Hasher<resident::Id>, const MAX: u32> Scope<'a, 'id, T,
             Ok(entry) => Ok(Occupied {
                 entry,
                 brand: self.brand,
-                fresh: false,
             }),
             Err(table) => Err(table),
         }
@@ -111,7 +112,6 @@ impl<'a, 'id, T, H: map::Hasher<resident::Id>, const MAX: u32> Vacant<'a, 'id, T
         Occupied {
             entry: self.entry.insert(value),
             brand: self.brand,
-            fresh: true,
         }
     }
 }
@@ -127,7 +127,7 @@ impl<T, H: map::Hasher<resident::Id>, const MAX: u32> Occupied<'_, '_, T, H, MAX
 
     /// Unpublished new records have no outstanding lease; older records stay live.
     pub fn release(self) -> Option<T> {
-        self.fresh.then(|| self.entry.remove())
+        self.entry.bucket.is_some().then(|| self.entry.remove())
     }
 }
 
@@ -138,14 +138,10 @@ impl<'id, T, H: map::Hasher<resident::Id>, const MAX: u32> Occupied<'_, 'id, T, 
             key,
             brand: self.brand,
         };
-        let fresh = if self.fresh {
-            Some(Fresh {
-                key,
-                brand: self.brand,
-            })
-        } else {
-            None
-        };
+        let fresh = self.entry.bucket.map(|_| Fresh {
+            key,
+            brand: self.brand,
+        });
         (lease, fresh)
     }
 }

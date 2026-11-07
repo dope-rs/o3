@@ -81,9 +81,7 @@ impl<const P: usize, const N: usize> SliceExt for ([u8; P], [&[u8]; N]) {
 }
 
 mod proofs;
-pub(in crate::buffer) use proofs::{
-    Batch, Copy, Exclusive, Indexed, IndexedMut, Linked, LinkedMut, Prefix,
-};
+pub(in crate::buffer) use proofs::{Exclusive, Prefix};
 
 impl<'a, const N: usize> Slices<'a, N> {
     /// Admits one exact slice set whose byte sum fits the allocation domain.
@@ -121,7 +119,7 @@ impl<const N: usize> Slices<'_, N> {
         self,
         budget: &resident::Budget<'d>,
     ) -> Result<resident::Exact<'d>, copy::Error> {
-        let init = self.try_init::<resident::Lease<'d>>(*budget)?;
+        let init = self.try_init::<resident::Budget<'d>>(*budget)?;
         Ok(resident::Exact::from_init(init))
     }
 }

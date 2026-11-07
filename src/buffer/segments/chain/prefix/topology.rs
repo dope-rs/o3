@@ -1,12 +1,12 @@
-use std::{num::NonZero, ops};
+use std::num::NonZero;
 
-use handles::Descriptor;
+use handles::{Descriptor, Occupied};
 
 use crate::{
     buffer,
     buffer::{
         segments,
-        segments::{Key, Kind, Pool, chain::prefix, handles},
+        segments::{Key, Kind, Pool, handles},
     },
     depot::{
         arena::linked::{fifo::ends, slots},
@@ -23,7 +23,7 @@ pub(in crate::buffer::segments::chain::prefix) struct Body<'a, T> {
 }
 
 pub(in crate::buffer::segments::chain::prefix) struct Topology<'a, T> {
-    body: Body<'a, T>,
+    pub(in crate::buffer::segments::chain::prefix) body: Body<'a, T>,
     output: Output<'a>,
 }
 
@@ -74,14 +74,14 @@ impl<'a, T: buffer::raw::Segment> Original<'a, T> {
     ) -> Self {
         let nodes = handles::nodes(handle);
         let (links, len, resident) = match key.state() {
-            handles::State::Multi(index) => {
+            Some(Occupied::Multi(index)) => {
                 return Self::Multi(Existing { handle, key, index });
             }
-            handles::State::Empty => (ends::Exclusive::empty(), 0, 0),
-            handles::State::Single(index) => {
+            None => (ends::Exclusive::empty(), 0, 0),
+            Some(Occupied::Single(index)) => {
                 let (len, resident) = single(index);
                 let mut links = ends::Exclusive::empty();
-                unsafe { links.append_store(nodes, index) };
+                unsafe { links.append_end(nodes, index) };
                 (links, len, resident)
             }
         };
@@ -201,7 +201,7 @@ impl<'a, T: buffer::raw::Segment> Topology<'a, T> {
         target: Original<'a, T>,
         remains: segments::Count,
         count: segments::Count,
-        relation: &prefix::Relation,
+        different_pool: &bool,
     ) -> Result<(Self, Self), segments::Error> {
         let source = Source::new(source, remains);
         let (body, output, source) = match target {
@@ -216,8 +216,8 @@ impl<'a, T: buffer::raw::Segment> Topology<'a, T> {
                 Kind::One => (body, Output::Small(Small::One), source),
                 Kind::Many(count) => {
                     let count = count.nonzero();
-                    match (relation, source) {
-                        (prefix::Relation::Same, Source::Free { old, state }) => {
+                    match (different_pool, source) {
+                        (false, Source::Free { old, state }) => {
                             let (from, claim) = old.take();
                             return Ok((
                                 Self {
@@ -253,28 +253,15 @@ impl<T> Topology<'_, T> {
             Output::Small(Small::Empty) => *self.body.key = Key::EMPTY,
             Output::Small(Small::One) => *self.body.key = Key::single(self.body.links.head_raw()),
             Output::Many { count, claim } => {
-                let live = claim.insert(Descriptor::new(
-                    self.body.links,
+                let live = claim.insert(Descriptor {
+                    links: self.body.links,
                     count,
-                    self.body.len,
-                    self.body.resident,
-                ));
+                    len: self.body.len,
+                    resident_bytes: self.body.resident,
+                });
                 *self.body.key = Key::multi(live.index());
                 unsafe { live.publish() };
             }
         }
-    }
-}
-
-impl<'a, T> ops::Deref for Topology<'a, T> {
-    type Target = Body<'a, T>;
-    fn deref(&self) -> &Self::Target {
-        &self.body
-    }
-}
-
-impl<T> ops::DerefMut for Topology<'_, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.body
     }
 }

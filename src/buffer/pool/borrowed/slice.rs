@@ -16,24 +16,6 @@ impl buffer::Residency for Slice<'_> {
     }
 }
 
-// SAFETY: Slice retains this fully initialized slot's exact selected range.
-unsafe impl<'pool> pool::raw::Init for Slice<'pool> {
-    type Backing = owners::Plain;
-    type Root = pool::Borrowed<'pool>;
-    type State = state::Initialized;
-
-    fn into_parts(
-        self,
-    ) -> (
-        pool::Span<Self::Backing, Self::Root, Self::State>,
-        usize,
-        usize,
-    ) {
-        let len = self.len();
-        (self.span, self.start as usize, len)
-    }
-}
-
 impl<'pool> Slice<'pool> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -91,7 +73,10 @@ impl<'pool> Slice<'pool> {
     }
 
     pub fn freeze(self) -> storage::Shared<owners::Edge<owners::Plain, pool::Borrowed<'pool>>> {
-        pool::raw::Init::into_shared(self)
+        let len = self.len();
+        // SAFETY: this source retains its selected range in the fully initialized slot,
+        // independently of the span's published prefix length.
+        unsafe { pool::raw::into_shared(self.span, self.start as usize, len) }
     }
 }
 

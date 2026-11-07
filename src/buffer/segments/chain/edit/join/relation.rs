@@ -1,4 +1,4 @@
-use std::{iter, marker::PhantomData, mem, num::NonZero};
+use std::{iter, mem, num::NonZero};
 
 use segments::{assembly, assembly::total};
 
@@ -8,15 +8,9 @@ use crate::{
         segments,
         segments::{
             Key,
-            chain::{
-                Assemble,
-                edit::{
-                    Cause,
-                    join::{Pair, incoming::Incoming},
-                },
-            },
+            chain::edit::{Cause, Growth, join::incoming::Incoming},
             handles,
-            handles::Descriptor,
+            handles::{Descriptor, Occupied},
         },
     },
     depot::{
@@ -25,29 +19,12 @@ use crate::{
     },
 };
 
-pub(in crate::buffer::segments) struct Join<T: buffer::raw::Segment, C: Assemble<T>> {
-    pub(super) first: segments::Chain<T>,
-    pub(super) second: segments::Chain<T>,
-    owner: PhantomData<C>,
-}
+type Exclusive<'a, T> = (&'a mut segments::Chain<T>, &'a mut segments::Chain<T>);
 
-pub(in crate::buffer::segments) struct Committed<P>(P);
-
-pub(in crate::buffer::segments) enum Relation<P> {
+pub(in crate::buffer::segments) enum Relation<'a, T> {
     /// Disjoint sequences bounded by one metadata pool.
-    Same(P),
-    Other(P),
-}
-
-pub(in crate::buffer::segments) struct Total<P> {
-    pub(in crate::buffer::segments::chain::edit::join) pair: P,
-    sum: Sum,
-}
-
-pub(in crate::buffer::segments) struct Sum {
-    count: NonZero<u32>,
-    len: usize,
-    resident: usize,
+    Same(Exclusive<'a, T>),
+    Other(Exclusive<'a, T>),
 }
 
 pub(in crate::buffer::segments) enum Links {
@@ -82,24 +59,20 @@ pub(in crate::buffer::segments::chain::edit::join) enum Input {
     },
 }
 
-enum Output<'a> {
-    Single,
-    Multi(slots::Vacant<Descriptor, &'a slots::Store<Descriptor>>),
-}
-
-pub(in crate::buffer::segments) enum Rejected<P> {
+pub(in crate::buffer::segments) enum Rejected {
     Total(total::Error),
-    Capacity(Capacity<P>),
+    Capacity(Growth, Cause),
 }
 
-pub(in crate::buffer::segments) struct Capacity<P> {
-    pub(in crate::buffer::segments::chain::edit::join) total: Total<P>,
-    pub(in crate::buffer::segments::chain::edit::join) cause: Cause,
+struct Capacity<T: buffer::raw::Segment> {
+    pair: (segments::Many<T>, segments::Many<T>),
+    sum: Growth,
+    cause: Cause,
 }
 
-impl<P: Pair> Relation<P> {
-    pub(in crate::buffer::segments) fn new(pair: P) -> Self {
-        let (target, source) = pair.as_ref();
+impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
+    pub(in crate::buffer::segments) fn new(pair: Exclusive<'a, T>) -> Self {
+        let (target, source) = &pair;
         if target.is_same(source) {
             Self::Same(pair)
         } else {
@@ -107,49 +80,46 @@ impl<P: Pair> Relation<P> {
         }
     }
 
-    pub(in crate::buffer::segments) fn try_commit(self) -> Result<(), Rejected<P>> {
-        let (pair, state) = match self {
+    pub(in crate::buffer::segments) fn try_commit(self) -> Result<(), Rejected> {
+        let (mut pair, state) = match self {
             Relation::Same(mut pair) => {
-                let (target, source) = pair.as_ref();
-                let links = match (target.sequence.key.state(), source.sequence.key.state()) {
-                    (_, handles::State::Empty) => return Ok(()),
-                    (handles::State::Empty, _) => {
-                        let (target, source) = pair.as_mut();
-                        mem::swap(&mut target.sequence.key, &mut source.sequence.key);
+                let (target, source) = &pair;
+                let links = match (target.key.state(), source.key.state()) {
+                    (_, None) => return Ok(()),
+                    (None, _) => {
+                        let (target, source) = &mut pair;
+                        mem::swap(&mut target.key, &mut source.key);
                         return Ok(());
                     }
-                    (handles::State::Single(target), handles::State::Single(source)) => {
+                    (Some(Occupied::Single(target)), Some(Occupied::Single(source))) => {
                         Links::Singles { target, source }
                     }
-                    (handles::State::Single(target), handles::State::Multi(source)) => {
+                    (Some(Occupied::Single(target)), Some(Occupied::Multi(source))) => {
                         Links::Prepend { target, source }
                     }
-                    (handles::State::Multi(target), handles::State::Single(source)) => {
+                    (Some(Occupied::Multi(target)), Some(Occupied::Single(source))) => {
                         Links::Push { target, source }
                     }
-                    (handles::State::Multi(target), handles::State::Multi(source)) => {
+                    (Some(Occupied::Multi(target)), Some(Occupied::Multi(source))) => {
                         Links::Splice { target, source }
                     }
                 };
                 (pair, Placement::Same(links))
             }
             Relation::Other(pair) => {
-                let (_, source) = pair.as_ref();
-                let from = match source.sequence.key.state() {
-                    handles::State::Empty => return Ok(()),
-                    handles::State::Single(index) => Input::Single(index),
-                    handles::State::Multi(index) => Input::Multi {
+                let (_, source) = &pair;
+                let from = match source.key.state() {
+                    None => return Ok(()),
+                    Some(Occupied::Single(index)) => Input::Single(index),
+                    Some(Occupied::Multi(index)) => Input::Multi {
                         index,
-                        count: unsafe {
-                            handles::descriptors(&source.sequence.handle).value(index)
-                        }
-                        .count,
+                        count: unsafe { handles::descriptors(&source.handle).value(index) }.count,
                     },
                 };
                 (pair, Placement::Other(from))
             }
         };
-        let (target, source) = pair.as_ref();
+        let (target, source) = &pair;
         let (current, len, resident) = target.totals();
         let (added, bytes, retained) = source.totals();
         let count = match &state {
@@ -160,185 +130,166 @@ impl<P: Pair> Relation<P> {
         };
         let len = total::Error::logical(len, bytes).map_err(Rejected::Total)?;
         let resident = total::Error::resident(resident, retained).map_err(Rejected::Total)?;
-        // SAFETY: every prepared state retains a nonempty source.
-        let mut total = Total {
-            pair,
-            sum: Sum {
-                count: unsafe { NonZero::new_unchecked(count) },
-                len,
-                resident,
-            },
+        // SAFETY: the source is nonempty. Same-store partitions are disjoint and fit
+        // physical node capacity, so their sum cannot wrap; cross-store sums are checked.
+        let sum = Growth {
+            count: unsafe { NonZero::new_unchecked(count) },
+            len,
+            resident,
         };
-        let result = (|| {
-            match state {
-                Placement::Same(links) => {
-                    let (target, source) = total.pair.as_mut();
-                    let nodes = handles::nodes(&target.sequence.handle);
-                    let descs = handles::descriptors(&target.sequence.handle);
-                    let desc = match links {
-                        Links::Singles {
-                            target: left,
-                            source: right,
-                        } => {
-                            let claim =
-                                descs
-                                    .vacant()
-                                    .ok_or(Cause::Descriptors(capacity::Shortage {
+        let result =
+            (|| {
+                match state {
+                    Placement::Same(links) => {
+                        let (target, source) = &mut pair;
+                        let nodes = handles::nodes(&target.handle);
+                        let descs = handles::descriptors(&target.handle);
+                        let desc = match links {
+                            Links::Singles {
+                                target: left,
+                                source: right,
+                            } => {
+                                let claim = descs.vacant().ok_or(Cause::Descriptors(
+                                    capacity::Shortage {
                                         requested: NonZero::<usize>::MIN,
                                         available: 0,
-                                    }))?;
-                            let mut links = ends::Exclusive::empty();
-                            unsafe {
-                                links.append_store(nodes, left);
-                                links.append_store(nodes, right);
+                                    },
+                                ))?;
+                                let mut links = ends::Exclusive::empty();
+                                unsafe {
+                                    links.append_end(nodes, left);
+                                    links.append_end(nodes, right);
+                                }
+                                let claim = claim.insert(Descriptor {
+                                    links,
+                                    count: sum.count,
+                                    len: sum.len,
+                                    resident_bytes: sum.resident,
+                                });
+                                target.key = Key::multi(claim.index());
+                                source.key = Key::EMPTY;
+                                unsafe { claim.publish() };
+                                return Ok(());
                             }
-                            let claim = claim.insert(Descriptor::new(
-                                links,
-                                total.sum.count,
-                                total.sum.len,
-                                total.sum.resident,
-                            ));
-                            target.sequence.key = Key::multi(claim.index());
-                            source.sequence.key = Key::EMPTY;
-                            unsafe { claim.publish() };
-                            return Ok(());
-                        }
-                        Links::Prepend {
-                            target: left,
-                            source: right,
-                        } => {
-                            let desc = unsafe { &mut *descs.value_ptr(right) };
-                            unsafe { desc.links.prepend_link(nodes, left) };
-                            target.sequence.key = Key::multi(right);
-                            desc
-                        }
-                        Links::Push {
-                            target: left,
-                            source: right,
-                        } => {
-                            let desc = unsafe { &mut *descs.value_ptr(left) };
-                            unsafe { desc.links.append_store(nodes, right) };
-                            desc
-                        }
-                        Links::Splice {
-                            target: left,
-                            source: right,
-                        } => {
-                            let (mut from, retired) = unsafe { descs.detached(right) }.take();
-                            let desc = unsafe { &mut *retired.release().value_ptr(left) };
-                            // SAFETY: Relation::Same retained disjoint chains in this exact store.
-                            let pair =
-                                unsafe { ends::Pair::new(nodes, &mut desc.links, &mut from.links) };
-                            pair.append();
-                            desc
-                        }
-                    };
-                    desc.count = total.sum.count;
-                    desc.len = total.sum.len;
-                    desc.resident_bytes = total.sum.resident;
-                    source.sequence.key = Key::EMPTY;
-                    Ok(())
-                }
-                Placement::Other(from) => {
-                    let (target, source) = total.pair.as_mut();
-                    let store = handles::nodes(&target.sequence.handle);
-                    let table = handles::descriptors(&target.sequence.handle);
-                    let nodes = slots::Input::try_new(
-                        store,
-                        Incoming {
-                            source,
-                            input: from,
-                        },
-                    )?;
-                    let (mut links, output) = match target.sequence.key.state() {
-                        handles::State::Empty => {
-                            let output = if total.sum.count.get() == 1 {
-                                Output::Single
-                            } else {
+                            Links::Prepend {
+                                target: left,
+                                source: right,
+                            } => {
+                                let desc = unsafe { &mut *descs.value_ptr(right) };
+                                unsafe { desc.links.prepend_link(nodes, left) };
+                                target.key = Key::multi(right);
+                                desc
+                            }
+                            Links::Push {
+                                target: left,
+                                source: right,
+                            } => {
+                                let desc = unsafe { &mut *descs.value_ptr(left) };
+                                unsafe { desc.links.append_end(nodes, right) };
+                                desc
+                            }
+                            Links::Splice {
+                                target: left,
+                                source: right,
+                            } => {
+                                let (mut from, retired) = unsafe { descs.detached(right) }.take();
+                                let desc = unsafe { &mut *retired.release().value_ptr(left) };
+                                // SAFETY: Relation::Same retained disjoint chains in this exact store.
+                                unsafe { desc.links.append_chain(nodes, &mut from.links) };
+                                desc
+                            }
+                        };
+                        desc.count = sum.count;
+                        desc.len = sum.len;
+                        desc.resident_bytes = sum.resident;
+                        source.key = Key::EMPTY;
+                        Ok(())
+                    }
+                    Placement::Other(from) => {
+                        let (target, source) = &mut pair;
+                        let store = handles::nodes(&target.handle);
+                        let table = handles::descriptors(&target.handle);
+                        let nodes = slots::Input::try_new(
+                            store,
+                            Incoming {
+                                source,
+                                input: from,
+                            },
+                        )?;
+                        let (mut links, output) = match target.key.state() {
+                            None => {
+                                let output = if sum.count.get() == 1 {
+                                    None
+                                } else {
+                                    let claim = table.vacant().ok_or(Cause::Descriptors(
+                                        capacity::Shortage {
+                                            requested: NonZero::<usize>::MIN,
+                                            available: 0,
+                                        },
+                                    ))?;
+                                    Some(claim)
+                                };
+                                (ends::Exclusive::empty(), output)
+                            }
+                            Some(Occupied::Single(index)) => {
                                 let claim = table.vacant().ok_or(Cause::Descriptors(
                                     capacity::Shortage {
                                         requested: NonZero::<usize>::MIN,
                                         available: 0,
                                     },
                                 ))?;
-                                Output::Multi(claim)
-                            };
-                            (ends::Exclusive::empty(), output)
+                                let mut links = ends::Exclusive::empty();
+                                unsafe { links.append_end(store, index) };
+                                (links, Some(claim))
+                            }
+                            Some(Occupied::Multi(index)) => {
+                                let (desc, claim) = unsafe { table.detached(index) }.take();
+                                (desc.links, Some(claim))
+                            }
+                        };
+                        target.key = Key::EMPTY;
+                        nodes.start().0.run(|claim, value| {
+                            unsafe { claim.insert(value).append(&mut links) };
+                        });
+                        match output {
+                            None => target.key = Key::single(links.head_raw()),
+                            Some(claim) => {
+                                let claim = claim.insert(Descriptor {
+                                    links,
+                                    count: sum.count,
+                                    len: sum.len,
+                                    resident_bytes: sum.resident,
+                                });
+                                target.key = Key::multi(claim.index());
+                                unsafe { claim.publish() };
+                            }
                         }
-                        handles::State::Single(index) => {
-                            let claim =
-                                table
-                                    .vacant()
-                                    .ok_or(Cause::Descriptors(capacity::Shortage {
-                                        requested: NonZero::<usize>::MIN,
-                                        available: 0,
-                                    }))?;
-                            let mut links = ends::Exclusive::empty();
-                            unsafe { links.append_store(store, index) };
-                            (links, Output::Multi(claim))
-                        }
-                        handles::State::Multi(index) => {
-                            let (desc, claim) = unsafe { table.detached(index) }.take();
-                            (desc.links, Output::Multi(claim))
-                        }
-                    };
-                    target.sequence.key = Key::EMPTY;
-                    nodes.start().0.run(|claim, value| {
-                        unsafe { claim.insert(value).append(&mut links) };
-                    });
-                    match output {
-                        Output::Single => target.sequence.key = Key::single(links.head_raw()),
-                        Output::Multi(claim) => {
-                            let claim = claim.insert(Descriptor::new(
-                                links,
-                                total.sum.count,
-                                total.sum.len,
-                                total.sum.resident,
-                            ));
-                            target.sequence.key = Key::multi(claim.index());
-                            unsafe { claim.publish() };
-                        }
+                        Ok(())
                     }
-                    Ok(())
                 }
-            }
-        })();
+            })();
         match result {
             Ok(()) => Ok(()),
-            Err(cause) => Err(Rejected::Capacity(Capacity { cause, total })),
+            Err(cause) => Err(Rejected::Capacity(sum, cause)),
         }
     }
 }
 
-impl<T: buffer::raw::Segment, C: Assemble<T>> Join<T, C> {
-    pub(in crate::buffer::segments) fn new(first: C, second: C) -> Self {
-        Self {
-            first: first.into(),
-            second: second.into(),
-            owner: PhantomData,
-        }
-    }
+impl<T: buffer::raw::Segment> TryFrom<(Self, Self)> for segments::Many<T> {
+    type Error = crate::mem::Rejected<(Self, Self), assembly::Error>;
 
-    pub(in crate::buffer::segments) fn try_commit(
-        mut self,
-    ) -> Result<C, crate::mem::Rejected<(C, C), assembly::Error>>
-    where
-        Self: Into<(C, C)>,
-        Committed<Self>: Into<C>,
-    {
-        match Relation::new(&mut self).try_commit() {
-            Ok(()) => Ok(Committed(self).into()),
+    fn try_from((mut first, mut second): (Self, Self)) -> Result<Self, Self::Error> {
+        match Relation::new((&mut first.0, &mut second.0)).try_commit() {
+            Ok(()) => Ok(first),
             Err(Rejected::Total(cause)) => Err(crate::mem::Rejected::new(
-                self.into(),
+                (first, second),
                 assembly::Error::Total(cause),
             )),
-            Err(Rejected::Capacity(Capacity {
-                total: Total { sum, .. },
-                cause,
-            })) => {
-                let current = self.first.count();
+            Err(Rejected::Capacity(sum, cause)) => {
+                let current = first.0.count();
                 let capacity = Capacity {
-                    total: Total { pair: self, sum },
+                    pair: (first, second),
+                    sum,
                     cause,
                 };
                 Ok(segments::Exact::try_reserve(capacity, current)?.collect())
@@ -347,109 +298,48 @@ impl<T: buffer::raw::Segment, C: Assemble<T>> Join<T, C> {
     }
 }
 
-impl<T> Rejected<(&mut segments::Chain<T>, &mut segments::Chain<T>)> {
+impl Rejected {
     pub(in crate::buffer::segments) fn into_error(self) -> segments::Error {
         match self {
-            Self::Total(cause) => segments::Error::Total(cause),
-            Self::Capacity(capacity) => capacity.cause.into_error(),
+            Self::Total(cause) => cause.into(),
+            Self::Capacity(_, cause) => cause.into_error(),
         }
     }
 }
 
-// SAFETY: this total owns both unchanged chains and their checked cardinality.
-unsafe impl<T: buffer::raw::Segment, C: Assemble<T>> buffer::raw::Sequence<T>
-    for Capacity<Join<T, C>>
-where
-    Join<T, C>: Into<(C, C)>,
-{
-    type Output = C;
+// SAFETY: both retained Many chains own at least four owners with their checked exact sum.
+unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T> for Capacity<T> {
     type Item = segments::Item<T>;
-    type Error = crate::mem::Rejected<(C, C), assembly::Error>;
+    type Error = crate::mem::Rejected<(segments::Many<T>, segments::Many<T>), assembly::Error>;
 
-    fn owners(self) -> impl Iterator<Item = segments::Item<T>> + buffer::raw::Total {
-        let Join {
-            mut first,
-            mut second,
-            ..
-        } = self.total.pair;
+    fn owners(
+        self,
+    ) -> (
+        impl Iterator<Item = segments::Item<T>>,
+        impl buffer::raw::Total,
+    ) {
+        let (first, second) = self.pair;
+        let mut first: segments::Chain<T> = first.into();
+        let mut second: segments::Chain<T> = second.into();
         let owners =
             iter::from_fn(move || first.pop_item()).chain(iter::from_fn(move || second.pop_item()));
-        buffer::raw::Batch {
-            owners,
-            total: self.total.sum,
-        }
+        (owners, self.sum)
     }
 
     fn reject(self, error: crate::alloc::Error) -> Self::Error {
-        crate::mem::Rejected::new(self.total.pair.into(), self.cause.allocation(error))
+        let (first, second) = self.pair;
+        crate::mem::Rejected::new((first, second), self.cause.allocation(error))
     }
 }
 
-impl<T: buffer::raw::Segment, C: Assemble<T>> buffer::raw::Total for Capacity<Join<T, C>> {
+impl<T: buffer::raw::Segment> buffer::raw::Total for Capacity<T> {
     fn count(&self) -> segments::Count {
-        segments::Count::new(self.total.sum.count.get())
+        segments::Count::new(self.sum.count.get())
     }
     fn len(&self) -> usize {
-        self.total.sum.len
+        self.sum.len
     }
     fn resident(&self) -> usize {
-        self.total.sum.resident
+        self.sum.resident
     }
 }
-
-impl buffer::raw::Total for Sum {
-    fn count(&self) -> segments::Count {
-        segments::Count::new(self.count.get())
-    }
-    fn len(&self) -> usize {
-        self.len
-    }
-    fn resident(&self) -> usize {
-        self.resident
-    }
-}
-
-impl<T: buffer::raw::Segment> From<Committed<Join<T, segments::Chain<T>>>> for segments::Chain<T> {
-    fn from(val: Committed<Join<T, segments::Chain<T>>>) -> Self {
-        val.0.first
-    }
-}
-
-impl<T: buffer::raw::Segment> From<Committed<Join<T, segments::Many<T>>>> for segments::Many<T> {
-    fn from(val: Committed<Join<T, segments::Many<T>>>) -> Self {
-        // SAFETY: successful join preserved both original Many inputs in the destination.
-        unsafe { segments::Many::new(val.0.first) }
-    }
-}
-
-impl<T: buffer::raw::Segment> From<Join<T, segments::Chain<T>>>
-    for (segments::Chain<T>, segments::Chain<T>)
-{
-    fn from(val: Join<T, segments::Chain<T>>) -> Self {
-        (val.first, val.second)
-    }
-}
-
-impl<T: buffer::raw::Segment> From<Join<T, segments::Many<T>>>
-    for (segments::Many<T>, segments::Many<T>)
-{
-    fn from(val: Join<T, segments::Many<T>>) -> Self {
-        // SAFETY: rejected preflight leaves both original Many inputs unchanged.
-        let first = unsafe { segments::Many::new(val.first) };
-        // SAFETY: this is the other unchanged input of the same rejected operation.
-        let second = unsafe { segments::Many::new(val.second) };
-        (first, second)
-    }
-}
-
-const _: () = {
-    use crate::buffer::storage::Shared;
-    assert!(
-        size_of::<Join<Shared, segments::Many<Shared>>>()
-            == 2 * size_of::<segments::Many<Shared>>()
-    );
-    assert!(
-        size_of::<Committed<Join<Shared, segments::Many<Shared>>>>()
-            == size_of::<Join<Shared, segments::Many<Shared>>>()
-    );
-};

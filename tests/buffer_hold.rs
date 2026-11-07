@@ -127,7 +127,7 @@ fn consume_own_prefix() {
 
 #[test]
 fn commit_or_cancel_pooled() {
-    use buffer::{Cursor as _, bytes, pool};
+    use buffer::{Cursor as _, bytes, pool, write::consume::Consume as _};
 
     let pool = (pool::Pool::try_new(1, 16)).expect("pooled source allocation");
     let mut writer = (pool.view()).expect("one free pooled slot");
@@ -150,12 +150,16 @@ fn commit_or_cancel_pooled() {
             let plan = cursor.try_get(0..4).expect("the remaining four bytes fit");
             assert_eq!(plan.as_slice(), b"cdef");
             if commit {
-                cursor.commit();
+                assert_eq!(cursor.commit(), 2);
             }
         }
+        assert_eq!(source.as_slice(), b"cdef");
+        let mut cursor = bytes::Cursor::new(&mut source);
+        cursor.consume_max(usize::MAX);
+        assert_eq!(cursor.commit(), 4);
     });
     assert!(activity == Activity::default());
-    assert_eq!(source.as_slice(), b"cdef");
+    assert!(pool.view().is_some());
 }
 
 #[test]
@@ -170,9 +174,7 @@ fn consume_keeps_source() {
         view.try_consume(1)
             .expect("one byte fits the selected view");
         let result = view.try_consume(usize::MAX);
-        let error = result
-            .err()
-            .expect("an oversized consume preserves the selected suffix");
+        let error = result.expect_err("an oversized consume preserves the selected suffix");
         let (required, left) = error.into_parts();
         assert_eq!((required.get(), left), (usize::MAX, 3));
         assert_eq!(view.as_slice(), b"cde");

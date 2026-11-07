@@ -11,11 +11,7 @@ impl<const MIN: u32, const MAX: u32> U32<MIN, MAX> {
     const NONEMPTY: () = assert!(MIN <= MAX, "bounded U32 clamp requires MIN <= MAX");
 
     pub const fn new(value: u32) -> Option<Self> {
-        if value >= MIN && value <= MAX {
-            Some(Self(value))
-        } else {
-            None
-        }
+        Self::from_usize(value as usize)
     }
 
     /// Constructs the bound from a compile-time value within its range.
@@ -25,8 +21,8 @@ impl<const MIN: u32, const MAX: u32> U32<MIN, MAX> {
     }
 
     pub const fn from_usize(value: usize) -> Option<Self> {
-        if usize::BITS <= u32::BITS || value <= u32::MAX as usize {
-            Self::new(value as u32)
+        if value >= MIN as usize && value <= MAX as usize {
+            Some(Self(value as u32))
         } else {
             None
         }
@@ -176,16 +172,12 @@ impl<const MIN: u64, const MAX: u64> U64<MIN, MAX> {
     const NONEMPTY: () = assert!(MIN <= MAX, "bounded U64 clamp requires MIN <= MAX");
 
     pub const fn new(value: u64) -> Option<Self> {
-        if value >= MIN && value <= MAX {
-            Some(Self(value))
-        } else {
-            None
-        }
+        Self::from_usize(value as usize)
     }
 
     pub const fn from_usize(value: usize) -> Option<Self> {
-        if usize::BITS <= u64::BITS || value <= u64::MAX as usize {
-            Self::new(value as u64)
+        if value >= MIN as usize && value <= MAX as usize {
+            Some(Self(value as u64))
         } else {
             None
         }

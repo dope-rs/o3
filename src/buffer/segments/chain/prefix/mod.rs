@@ -22,13 +22,7 @@ struct Projection<'a, T> {
     count: segments::Count,
     len: usize,
     resident: usize,
-    relation: Relation,
-}
-
-#[repr(u8)]
-enum Relation {
-    Same,
-    Other,
+    different_pool: bool,
 }
 
 struct Drain<'a, T: buffer::raw::Segment> {
@@ -42,30 +36,23 @@ impl<'a, T: buffer::raw::Segment> Projection<'a, T> {
         target: &'a mut Chain<T, Pool<T>>,
         shape: Shape<'a, T>,
     ) -> Result<Self, segments::Error> {
-        let target = Original::new(&target.sequence.handle, &mut target.sequence.key, |index| {
+        let target = Original::new(&target.handle, &mut target.key, |index| {
             // SAFETY: the exclusive target key owns its live single node.
-            let owner = unsafe { handles::nodes(&target.sequence.handle).value(index) };
+            let owner = unsafe { handles::nodes(&target.handle).value(index) };
             (owner.len().get(), buffer::Residency::resident(owner))
         });
-        let relation = if target.handle().is_same(shape.source) {
-            Relation::Same
-        } else {
-            Relation::Other
-        };
+        let different_pool = !target.handle().is_same(shape.source);
         let (current, base_len, base_mem) = target.total();
-        let count =
-            total::Error::count(current, shape.count()).map_err(segments::Error::component)?;
-        let len =
-            total::Error::logical(base_len, shape.amount).map_err(segments::Error::component)?;
-        let resident = total::Error::resident(base_mem, shape.projected_resident)
-            .map_err(segments::Error::component)?;
+        let count = total::Error::count(current, shape.count())?;
+        let len = total::Error::logical(base_len, shape.amount)?;
+        let resident = total::Error::resident(base_mem, shape.projected_resident)?;
         Ok(Self {
             target,
             shape,
             count,
             len,
             resident,
-            relation,
+            different_pool,
         })
     }
 
@@ -77,7 +64,7 @@ impl<'a, T: buffer::raw::Segment> Projection<'a, T> {
         let reserve = slots::Input::try_new(store, self)?;
         let (nodes, mut output) = reserve.try_start()?;
         let source = nodes.run(|claim, value| {
-            unsafe { claim.insert(value).append(&mut output.links) };
+            unsafe { claim.insert(value).append(&mut output.body.links) };
         });
         source.restore();
         output.restore();
@@ -95,9 +82,10 @@ unsafe impl<'a, T: buffer::raw::Segment> depot::raw::Input<segments::Item<T>>
     type Output = Topology<'a, T>;
 
     fn count(&self) -> capacity::Count {
-        capacity::Count::new(match self.relation {
-            Relation::Same => u32::from(self.shape.split.is_some()),
-            Relation::Other => self.shape.count().into_raw(),
+        capacity::Count::new(if self.different_pool {
+            self.shape.count().into_raw()
+        } else {
+            u32::from(self.shape.split.is_some())
         })
     }
 
@@ -131,21 +119,21 @@ unsafe impl<T: buffer::raw::Segment> depot::raw::TryStart<segments::Item<T>> for
             self.target,
             self.shape.remains,
             self.count,
-            &self.relation,
+            &self.different_pool,
         )?;
-        let output = handles::nodes(target.handle);
-        if let Relation::Same = self.relation {
+        let output = handles::nodes(target.body.handle);
+        if !self.different_pool {
             while self.shape.full != segments::Count::EMPTY {
-                let index = source.links.head_raw();
-                let index = unsafe { source.links.detach_store(input, index) };
-                unsafe { target.links.append_store(output, index) };
+                let index = source.body.links.head_raw();
+                let index = unsafe { source.body.links.detach_store(input, index) };
+                unsafe { target.body.links.append_store(output, index) };
                 self.shape.full = segments::Count::new(self.shape.full.into_raw().wrapping_sub(1));
             }
         }
-        source.len -= self.shape.amount;
-        source.resident -= self.shape.full_resident;
-        target.len = self.len;
-        target.resident = self.resident;
+        source.body.len -= self.shape.amount;
+        source.body.resident -= self.shape.full_resident;
+        target.body.len = self.len;
+        target.body.resident = self.resident;
         Ok((
             Drain {
                 source,
@@ -161,10 +149,10 @@ impl<T: buffer::raw::Segment> Iterator for Drain<'_, T> {
     type Item = segments::Item<T>;
 
     fn next(&mut self) -> Option<segments::Item<T>> {
-        let store = handles::nodes(self.source.handle);
+        let store = handles::nodes(self.source.body.handle);
         if self.full != segments::Count::EMPTY {
-            let index = self.source.links.head_raw();
-            let index = unsafe { self.source.links.detach_store(store, index) };
+            let index = self.source.body.links.head_raw();
+            let index = unsafe { self.source.body.links.detach_store(store, index) };
             self.full = segments::Count::new(self.full.into_raw().wrapping_sub(1));
             return Some(unsafe { store.detached(index) }.take().0);
         }

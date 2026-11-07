@@ -1,16 +1,17 @@
+use crate::depot::capacity;
+
 /// The observed occupancy when an exact ring reservation was rejected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Full {
-    pub(super) used: usize,
-    pub(super) capacity: usize,
+    pub(super) capacity: capacity::Count,
 }
 
 impl Full {
     pub const fn used(self) -> usize {
-        self.used
+        self.capacity.get()
     }
 
     pub const fn capacity(self) -> usize {
-        self.capacity
+        self.capacity.get()
     }
 }

@@ -1,12 +1,7 @@
 pub mod common;
 
-use std::io::Read as _;
-
-use common::{buffer::Bytes as _, depot::model::Lcg};
-use o3::buffer::{
-    segments::{self, scatter},
-    storage,
-};
+use common::{buffer::try_bytes, depot::model::Lcg};
+use o3::buffer::{segments, storage};
 
 #[test]
 fn split_keeps_owners() {
@@ -72,11 +67,11 @@ fn projects_boundary_owner() {
         .expect("required fixture outcome");
 
     assert_eq!(
-        target.try_bytes().expect("chain bytes must allocate"),
+        try_bytes(&target).expect("chain bytes must allocate"),
         b"abcd"
     );
     assert_eq!(
-        source.try_bytes().expect("chain bytes must allocate"),
+        try_bytes(&source).expect("chain bytes must allocate"),
         b"ef"
     );
 }
@@ -104,12 +99,13 @@ fn classifies_without_copy() {
         .try_push(owner)
         .as_ref()
         .expect("metadata admits the owner");
-    let owner = match single.into_shape() {
+    let single = single.into_shape();
+    assert!(single.count() == segments::Count::ONE);
+    let owner = match single {
         segments::Shape::One(owner) => Some(owner),
         segments::Shape::Empty | segments::Shape::Many(_) => None,
     }
     .expect("single classification retains the nonempty item");
-    assert!(owner.count() == segments::Count::ONE);
     assert_eq!(owner.as_slice().as_ptr(), ptr);
 
     let mut multi = (pool.try_chain()).expect("metadata edge must fit");
@@ -159,16 +155,14 @@ fn classifies_without_copy() {
 }
 
 #[test]
-fn scoped_is_covariant() {
+fn scoped_returns_metadata() {
     let pool = (segments::Pool::try_new(segments::Plan {
         segments: 2,
         chains: 1,
     }))
-    .expect("the covariance pool must allocate");
-    let scope = ();
-    let mut chain = shorten_pool_borrow(pool.scoped(), &scope);
-    let owner =
-        (storage::Shared::try_copy(b"borrowed")).expect("the covariant scoped owner must allocate");
+    .expect("the scoped pool must allocate");
+    let mut chain = pool.scoped();
+    let owner = (storage::Shared::try_copy(b"borrowed")).expect("the scoped owner must allocate");
     chain
         .try_push(owner)
         .as_ref()
@@ -182,33 +176,6 @@ fn scoped_is_covariant() {
     assert_eq!(pool.available().chains, 0);
     drop(chain);
     assert!(pool.is_idle());
-}
-
-#[test]
-fn reads_chain() {
-    let pool = (segments::Pool::try_new(segments::Plan {
-        segments: 2,
-        chains: 1,
-    }))
-    .expect("the scatter-read pool must allocate");
-    let mut owned = (pool.try_chain()).expect("metadata edge must fit");
-    let first =
-        (storage::Shared::try_copy(b"ab")).expect("the detached scatter head must allocate");
-    let second =
-        (storage::Shared::try_copy(b"c")).expect("the detached scatter tail must allocate");
-    owned
-        .try_push(first)
-        .as_ref()
-        .expect("metadata admits the owner");
-    owned
-        .try_push(second)
-        .as_ref()
-        .expect("metadata admits the owner");
-    let mut dbuf = Vec::new();
-    let result = scatter::Reader::new(owned.segments()).read_to_end(&mut dbuf);
-    result.as_ref().expect("detached scatter read succeeds");
-
-    assert_eq!(dbuf, b"abc");
 }
 
 #[test]
@@ -235,7 +202,7 @@ fn flattens_chain() {
 
     assert_eq!(output.as_slice(), b"abcdef");
     assert_eq!(
-        source.try_bytes().expect("chain bytes must allocate"),
+        try_bytes(&source).expect("chain bytes must allocate"),
         b"abcdef"
     );
 }
@@ -330,9 +297,9 @@ fn matches_flat_model() {
             }
         }
 
-        assert_eq!(first.try_bytes().expect("chain bytes must allocate"), want1);
+        assert_eq!(try_bytes(&first).expect("chain bytes must allocate"), want1);
         assert_eq!(
-            second.try_bytes().expect("chain bytes must allocate"),
+            try_bytes(&second).expect("chain bytes must allocate"),
             want2
         );
         assert_eq!(
@@ -345,11 +312,4 @@ fn matches_flat_model() {
             + usize::from(second.count() >= segments::Count::TWO);
         assert_eq!(pool.available().chains + multi, pool.capacity().chains);
     }
-}
-
-fn shorten_pool_borrow<'long: 'short, 'short>(
-    chain: segments::Chain<storage::Shared, &'long segments::Header<storage::Shared>>,
-    _scope: &'short (),
-) -> segments::Chain<storage::Shared, &'short segments::Header<storage::Shared>> {
-    chain
 }

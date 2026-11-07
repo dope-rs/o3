@@ -2,69 +2,47 @@ use crate::{
     buffer,
     buffer::{
         segments,
-        segments::{Chain, Exact, assembly, chain::edit},
+        segments::{Exact, Many, assembly, chain::edit, handles},
     },
 };
 
-pub(in crate::buffer::segments) trait Assemble<T: buffer::raw::Segment>:
-    buffer::raw::Assemble<T> + Into<Chain<T>>
-{
-    fn sequence(&mut self) -> &mut segments::Chain<T, segments::Pool<T>>;
-
-    fn try_append(
+impl<T: buffer::raw::Segment> Many<T> {
+    #[inline(always)]
+    pub(in crate::buffer::segments::chain) fn try_insert<const FRONT: bool>(
         self,
         item: segments::Item<T>,
     ) -> Result<Self, crate::mem::Rejected<(Self, segments::Item<T>), assembly::Error>> {
         let mut chain = self;
-        let growth = match edit::Growth::try_new(chain.sequence(), &item) {
-            Ok(state) => state,
-            Err(error) => {
-                return Err(crate::mem::Rejected::new(
-                    (chain, item),
-                    assembly::Error::Total(error),
-                ));
-            }
+        let (current, growth) = 'full: {
+            let multi = chain.edit();
+            let nodes = handles::nodes(&multi.sequence.handle);
+            // SAFETY: Multi exclusively owns this live descriptor, disjoint from nodes.
+            let desc = unsafe {
+                &mut *handles::descriptors(&multi.sequence.handle).value_ptr(multi.index)
+            };
+            let current = segments::Count::new(desc.count.get());
+            let resident = desc.resident_bytes;
+            let growth = match edit::Growth::try_new(current, desc.len, resident, &item) {
+                Ok(growth) => growth,
+                Err(error) => {
+                    return Err(crate::mem::Rejected::new(
+                        (chain, item),
+                        assembly::Error::Total(error),
+                    ));
+                }
+            };
+            let Some(node) = nodes.vacant() else {
+                break 'full (current, growth);
+            };
+            // SAFETY: this unchanged descriptor and fresh claim belong to the same
+            // store partition, and growth checked this exact insertion before claiming.
+            unsafe { growth.insert::<FRONT, _>(desc, node.insert(item)) };
+            return Ok(chain);
         };
-        match growth.assemble(chain.sequence(), item, edit::Back) {
-            edit::Assembly::Local => Ok(chain),
-            edit::Assembly::Exact {
-                item,
-                growth,
-                cause,
-            } => {
-                let current = chain.sequence().count();
-                Ok(Exact::try_reserve((chain, item, growth, cause), current)?.collect())
-            }
-        }
-    }
-
-    fn try_prepend(
-        self,
-        item: segments::Item<T>,
-    ) -> Result<Self, crate::mem::Rejected<(segments::Item<T>, Self), assembly::Error>> {
-        let mut chain = self;
-        let growth = match edit::Growth::try_new(chain.sequence(), &item) {
-            Ok(state) => state,
-            Err(error) => {
-                return Err(crate::mem::Rejected::new(
-                    (item, chain),
-                    assembly::Error::Total(error),
-                ));
-            }
-        };
-        match growth.assemble(chain.sequence(), item, edit::Front) {
-            edit::Assembly::Local => Ok(chain),
-            edit::Assembly::Exact {
-                item,
-                growth,
-                cause,
-            } => {
-                let current = chain.sequence().count();
-                Ok(
-                    Exact::try_reserve(edit::Prepend::new((item, chain), growth, cause), current)?
-                        .collect(),
-                )
-            }
+        if FRONT {
+            Ok(Exact::try_reserve((item, chain, growth), current)?.collect())
+        } else {
+            Ok(Exact::try_reserve((chain, item, growth), current)?.collect())
         }
     }
 }

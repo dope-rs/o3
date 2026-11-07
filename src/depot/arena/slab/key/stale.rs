@@ -1,3 +1,5 @@
+use std::convert;
+
 use crate::depot::{
     arena::slab::{Refusal, key},
     capacity,
@@ -28,7 +30,7 @@ impl<'h, Tag, const MAX: u32> Stale<'h, Tag, MAX> {
     pub(in crate::depot::arena::slab) fn refused(
         key: capacity::Key<'h, key::Handle<Tag, MAX>>,
         actual: key::Generation<MAX>,
-        refusal: Refusal<()>,
+        refusal: Refusal<convert::Infallible, ()>,
     ) -> Self {
         match refusal {
             Refusal::Free => Self::Free { key, actual },

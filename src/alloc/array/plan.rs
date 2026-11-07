@@ -12,7 +12,7 @@ pub struct Plan<T, E: alloc::raw::Extent> {
 
 impl<T, E: alloc::raw::Extent> Plan<T, E> {
     pub fn try_new(extent: E) -> Result<Self, alloc::Overflow> {
-        alloc::raw::Layout::<T>::try_check(extent.len())?;
+        alloc::raw::Layout::<T>::try_layout(extent.len())?;
         Ok(Self {
             extent,
             value: marker::PhantomData,
@@ -26,41 +26,18 @@ impl<T, E: alloc::raw::Extent> Plan<T, E> {
     ) -> Result<array::Block<mem::MaybeUninit<T>, E, S>, alloc::Exhausted> {
         Ok(array::Block {
             pointer: alloc::raw::LayoutExt::try_allocate(self.layout())?,
-            plan: self.uninit(),
+            extent: self.extent,
             state,
         })
-    }
-
-    pub(in crate::alloc::array) const fn empty(extent: alloc::raw::Empty<E>) -> Self {
-        Self {
-            extent: extent.into_inner(),
-            value: marker::PhantomData,
-        }
     }
 
     pub const fn extent(&self) -> &E {
         &self.extent
     }
 
-    pub(in crate::alloc::array) fn layout(&self) -> Layout {
+    fn layout(&self) -> Layout {
         // SAFETY: admission proves this exact T and immutable extent fit.
         unsafe { alloc::raw::Layout::<T>::layout(self.extent.len()) }
-    }
-
-    pub(in crate::alloc::array) const fn uninit(self) -> Plan<mem::MaybeUninit<T>, E> {
-        Plan {
-            extent: self.extent,
-            value: marker::PhantomData,
-        }
-    }
-}
-
-impl<T, E: alloc::raw::Extent> Plan<mem::MaybeUninit<T>, E> {
-    pub(super) const fn initialized(self) -> Plan<T, E> {
-        Plan {
-            extent: self.extent,
-            value: marker::PhantomData,
-        }
     }
 }
 
@@ -81,7 +58,7 @@ impl<T> Plan<T, usize> {
 
     pub(crate) fn from(len: u8) -> Self {
         const {
-            assert!(alloc::raw::Layout::<T>::fits(u8::MAX as usize), "layout");
+            assert!(Layout::array::<T>(u8::MAX as usize).is_ok(), "layout");
         };
         Self {
             extent: usize::from(len),

@@ -3,6 +3,7 @@ use std::{cell, mem, num::NonZero};
 use crate::{
     depot,
     depot::queue::{links, tagged},
+    depot::raw::TagStore,
 };
 
 /// A compact link written only from a node index or a represented endpoint.
@@ -73,13 +74,6 @@ impl Hook {
         }
     }
 
-    pub(in crate::depot) fn free(index: links::Index, next: Option<links::Index>) -> Self {
-        Self {
-            previous: cell::Cell::new(Link::node(index)),
-            next: cell::Cell::new(next.map_or(Link::EMPTY, Link::node)),
-        }
-    }
-
     /// # Safety
     /// This hook is detached and belongs to the storage owner's free chain.
     pub(in crate::depot) unsafe fn next(&self) -> u32 {
@@ -91,55 +85,66 @@ impl Hook {
     }
 }
 
-pub(in crate::depot::queue::tagged) struct Neighbors<'a, S: crate::depot::raw::TagStore> {
-    store: &'a S,
-    hook: &'a Hook,
-    index: links::Index,
-    previous: Link,
-    next: Link,
-}
-
-impl<'a, S: crate::depot::raw::TagStore> Neighbors<'a, S> {
-    pub(in crate::depot::queue::tagged) fn new<
-        E: crate::depot::raw::TagEntry<Store = S>,
-        P: crate::depot::raw::TagFinish<E>,
-    >(
-        entry: &'a tagged::Linked<E, P>,
-    ) -> Self {
-        let entry = entry.entry();
+// SAFETY: tagged hooks distinguish detached indices from admitted lane endpoints.
+unsafe impl depot::raw::IndexedHook for Hook {
+    type Head = links::Chain;
+    type Chain = ();
+    #[inline]
+    fn new(index: links::Index, next: Option<links::Index>) -> Self {
         Self {
-            store: entry.store(),
-            hook: entry.hook(),
-            index: entry.index(),
-            previous: entry.hook().previous.get(),
-            next: entry.hook().next.get(),
+            previous: cell::Cell::new(Link::node(index)),
+            next: cell::Cell::new(next.map_or(Link::EMPTY, Link::node)),
         }
     }
+    fn is_linked(&self, index: links::Index) -> bool {
+        self.is_linked(index)
+    }
+    unsafe fn next(&self) -> u32 {
+        unsafe { Self::next(self) }
+    }
+}
 
-    pub(in crate::depot::queue::tagged) fn detach(self) {
-        let previous = self.previous.resolve(self.store);
-        let next = self.next.resolve(self.store);
+impl<E: crate::depot::raw::TagEntry> tagged::Linked<E> {
+    pub fn unlink(self) -> tagged::Vacant<E> {
+        let entry = self.entry();
+        let store = entry.store();
+        let hook = entry.hook();
+        let index = entry.index();
+        let previous = entry.hook().previous.get();
+        let next = entry.hook().next.get();
+        let previous = previous.resolve(store);
+        let next = next.resolve(store);
         // SAFETY: the retained linked entry owns these exact reciprocal neighbors.
-        unsafe { self.hook.parts().detach(self.index, previous, next) };
+        unsafe { hook.parts().detach(index, previous, next) };
+        // SAFETY: both adjacent edges were repaired and this exact hook was detached.
+        unsafe { tagged::Vacant::new(self.into_inner()) }
     }
 
     /// # Safety
-    /// The retained linked entry is the current first node of this exact endpoint.
-    pub(in crate::depot::queue::tagged) unsafe fn detach_front(self, endpoint: NonZero<u32>) {
+    /// The entry is the current first node of this endpoint in its retained owner.
+    pub(in crate::depot) unsafe fn unlink_front(self, endpoint: NonZero<u32>) -> tagged::Vacant<E> {
+        let entry = self.entry();
+        let store = entry.store();
+        let hook = entry.hook();
+        let index = entry.index();
+        let _previous = entry.hook().previous.get();
+        let next = entry.hook().next.get();
         // SAFETY: the retained front belongs to this endpoint in its exact owner.
-        let lane = unsafe { tagged::Endpoint::new(self.store, endpoint) };
+        let lane = unsafe { tagged::Endpoint::new(store, endpoint) };
         let head = lane.head();
         let endpoint = Link::endpoint(lane.endpoint());
         let previous = depot::raw::Neighbor::head(endpoint, head);
-        let next = if self.next == endpoint {
+        let next = if next == endpoint {
             depot::raw::Neighbor::head(endpoint, head)
         } else {
             // SAFETY: the proven head's non-endpoint successor belongs to its same lane.
-            let index = unsafe { links::Index::new_raw(depot::raw::EndpointWord::raw(self.next)) };
-            depot::raw::Neighbor::node(self.next, unsafe { self.store.hook(index) }.parts())
+            let index = unsafe { links::Index::new_raw(depot::raw::EndpointWord::raw(next)) };
+            depot::raw::Neighbor::node(next, unsafe { store.hook(index) }.parts())
         };
         // SAFETY: the retained front fixes its predecessor and both reciprocal neighbors.
-        unsafe { self.hook.parts().detach(self.index, previous, next) };
+        unsafe { hook.parts().detach(index, previous, next) };
+        // SAFETY: the exact head was detached and both adjacent edges were repaired.
+        unsafe { tagged::Vacant::new(self.into_inner()) }
     }
 }
 

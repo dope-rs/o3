@@ -4,7 +4,7 @@ use o3::{
     base::num::bounded,
     depot::{
         self, capacity,
-        queue::{indexed::planes, links, round::values},
+        queue::{links, round::values},
     },
 };
 
@@ -31,18 +31,11 @@ unsafe impl<const N: usize> depot::raw::Hooks for RingHooks<N> {
     }
 }
 
-pub struct Sequence(bounded::Usize<{ usize::MAX / <links::Index as depot::raw::Word>::MAX.get() }>);
-
-impl Sequence {
-    pub fn try_new(factor: usize) -> Result<Self, bounded::Error> {
-        Ok(Self(bounded::Usize::ZERO.try_add(factor)?))
-    }
-}
-
-impl planes::Seed<usize> for Sequence {
-    fn seed(&self, index: links::Index) -> usize {
-        index.get() * self.0.get()
-    }
+pub fn try_sequence(factor: usize) -> Result<impl Fn(links::Index) -> usize, bounded::Error> {
+    let factor =
+        bounded::Usize::<{ usize::MAX / <links::Index as depot::raw::Word>::MAX.get() }>::ZERO
+            .try_add(factor)?;
+    Ok(move |index: links::Index| index.get() * factor.get())
 }
 
 #[derive(Debug)]

@@ -111,14 +111,10 @@ fn resident_keeps_records() {
         assert!(repeated.is_none());
         scope.get_mut(&lease).0 = 7;
         assert_eq!(scope.get_mut(&again).0, 7);
-        assert!(
-            scope
-                .exact(lease.key(), first)
-                .ok()
-                .expect("existing entry")
-                .release()
-                .is_none()
-        );
+        let Entry::Occupied(existing) = scope.entry(first) else {
+            unreachable!("occupied");
+        };
+        assert!(existing.release().is_none());
         hash.set(3);
         let mut retired = scope.retire();
         drop(retired.occupied(fresh.expect("new authority")).remove());

@@ -3,24 +3,6 @@ use crate::depot::{
     queue::{indexed::lanes, links, tagged},
 };
 
-// SAFETY: the exclusive borrow retains the original capability and all of its projections.
-unsafe impl<E: crate::depot::raw::TagEntry> crate::depot::raw::TagEntry for &mut E {
-    const INITIALIZED: bool = E::INITIALIZED;
-    type Store = E::Store;
-
-    fn store(&self) -> &Self::Store {
-        E::store(self)
-    }
-
-    fn hook(&self) -> &tagged::Hook {
-        E::hook(self)
-    }
-
-    fn index(&self) -> links::Index {
-        E::index(self)
-    }
-}
-
 // SAFETY: the membership proof retains its initialized node and complete exclusive storage borrow.
 unsafe impl<S: crate::depot::raw::TagStore> crate::depot::raw::TagEntry
     for crate::depot::raw::Proof<(&mut S, links::Index), Initialized<links::Chain>>
@@ -35,26 +17,6 @@ unsafe impl<S: crate::depot::raw::TagStore> crate::depot::raw::TagEntry
     }
     fn index(&self) -> links::Index {
         *self.key()
-    }
-}
-// SAFETY: ordinary membership has no rollback obligation.
-unsafe impl<E: crate::depot::raw::TagEntry> crate::depot::raw::TagFinish<E> for () {
-    type Storage = E;
-
-    fn new(entry: E) -> Self::Storage {
-        entry
-    }
-
-    fn entry(storage: &Self::Storage) -> &E {
-        storage
-    }
-
-    fn entry_mut(storage: &mut Self::Storage) -> &mut E {
-        storage
-    }
-
-    fn into_inner(storage: Self::Storage) -> E {
-        storage
     }
 }
 

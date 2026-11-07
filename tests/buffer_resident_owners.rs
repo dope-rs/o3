@@ -17,7 +17,7 @@ use o3::{
             write,
         },
         storage,
-        write::{Sink as _, SpareExt as _, consume::Consume as _},
+        write::{Sink as _, consume::Consume as _},
     },
 };
 
@@ -99,40 +99,6 @@ fn preserves_copy_failure() {
     let copy = retain.try_copy(&source).expect("plain copy");
     source.fill(0);
     assert_eq!(copy.as_slice(), b"body");
-}
-
-#[test]
-fn fills_and_freezes_owner() {
-    Capacity(7)
-        .try_scope(|budget| {
-            {
-                let result = storage::Owned::try_allocate(&budget, 7);
-                let mut owned = result.expect("the budget must admit seven filled bytes");
-                let mut spare = owned.spare();
-                spare.fill(b'x');
-                spare.commit();
-                let ptr = owned.as_ptr();
-
-                assert_eq!(&owned[..], b"xxxxxxx");
-                assert_eq!(budget.resident(), 7);
-                let result = owned.try_freeze();
-                match result {
-                    Ok(exact) => {
-                        let shared = exact.into_shared();
-
-                        assert_eq!(shared.as_slice(), b"xxxxxxx");
-                        assert_eq!(shared.as_slice().as_ptr(), ptr);
-                        assert_eq!(shared.resident(), 7);
-                    }
-                    outcome => {
-                        assert!(outcome.is_ok(), "a completely filled owner must be exact");
-                        return;
-                    }
-                }
-            }
-            assert_eq!(budget.resident(), 0);
-        })
-        .expect("asserted empty resident domain");
 }
 
 #[test]

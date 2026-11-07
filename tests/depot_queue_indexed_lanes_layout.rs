@@ -11,7 +11,6 @@ use o3::{
     base::cell::region,
     depot::{
         capacity,
-        map::direct,
         queue::indexed::lanes::{
             self, entry,
             runtime::{self, shared},
@@ -125,19 +124,11 @@ fn allocation_is_shared() {
     let mut table = (table).expect("the four-entry lane table must allocate");
     assert_eq!(mem::size_of_val(&table), 5 * mem::size_of::<usize>());
     assert_eq!(
-        mem::size_of::<entry::Slot<'static, Id<'static>, u64, LANES>>(),
+        mem::size_of::<entry::Occupied<'static, Id<'static>, u64, LANES>>(),
         3 * mem::size_of::<usize>()
     );
     assert_eq!(
-        mem::size_of::<
-            entry::Slot<
-                'static,
-                Id<'static>,
-                u64,
-                LANES,
-                direct::Vacant<'static, Id<'static>, lanes::Node<u64, LANES>>,
-            >,
-        >(),
+        mem::size_of::<entry::Vacancy<'static, Id<'static>, u64, LANES>>(),
         3 * mem::size_of::<usize>()
     );
     let first = Id::try_new(0, 1).expect("identity components fit");
@@ -271,23 +262,11 @@ fn retains_schedule() {
     assert_eq!(table.len(), 0);
     assert!(table.is_vacant(ready));
     assert_eq!(
-        mem::size_of::<
-            lanes::entry::Slot<'_, Id<'_>, u64, 2, direct::Vacant<'_, Id<'_>, lanes::Node<u64, 2>>>,
-        >(),
+        mem::size_of::<entry::Vacancy<'_, Id<'_>, u64, 2>>(),
         3 * mem::size_of::<usize>()
     );
     assert_eq!(
-        mem::size_of::<
-            Option<
-                lanes::entry::Slot<
-                    '_,
-                    Id<'_>,
-                    u64,
-                    2,
-                    direct::Vacant<'_, Id<'_>, lanes::Node<u64, 2>>,
-                >,
-            >,
-        >(),
+        mem::size_of::<Option<entry::Vacancy<'_, Id<'_>, u64, 2>>>(),
         3 * mem::size_of::<usize>()
     );
 }

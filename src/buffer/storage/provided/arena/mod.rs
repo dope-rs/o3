@@ -44,7 +44,7 @@ struct Header<C> {
 #[repr(C, align(8))]
 struct Space<T, L> {
     entry: cell::UnsafeCell<[mem::MaybeUninit<usize>; 8]>,
-    resident: L,
+    layout: marker::PhantomData<L>,
     item: cell::UnsafeCell<mem::MaybeUninit<T>>,
 }
 
@@ -58,7 +58,15 @@ pub(in crate::buffer::storage::provided) struct Scope<'d, T, L> {
     slots: slice::Iter<'d, arena::Slot<'d, T, L>>,
 }
 
-impl<T, C, L: Default> Arena<T, C, L> {
+impl<T, C, L> Arena<T, C, L> {
+    /// Allocates the exact arena before its context is constructed.
+    pub fn try_allocate(
+        entries: num::NonZero<u32>,
+    ) -> Result<impl FnOnce(C) -> Self, alloc::Error> {
+        let memory = tail::Plan::try_new(entries)?.try_allocate()?;
+        Ok(move |context| Self::initialize(memory, context))
+    }
+
     fn initialize(
         memory: tail::Uninit<Header<C>, Space<T, L>, num::NonZero<u32>>,
         context: C,
@@ -70,14 +78,12 @@ impl<T, C, L: Default> Arena<T, C, L> {
         Self {
             entries: memory.repeat_with(header, || Space {
                 entry: cell::UnsafeCell::new([mem::MaybeUninit::uninit(); 8]),
-                resident: L::default(),
+                layout: marker::PhantomData,
                 item: cell::UnsafeCell::new(mem::MaybeUninit::uninit()),
             }),
         }
     }
-}
 
-impl<T, C, L> Arena<T, C, L> {
     pub fn context(&self) -> &C {
         &tail::View::new(&self.entries).header().context
     }
@@ -91,14 +97,12 @@ impl<T, C, L> Arena<T, C, L> {
     /// # Safety
     /// The arena is inactive with every prior scope reclaimed. End all issued access,
     /// then finish the returned scope before releasing its exclusive generation borrow.
+    /// For fixed storage, `resident` is initialized to this context's admitted ceiling.
     pub(in crate::buffer::storage::provided) unsafe fn enter<'d>(
         &'d mut self,
         limit: u32,
-        mode: L::Setting,
-    ) -> (Root<'d, T, C, L>, Scope<'d, T, L>)
-    where
-        L: arena::Layout,
-    {
+        resident: mem::MaybeUninit<u32>,
+    ) -> (Root<'d, T, C, L>, Scope<'d, T, L>) {
         const {
             assert!(size_of::<Header<C>>() == size_of::<Active<'_, T, C, L>>());
             assert!(align_of::<Header<C>>() == align_of::<Active<'_, T, C, L>>());
@@ -121,20 +125,23 @@ impl<T, C, L> Arena<T, C, L> {
                 .memory
                 .get()
                 .cast::<arena::Domain<'d, T, L>>()
-                .write(arena::Domain::new(capacity, limit, mode))
+                .write(arena::Domain::new(capacity, limit))
         };
         // SAFETY: the assertions preserve the live context's layout, and the
         // domain was initialized in the disjoint header storage immediately above.
         let header = unsafe { &*ptr::from_ref(header).cast::<Active<'d, T, C, L>>() };
         let values = tail::View::new(&self.entries).as_slice();
         for slot in values {
-            // SAFETY: the inactive scope owns each entry's uninitialized storage;
-            // its exact layout is asserted above and the active domain stays live.
+            // SAFETY: this scope owns each complete slot for the whole generation;
+            // the asserted layout admits its Entry before linking the original slot.
             unsafe {
                 slot.entry
                     .get()
                     .cast::<arena::Entry<'d>>()
-                    .write(arena::Entry::new(&header.domain.state))
+                    .write(arena::Entry::new(&header.domain.state, resident));
+                header.domain.state.push_free(arena::Empty {
+                    entry: ptr::NonNull::from(slot).cast(),
+                });
             };
         }
         // SAFETY: the exact validated tail now contains initialized typed entries.
@@ -144,11 +151,6 @@ impl<T, C, L> Arena<T, C, L> {
                 values.len(),
             )
         };
-        for slot in slots {
-            // SAFETY: every complete slot is initialized, unpublished, and
-            // retained by this exclusive arena scope for the whole generation.
-            unsafe { arena::Entry::seed(slot) };
-        }
         (
             Root { header },
             Scope {
@@ -156,28 +158,23 @@ impl<T, C, L> Arena<T, C, L> {
             },
         )
     }
-}
 
-impl<T, C, L> Arena<T, C, L> {
     fn scope_in<S, R>(
         &mut self,
         state: pin::Pin<&mut S>,
-        mode: L::Setting,
+        resident: mem::MaybeUninit<u32>,
         run: impl for<'d> FnOnce(
             region::Token<region::Identity<'d>>,
             Root<'d, T, C, L>,
             pin::Pin<&'d mut S>,
         ) -> R,
-    ) -> R
-    where
-        L: arena::Layout,
-    {
+    ) -> R {
         let mut input = (self, state);
         region::Token::scope_pinned(pin::Pin::new(&mut input), |token, input| {
             let (arena, state) = input.get_mut();
             // SAFETY: the complete generative call borrows this inactive allocation;
             // the hidden scope reclaims every issued capability before it returns.
-            let (root, scope) = unsafe { arena.enter(arena.capacity().get(), mode) };
+            let (root, scope) = unsafe { arena.enter(arena.capacity().get(), resident) };
             let result = run(token, root, state.as_mut());
             scope.finish(arena::Returned::discard);
             result
@@ -194,9 +191,9 @@ impl<T, C: buffer::raw::Fixed<T>> Arena<T, C, ()> {
         terminal: &mut O::Terminal,
         op: O,
     ) -> O::Output {
-        let resident = self.context().resident();
+        let resident = mem::MaybeUninit::new(self.context().resident().get());
         let mut input = (self, state, terminal);
-        brand::Token::scope_pinned(pin::Pin::new(&mut input), |token, regions, input| {
+        brand::scope_pinned(pin::Pin::new(&mut input), |token, regions, input| {
             let (arena, state, terminal) = input.get_mut();
             // SAFETY: this sole generation borrow retains the allocation until
             // the operation ends and the hidden scope reclaims every slot.
@@ -240,20 +237,11 @@ impl<T, C> Arena<T, C> {
     pub(in crate::buffer) unsafe fn enter_scope(&mut self) -> (Root<'_, T, C>, impl FnOnce() + '_) {
         // SAFETY: the caller retains this inactive arena and executes the
         // returned terminal after all issued access ends, before releasing it.
-        let (root, scope) = unsafe { self.enter(self.capacity().get(), ()) };
+        let (root, scope) =
+            unsafe { self.enter(self.capacity().get(), mem::MaybeUninit::uninit()) };
         (root, move || scope.finish(Returned::discard))
     }
 
-    pub fn try_with<E>(
-        entries: num::NonZero<u32>,
-        context: impl FnOnce() -> Result<C, E>,
-    ) -> Result<Self, E>
-    where
-        E: From<alloc::Overflow> + From<alloc::Exhausted>,
-    {
-        let memory = tail::Plan::try_new(entries)?.try_allocate()?;
-        Ok(Self::initialize(memory, context()?))
-    }
     pub fn scope<S, R>(
         &mut self,
         state: pin::Pin<&mut S>,
@@ -263,17 +251,10 @@ impl<T, C> Arena<T, C> {
             pin::Pin<&'d mut S>,
         ) -> R,
     ) -> R {
-        self.scope_in(state, (), run)
+        self.scope_in(state, mem::MaybeUninit::uninit(), run)
     }
 }
 impl<T, C: buffer::raw::Fixed<T>> Arena<T, C, ()> {
-    /// Allocates the exact arena before its context is constructed.
-    pub fn try_allocate(
-        entries: num::NonZero<u32>,
-    ) -> Result<impl FnOnce(C) -> Self, alloc::Error> {
-        let memory = tail::Plan::try_new(entries)?.try_allocate()?;
-        Ok(move |context| Self::initialize(memory, context))
-    }
     pub fn scope<S, R>(
         &mut self,
         state: pin::Pin<&mut S>,
@@ -283,28 +264,21 @@ impl<T, C: buffer::raw::Fixed<T>> Arena<T, C, ()> {
             pin::Pin<&'d mut S>,
         ) -> R,
     ) -> R {
-        let mode = self.context().resident();
-        self.scope_in(state, mode, run)
+        let resident = mem::MaybeUninit::new(self.context().resident().get());
+        self.scope_in(state, resident, run)
     }
-}
-
-/// Couples a slot's resident field with its admissible arena configuration.
-pub(in crate::buffer::storage::provided) trait Layout {
-    type Setting;
-
-    fn mode(setting: Self::Setting) -> provided::Mode;
 }
 
 #[repr(C, align(8))]
 pub(in crate::buffer::storage::provided) struct Slot<'d, T, L> {
     entry: arena::Entry<'d>,
-    resident: L,
+    layout: marker::PhantomData<L>,
     item: cell::UnsafeCell<mem::MaybeUninit<T>>,
 }
 
 impl<T> Slot<'_, T, cell::Cell<u32>> {
     pub(in crate::buffer::storage::provided) fn set_resident(&self, resident: u32) {
-        self.resident.set(resident);
+        self.entry.resident.set(mem::MaybeUninit::new(resident));
     }
 }
 
@@ -340,21 +314,5 @@ impl<'d, T, L> Returned<'d, T, L> {
         // SAFETY: terminal ownership exclusively owns this initialized item.
         unsafe { (*self.entry().item.get()).assume_init_drop() };
         arena::Entry::recycle(self.node);
-    }
-}
-
-impl arena::Layout for () {
-    type Setting = num::NonZero<u32>;
-
-    fn mode(resident: Self::Setting) -> provided::Mode {
-        provided::Mode::Fixed(resident)
-    }
-}
-
-impl arena::Layout for cell::Cell<u32> {
-    type Setting = ();
-
-    fn mode((): Self::Setting) -> provided::Mode {
-        provided::Mode::Exact
     }
 }

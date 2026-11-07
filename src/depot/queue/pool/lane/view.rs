@@ -36,6 +36,10 @@ impl<'a, T, S, const TRACK: bool> View<'a, T, S, TRACK> {
         unsafe { self.slot.queue.front(self.store) }
     }
 
+    pub fn back(self) -> Option<&'a T> {
+        unsafe { self.slot.queue.back(self.store) }
+    }
+
     pub fn iter(self) -> linked::Iter<'a, T> {
         unsafe { self.slot.queue.iter(self.store) }
     }

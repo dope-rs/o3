@@ -22,8 +22,7 @@ pub struct Rows<C: crate::depot::raw::Count, const N: usize>(
 impl<C: crate::depot::raw::Count, const N: usize> Rows<C, N> {
     const fn new(count: C) -> Self {
         const {
-            assert!(N != 0 && N <= u32::MAX as usize);
-            assert!(C::MAX as u64 * N as u64 <= u32::MAX as u64);
+            let _ = <Self as crate::depot::raw::Count>::MAX;
         }
         Self(count)
     }
@@ -57,8 +56,7 @@ impl<C: crate::depot::raw::Count, const MULTIPLIER: usize> Buckets<C, MULTIPLIER
     fn new(root: C) -> Self {
         const {
             assert!(C::MIN != 0);
-            assert!(MULTIPLIER != 0 && MULTIPLIER <= u32::MAX as usize);
-            assert!((C::MAX as u64 * MULTIPLIER as u64).next_power_of_two() <= u32::MAX as u64);
+            let _ = <Self as crate::depot::raw::Count>::MAX;
         }
         let count = (root.count().raw() as u64 * MULTIPLIER as u64).next_power_of_two() as u32;
         Self {

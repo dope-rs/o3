@@ -1,6 +1,8 @@
 pub mod common;
 
-use common::buffer::Redirect;
+use std::{cell::Cell, ops::Bound};
+
+use common::buffer::{Bounds, Redirect};
 use o3::buffer::{
     self, Complete as _, Residency as _, pool, resident, segments::Drain, storage,
     write::consume::Consume,
@@ -70,7 +72,7 @@ fn cancels_drain() {
     let drain = prepared.expect("required fixture outcome");
     drain.commit();
     assert_eq!(queue.len(), 3);
-    assert_eq!(queue.cursor().contiguous(0..3), Some(b"def".as_slice()));
+    assert_eq!(queue.prefix(3).contiguous(), Some(b"def".as_slice()));
 }
 
 #[test]
@@ -99,13 +101,27 @@ fn projects_vec_range() {
     assert_eq!(shared.as_slice(), b"234567");
     assert_eq!(shared.resident(), capacity);
 
+    let calls = Cell::new(0);
     let view = shared
-        .try_get(1..5)
+        .try_get(Bounds {
+            range: (Bound::Excluded(0), Bound::Included(4)),
+            calls: &calls,
+        })
         .expect("the shared range retains")
         .expect("the range is contained");
+    assert_eq!(calls.get(), 123);
     assert_eq!(view.as_slice().as_ptr(), base.wrapping_add(3));
     assert_eq!(view.as_slice(), b"3456");
     assert_eq!(view.resident(), capacity);
+
+    calls.set(0);
+    let rejected = shared
+        .try_get(Bounds {
+            range: (Bound::Excluded(usize::MAX), Bound::Unbounded),
+            calls: &calls,
+        })
+        .expect("overflowed bounds need no retained edge");
+    assert_eq!((rejected.is_none(), calls.get()), (true, 13));
 }
 
 #[test]

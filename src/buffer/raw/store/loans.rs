@@ -10,17 +10,6 @@ use crate::{
     mem::rc,
 };
 
-// SAFETY: Unique retains the view's exact exclusive extent and its provided owner.
-unsafe impl<'d> buffer::raw::Project<&'d mut [u8]> for Unique<'d> {
-    fn as_inner(&self) -> &&'d mut [u8] {
-        self.inner()
-    }
-
-    unsafe fn as_inner_mut(&mut self) -> &mut &'d mut [u8] {
-        unsafe { self.inner_mut() }
-    }
-}
-
 // SAFETY: view retains the exclusive initialized range paired with this owner.
 unsafe impl buffer::raw::Consume for Unique<'_> {
     fn consume<const MAX: u32>(prefix: buffer::raw::Consumed<'_, '_, Self, MAX>) {
@@ -74,20 +63,6 @@ unsafe impl buffer::raw::Mutable for bounded::Value<provided::Prefix<'_, '_>> {}
 // SAFETY: the inner prefix performs the exact split; wrapping it preserves
 // both disjoint ranges and their original owner and lifetimes.
 unsafe impl buffer::raw::Split for bounded::Value<provided::Prefix<'_, '_>> {}
-
-// SAFETY: Unique retains its provided owner while the paired slice restricts its extent.
-unsafe impl buffer::raw::Store for Unique<'_> {
-    fn empty() -> Option<Self> {
-        None
-    }
-
-    fn restrict(slice: buffer::raw::Slice<'_, '_, Self>) {
-        // SAFETY: Unique exposes the same exclusive extent and retains its owner;
-        // inner projection preserves the slice's canonical empty-storage policy.
-        let slice = unsafe { slice.map(|source| source.inner_mut()) };
-        <&mut [u8] as buffer::raw::Store>::project(slice);
-    }
-}
 
 // SAFETY: the prefix retains its original provided owner while its exact
 // exclusive byte borrow is restricted, including for an empty selection.

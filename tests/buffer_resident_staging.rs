@@ -452,6 +452,32 @@ fn growth_retries() {
 }
 
 #[test]
+fn grows_shifted_local() {
+    let fixture = Local::try_new().expect("local staging geometry");
+    Capacity(fixture.0.resident().get())
+        .try_scope(|budget| {
+            let mut buf = fixture.try_buf(&budget).expect("local staging fixture");
+            buf.try_consume(1).expect("consumed prefix");
+            let pointer = buf.as_slice().as_ptr();
+            assert!(matches!(
+                Tracker::fail_after(0, || buf.try_reserve(8)),
+                Err(reserve::Error::Resident(resident::AllocError::Exhausted(_)))
+            ));
+            assert_eq!((buf.as_slice().as_ptr(), budget.resident()), (pointer, 5));
+            assert_eq!(buf.as_slice(), b"bcd");
+            let ((result, allocations), resizes) =
+                Tracker::resizes(|| Tracker::counts(|| buf.write_slices([&b"ef"[..], b"ghi"])));
+            result.expect("shifted unique growth");
+            assert_eq!((allocations, resizes), ([1, 1], 0));
+            assert_eq!((buf.resident(), budget.resident()), (8, 9));
+            assert_eq!(buf.as_slice(), b"bcdefghi");
+            drop(buf);
+            assert_eq!(budget.resident(), 0);
+        })
+        .expect("resident domain");
+}
+
+#[test]
 fn growth_preserves_failure() {
     for shared in [false, true] {
         for denied in [false, true] {
@@ -487,8 +513,7 @@ fn growth_preserves_failure() {
                         });
 
                         let error = result
-                            .err()
-                            .expect("failed local growth must preserve its resident cause");
+                            .expect_err("failed local growth must preserve its resident cause");
                         let (error,) = match error {
                             reserve::Error::Resident(error) => Some((error,)),
                             _ => None,

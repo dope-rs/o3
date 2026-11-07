@@ -39,14 +39,22 @@ impl<W, G, L> Registration<'_, W, G, L> {
         };
         let key = *key;
         self.lease.detach();
-        registry.cancel(key)
+        match registry.lanes.remove(key) {
+            resident::Removal::Linked => Cancel::Wake,
+            resident::Removal::Parked(entry) => Cancel::Grant(entry.take_grant()),
+            resident::Removal::Empty => Cancel::Empty,
+        }
     }
 
     pub fn take_grant(&mut self) -> Grant<G> {
-        match self.lease.active() {
-            Some((registry, key)) => registry.claim(*key, self),
-            None => Grant::Empty,
-        }
+        let Some((registry, key)) = self.lease.active() else {
+            return Grant::Empty;
+        };
+        let Some(entry) = registry.lanes.claim(*key) else {
+            return Grant::Pending;
+        };
+        self.lease.detach();
+        Grant::Ready(entry.take_grant())
     }
 }
 

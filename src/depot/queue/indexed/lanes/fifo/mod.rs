@@ -2,7 +2,7 @@ use crate::depot::queue::links;
 pub(in crate::depot) mod position;
 pub(in crate::depot) mod value;
 
-use std::mem;
+use std::{mem, num::NonZero};
 
 use lanes::Value;
 
@@ -11,10 +11,7 @@ use crate::{
     depot::{
         capacity,
         queue::{
-            indexed::lanes::{
-                self,
-                entry::{Error, State},
-            },
+            indexed::lanes::{self, entry::Error},
             tagged::{self, entry},
         },
     },
@@ -29,7 +26,7 @@ impl<T, const N: usize, C: crate::depot::raw::Count> Fifo<T, N, C> {
     pub fn entry<const L: usize>(
         &mut self,
         index: usize,
-    ) -> Result<State<&T, Vacancy<'_, T, N, L, C>>, Error<C>> {
+    ) -> Result<Option<Vacancy<'_, T, N, L, C>>, Error<C>> {
         const { assert!(L < N) };
         use crate::depot::raw::LaneStore as _;
 
@@ -41,13 +38,9 @@ impl<T, const N: usize, C: crate::depot::raw::Count> Fifo<T, N, C> {
         let index = unsafe { links::Index::new_usize(index) };
         let node = unsafe { self.nodes().get_unchecked(index.get()) };
         if node.hook.is_linked(index) {
-            return Ok(State::Occupied(unsafe {
-                (*node.value.get()).assume_init_ref()
-            }));
+            return Ok(None);
         }
-        Ok(State::Vacant(unsafe {
-            tagged::Vacant::detached(self, index)
-        }))
+        Ok(Some(unsafe { tagged::Vacant::detached(self, index) }))
     }
 
     pub fn vacant<const L: usize>(
@@ -68,9 +61,7 @@ impl<T, const N: usize, C: crate::depot::raw::Count> Fifo<T, N, C> {
         tagged::Vacant::try_new::<C>(position)
     }
     pub fn pop_front<const L: usize>(&mut self) -> Option<T> {
-        tagged::Endpoint::constant::<L>(self)
-            .pop_entry()
-            .map(|(_, value)| value)
+        tagged::Endpoint::constant::<L>(self).pop_front()
     }
     pub fn remove_if(&mut self, index: usize, test: impl FnOnce(&T) -> bool) -> Option<T> {
         let entry = tagged::Linked::at(self, index)?;
@@ -108,7 +99,14 @@ impl<T, const N: usize, C: crate::depot::raw::Count> Drop for Fifo<T, N, C> {
     }
 }
 
-const _: () = assert!(mem::size_of::<Fifo<(), 2>>() == 4 * mem::size_of::<usize>());
+const _: () = {
+    assert!(mem::size_of::<Fifo<(), 2>>() == 4 * mem::size_of::<usize>());
+    type Slot = Vacancy<'static, u64, 1, 0, NonZero<u32>>;
+    assert!(
+        mem::size_of::<Result<Option<Slot>, Error<NonZero<u32>>>>()
+            <= mem::size_of::<Result<Slot, entry::Error<NonZero<u32>>>>()
+    );
+};
 
 /// The vacant slot retains its selected static lane and exact owner loan.
 type Vacancy<'a, T, const N: usize, const L: usize, C> =

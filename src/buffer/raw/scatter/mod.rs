@@ -28,14 +28,13 @@ pub unsafe trait Scatter<'data> {
         scatter::Take::new(self, limit)
     }
 
-    /// Advances from the exact non-empty state represented by `left`.
+    /// Advances by a nonempty prefix of the admitted remaining bytes.
     ///
     /// # Safety
-    /// `left == self.remaining()`, `cap <= left`, `cap <= MAX`; output advances `1..=cap` bytes.
+    /// `cap <= self.remaining()` and `cap <= MAX`; output advances exactly `1..=cap` bytes.
     unsafe fn advance<const MAX: usize>(
         &mut self,
         cap: NonZero<usize>,
-        left: NonZero<usize>,
     ) -> buffer::raw::Chunk<'data, MAX>;
 }
 
@@ -49,10 +48,9 @@ unsafe impl<'data, C: Scatter<'data> + ?Sized> Scatter<'data> for &mut C {
     unsafe fn advance<const MAX: usize>(
         &mut self,
         cap: NonZero<usize>,
-        left: NonZero<usize>,
     ) -> buffer::raw::Chunk<'data, MAX> {
         // SAFETY: the borrowed cursor has the exact state specified by the caller.
-        unsafe { C::advance(self, cap, left) }
+        unsafe { C::advance(self, cap) }
     }
 }
 
@@ -66,16 +64,14 @@ unsafe impl<'data> Scatter<'data> for &'data [u8] {
     unsafe fn advance<const MAX: usize>(
         &mut self,
         cap: NonZero<usize>,
-        _left: NonZero<usize>,
     ) -> buffer::raw::Chunk<'data, MAX> {
-        // SAFETY: the caller proves cap <= left == this slice's length.
+        // SAFETY: the caller proves cap <= this slice's length.
         let (bytes, suffix) = unsafe { self.split_at_unchecked(cap.get()) };
         *self = suffix;
-        // SAFETY: exact `left` and nonzero `cap` prove a non-empty capped
-        // prefix, and `bytes` retains the source slice lifetime.
+        // SAFETY: nonzero cap <= MAX proves a nonempty bounded prefix,
+        // and bytes retains the source slice lifetime.
         unsafe { buffer::raw::Chunk::new(bytes) }
     }
 }
 
-mod cursors;
 mod queues;

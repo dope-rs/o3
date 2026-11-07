@@ -1,9 +1,9 @@
 pub mod common;
 
-use std::{cell::Cell, mem, ops, ptr};
+use std::{cell::Cell, mem, ptr};
 
 use common::alloc::{
-    Aligned, Owner,
+    Aligned,
     system::Tracker,
     tail::{Entry, Header},
 };
@@ -113,31 +113,12 @@ fn recovers_aligned_owner() {
 fn layout_is_exact() {
     const LEN: usize = 257;
     const BYTES: usize = (2 + LEN) * mem::size_of::<u64>();
-    assert_eq!(
-        mem::size_of::<tail::Entry<u64, u64>>(),
-        2 * mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<ops::ControlFlow<tail::Block<u64, u64>, tail::Entry<u64, u64>>>(),
-        2 * mem::size_of::<usize>(),
-    );
     let released = {
         let (memory, cold) =
             Tracker::measure(|| tail::Plan::<u64, u64>::fixed::<LEN>().try_allocate());
         assert_eq!(cold, [1, BYTES, 0, 0]);
         let memory = memory.expect("exact tail allocation");
-        let (block, hot) = Tracker::measure(|| {
-            let mut init = memory.start(7);
-            loop {
-                match init {
-                    ops::ControlFlow::Break(block) => break block,
-                    ops::ControlFlow::Continue(entry) => {
-                        let index = entry.index();
-                        init = entry.insert(index as u64);
-                    }
-                }
-            }
-        });
+        let (block, hot) = Tracker::measure(|| memory.fill(7, |_, index| index as u64));
         assert_eq!(hot, [0; 4]);
         assert_eq!(*tail::View::new(&block).header(), 7);
         assert_eq!(tail::View::new(&block).as_slice().len(), LEN);
@@ -156,47 +137,11 @@ fn layout_is_exact() {
 }
 
 #[test]
-fn drops_prefix_then_header() {
-    for count in 0..=3 {
-        let drops = Cell::new(Some(0));
-        {
-            let memory = tail::Plan::<Owner<'_>, Owner<'_>>::fixed::<3>()
-                .try_allocate()
-                .expect("three values and their header");
-            let mut init = memory.start(Owner {
-                digit: 9,
-                drops: &drops,
-            });
-            for id in 0..count {
-                let entry = init.continue_value().expect("next uninitialized entry");
-                assert_eq!(entry.index(), id);
-                init = entry.insert(Owner {
-                    digit: id + 1,
-                    drops: &drops,
-                });
-            }
-            assert_eq!(init.is_break(), count == 3);
-            assert_eq!(drops.get(), Some(0));
-        }
-        assert_eq!(drops.get(), Some([9, 19, 129, 1239][count]));
-    }
-}
-
-#[test]
 fn preserves_header_address() {
     let memory = tail::Plan::<u64, ptr::NonNull<u64>>::fixed::<3>()
         .try_allocate()
         .expect("header with three resident pointers");
-    let mut init = memory.start(23);
-    let block = loop {
-        match init {
-            ops::ControlFlow::Break(block) => break block,
-            ops::ControlFlow::Continue(entry) => {
-                let header = ptr::NonNull::from(entry.header());
-                init = entry.insert(header);
-            }
-        }
-    };
+    let block = memory.fill(23, |header, _| ptr::NonNull::from(header));
     for pointer in tail::View::new(&block).as_slice() {
         assert_eq!(
             *pointer,
@@ -212,16 +157,7 @@ fn preserves_alignment() {
             .expect("small aligned layout")
             .try_allocate()
             .expect("aligned allocation");
-        let mut init = memory.start(11);
-        let block = loop {
-            match init {
-                ops::ControlFlow::Break(block) => break block,
-                ops::ControlFlow::Continue(entry) => {
-                    let index = entry.index();
-                    init = entry.insert(Aligned(index as u8));
-                }
-            }
-        };
+        let block = memory.fill(11, |_, index| Aligned(index as u8));
         assert_eq!(tail::View::new(&block).as_slice().as_ptr() as usize % 64, 0);
         assert!(
             tail::View::new(&block)
@@ -240,18 +176,11 @@ fn initializes_zero_sizes() {
             .expect("zero-sized layout")
             .try_allocate()
             .expect("header allocation");
-        let mut init = memory.start(4);
         let mut written = 0;
-        let block = loop {
-            match init {
-                ops::ControlFlow::Break(block) => break block,
-                ops::ControlFlow::Continue(entry) => {
-                    assert_eq!(entry.index(), written);
-                    written += 1;
-                    init = entry.insert(());
-                }
-            }
-        };
+        let block = memory.fill(4, |_, index| {
+            assert_eq!(index, written);
+            written += 1;
+        });
         assert_eq!(written, count);
         assert_eq!(tail::View::new(&block).as_slice().len(), count);
     }

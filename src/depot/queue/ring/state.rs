@@ -100,15 +100,6 @@ impl<W: depot::raw::Word> State<W> {
         head
     }
 
-    /// Releases all entries while preserving the next physical slot.
-    /// # Safety
-    /// `0 < self.len() <= capacity <= W::MAX` and `head < capacity`.
-    pub(in crate::depot::queue::ring) unsafe fn clear(&mut self, capacity: usize) {
-        let head = unsafe { self.position(capacity, self.len()) };
-        self.head = unsafe { W::from_offset(head) };
-        self.len = W::ZERO;
-    }
-
     /// Releases and returns the physical head position.
     /// # Safety
     /// `len != 0`, `head < capacity`, and `capacity` is representable by `W`.

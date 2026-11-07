@@ -13,8 +13,7 @@ use crate::{
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct Item<T> {
-    pub(in crate::buffer::segments) value: T,
-    nonempty: segments::One,
+    value: T,
 }
 
 impl<T> buffer::raw::Unary<T> for Item<T> {
@@ -37,10 +36,7 @@ impl<T: buffer::raw::Segment> Item<T> {
     /// # Safety
     /// This exact retained owner must expose a nonempty visible extent.
     pub(in crate::buffer::segments) unsafe fn assume(value: T) -> Self {
-        Self {
-            value,
-            nonempty: segments::One::new(),
-        }
+        Self { value }
     }
 }
 
@@ -50,20 +46,11 @@ impl<'d, const N: usize> From<&'d [u8; N]> for Item<resident::Shared<'d>> {
         const { assert!(N != 0) };
         Self {
             value: resident::Shared::from(bytes.as_slice()),
-            nonempty: segments::One::new(),
         }
     }
 }
 
 impl<T> Item<T> {
-    pub const fn as_ref(&self) -> &T {
-        &self.value
-    }
-
-    pub const fn count(&self) -> segments::Count {
-        self.nonempty.count()
-    }
-
     pub fn into_inner(self) -> T {
         self.value
     }
@@ -71,28 +58,17 @@ impl<T> Item<T> {
 
 impl<T: buffer::raw::Segment> Item<T> {
     pub fn try_clone(&self) -> Result<Self, rc::Error> {
-        self.view().try_retain()
-    }
-
-    fn view(&self) -> Item<buffer::View<'_, T>> {
         Item {
             value: buffer::View::new(&self.value),
-            nonempty: self.nonempty,
         }
+        .try_retain()
     }
 
-    /// Splits a prefix while preserving the remaining owner's nonempty proof.
-    pub fn try_split(mut self, limit: usize) -> Result<(T, Option<Self>), (rc::Error, Self)> {
-        use segments::Tail;
-
-        let Some(tail) = Tail::new(&mut self.value, limit) else {
-            return Ok((self.value, None));
-        };
-        let prefix = match tail.try_commit() {
-            Ok(result) => result,
-            Err(error) => return Err((error, self)),
-        };
-        Ok((prefix, Some(self)))
+    pub(in crate::buffer::segments) fn tail(
+        &mut self,
+        amount: usize,
+    ) -> Option<segments::Tail<'_, T>> {
+        segments::Tail::new(&mut self.value, amount)
     }
 }
 
@@ -113,11 +89,7 @@ impl<'source, S: ?Sized> From<&regions::NonEmpty<'_, 'source, S>>
 {
     fn from(view: &regions::NonEmpty<'_, 'source, S>) -> Self {
         Self {
-            value: buffer::View {
-                source: view.source(),
-                bytes: view.as_slice(),
-            },
-            nonempty: segments::One::new(),
+            value: *view.view(),
         }
     }
 }
@@ -126,10 +98,7 @@ impl<'a, T: buffer::raw::Segment> From<&'a segments::Tail<'_, T, NonZero<usize>>
     for Item<buffer::View<'a, T>>
 {
     fn from(tail: &'a segments::Tail<'_, T, NonZero<usize>>) -> Self {
-        Self {
-            value: tail.view(),
-            nonempty: segments::One::new(),
-        }
+        Self { value: tail.view() }
     }
 }
 
@@ -157,7 +126,6 @@ impl<'d> From<Item<storage::Shared>> for Item<resident::Shared<'d>> {
     fn from(item: Item<storage::Shared>) -> Self {
         Self {
             value: resident::Shared::from(item.value),
-            nonempty: item.nonempty,
         }
     }
 }
@@ -165,10 +133,9 @@ impl<'d> From<Item<storage::Shared>> for Item<resident::Shared<'d>> {
 impl Item<resident::Shared<'_>> {
     /// Transfers the backing without changing the admitted nonempty byte extent.
     pub fn try_owned(self) -> Result<Item<storage::Shared>, Self> {
-        let Self { value, nonempty } = self;
-        match value.try_owned() {
-            Ok(value) => Ok(Item { value, nonempty }),
-            Err(value) => Err(Self { value, nonempty }),
+        match self.value.try_owned() {
+            Ok(value) => Ok(Item { value }),
+            Err(value) => Err(Self { value }),
         }
     }
 }
@@ -180,7 +147,6 @@ impl<'a, T: buffer::raw::Segment> Item<buffer::View<'a, T>> {
         end: usize,
     ) -> Option<Self> {
         let bytes = source.as_ref();
-        let start = start.min(bytes.len());
         let end = end.min(bytes.len());
         if start >= end {
             return None;
@@ -188,7 +154,6 @@ impl<'a, T: buffer::raw::Segment> Item<buffer::View<'a, T>> {
         let bytes = &bytes[start..end];
         Some(Self {
             value: buffer::View { source, bytes },
-            nonempty: segments::One::new(),
         })
     }
 

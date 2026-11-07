@@ -26,7 +26,6 @@ use o3::{
     },
 };
 
-type FixedOwned = Owned<(), BLOCK_CAPACITY>;
 const FIXED_CAPACITY: usize = BLOCK_CAPACITY as usize;
 
 #[test]
@@ -50,7 +49,6 @@ fn preserves_nonempty_owner() {
     let mut bytes = NonEmpty::try_resize(bytes, num::NonZero::<usize>::MIN.saturating_add(1), 2)
         .expect("reserved extent");
     bytes.append().write_byte(3).expect("reserved suffix");
-    *bytes.first_mut() = 4;
     bytes[1] = 5;
     bytes.truncate(num::NonZero::<usize>::MIN);
     assert_eq!(bytes.len(), num::NonZero::<usize>::MIN);
@@ -61,13 +59,13 @@ fn preserves_nonempty_owner() {
         .into_inner();
     assert_eq!(
         (bytes.as_ptr(), bytes.capacity(), bytes.as_slice()),
-        (pointer, 4, &[4][..])
+        (pointer, 4, &[1][..])
     );
 }
 
 #[test]
 fn copies_and_freezes() {
-    let mut owned = (FixedOwned::try_new()).expect("the fixed test buffer must allocate");
+    let mut owned = Owned::try_with(FIXED_CAPACITY).expect("the fixed test buffer must allocate");
     owned
         .try_extend(b"fixed block")
         .expect("required fixture outcome");
@@ -108,26 +106,9 @@ fn shares_large_vec() {
 }
 
 #[test]
-fn commits_spare() {
-    let mut owned = (FixedOwned::try_new()).expect("the fixed test buffer must allocate");
-    let mut spare = owned.spare();
-    spare.write_slice(b"xyz").expect("required fixture outcome");
-    spare.commit();
-    assert_eq!(owned.as_slice(), b"xyz");
-
-    let mut writer = owned.spare();
-    writer
-        .write_slice(b"raw")
-        .expect("required fixture outcome");
-    assert_eq!(writer.len(), 3);
-    writer.commit();
-    assert_eq!(owned.as_slice(), b"xyzraw");
-}
-
-#[test]
 fn fills_fixed_capacity() {
     let bytes = vec![b'x'; FIXED_CAPACITY];
-    let mut owned = (FixedOwned::try_new()).expect("the fixed test buffer must allocate");
+    let mut owned = Owned::try_with(FIXED_CAPACITY).expect("the fixed test buffer must allocate");
     owned.try_extend(&bytes).expect("required fixture outcome");
     assert_eq!(owned.len(), FIXED_CAPACITY);
 
@@ -144,7 +125,7 @@ fn fills_fixed_capacity() {
 
 #[test]
 fn rejects_oversized_write() {
-    let mut owned = (FixedOwned::try_new()).expect("the fixed test buffer must allocate");
+    let mut owned = Owned::try_with(FIXED_CAPACITY).expect("the fixed test buffer must allocate");
     owned
         .try_extend(b"prefix")
         .expect("required fixture outcome");
@@ -162,13 +143,67 @@ fn rejects_oversized_write() {
 }
 
 #[test]
-fn keeps_runtime_capacity() {
-    let mut owned = (Owned::try_with(5)).expect("the five-byte test buffer must allocate");
-    owned
-        .try_extend(b"exact")
-        .expect("required fixture outcome");
-    assert_eq!(owned.as_slice(), b"exact");
+fn grows_and_freezes() {
+    let mut owned = Owned::new();
+    let initial = num::NonZero::<u32>::MIN.saturating_add(4);
+    assert_eq!(
+        Tracker::fail_after(0, || owned.try_reserve(initial)),
+        Err(alloc::Exhausted)
+    );
+    assert_eq!((owned.capacity(), owned.len()), (0, 0));
+    owned.try_reserve(initial).expect("initial storage");
+    // SAFETY: the two disjoint sources total the five reserved bytes;
+    // the retained initialized prefix is empty.
+    unsafe { buffer::raw::Slices::new(initial, [b"ex", b"act"]).replace(&mut owned, 0) };
     assert!(owned.try_extend(b"!").is_err());
+    let pointer = owned.as_ptr();
+    let ((), count) = Tracker::count(|| {
+        owned
+            .try_reserve(num::NonZero::<u32>::MIN.saturating_add(3))
+            .expect("existing capacity");
+    });
+    assert_eq!(count, 0);
+    let target = num::NonZero::<u32>::MIN.saturating_add(9);
+    assert_eq!(
+        Tracker::fail_after(0, || owned.try_reserve(target)),
+        Err(alloc::Exhausted)
+    );
+    assert_eq!((owned.as_ptr(), owned.capacity()), (pointer, 5));
+    assert_eq!(owned.as_slice(), b"exact");
+    let ((), count) = Tracker::resizes(|| owned.try_reserve(target).expect("growth"));
+    assert_eq!(count, 1);
+    let pointer = owned.as_ptr();
+    let (shared, count) = Tracker::count(|| {
+        // SAFETY: the original five bytes remain initialized and the exact
+        // four-byte disjoint source fits the reserved ten-byte allocation.
+        unsafe {
+            buffer::raw::Slices::new(num::NonZero::<u32>::MIN.saturating_add(3), [b"t", b"ail"])
+                .replace(&mut owned, 5);
+        }
+        owned.freeze()
+    });
+    assert_eq!(count, 0);
+    assert_eq!((shared.as_ptr(), shared.resident()), (pointer, 10));
+    assert_eq!(shared.as_slice(), b"exacttail");
+}
+
+#[test]
+fn replaces_suffix_without_growth() {
+    let mut owned = Owned::try_with(8).expect("replacement storage");
+    owned.try_extend(b"prefix").expect("initialized bytes");
+    let pointer = owned.as_ptr();
+    let ((), activity) = Tracker::measure(|| {
+        // SAFETY: the retained three-byte prefix is initialized, and the exact
+        // one-byte disjoint source fits the existing eight-byte allocation.
+        unsafe {
+            buffer::raw::Slices::new(num::NonZero::<u32>::MIN, [b"!", &[]]).replace(&mut owned, 3);
+        }
+    });
+    assert_eq!(activity, [0; 4]);
+    assert_eq!(
+        (owned.as_ptr(), owned.capacity(), owned.as_slice()),
+        (pointer, 8, &b"pre!"[..])
+    );
 }
 
 #[test]
@@ -186,6 +221,20 @@ fn commits_built_prefix() {
     let owned = (result).expect("the prefix writer must commit its bytes");
 
     assert_eq!(owned.as_slice(), b"short");
+}
+
+#[test]
+fn rejects_foreign_exact_writer() {
+    let result = storage::Exact::try_build(1, |out| {
+        let owner = Box::leak(alloc::BoxExt::try_new(Owned::new()).expect("foreign owner"));
+        let spare = Box::leak(alloc::BoxExt::try_new(owner.spare()).expect("foreign spare"));
+        *out = spare.bounded();
+        Ok::<_, consume::Error>(())
+    });
+    assert!(matches!(
+        result,
+        Err(storage::BuildError::Length(error)) if error.into_parts() == (num::NonZero::<usize>::MIN, 0)
+    ));
 }
 
 #[test]
@@ -219,17 +268,6 @@ fn empty_owners_skip_alloc() {
 
 #[test]
 fn freezes_in_place() {
-    let (created, allocs) = Tracker::count(|| storage::Owned::try_with(8));
-    assert_eq!(allocs, 1);
-    let mut local = (created).expect("the measured eight-byte storage owner must allocate once");
-    let ptr = local.as_ptr();
-    let (shared, allocs) = Tracker::count(|| {
-        local.try_extend(b"payload").expect("the payload must fit");
-        local.freeze()
-    });
-    assert_eq!(allocs, 0);
-    assert_eq!(shared.as_ptr(), ptr);
-
     Capacity(8)
         .try_scope(|budget| {
             {
@@ -237,7 +275,7 @@ fn freezes_in_place() {
                 assert_eq!(allocs, 1);
                 let mut owner = (created).expect("the measured resident owner must allocate once");
                 let ptr = owner.as_ptr();
-                let (frozen, allocs) = Tracker::count(|| {
+                let (shared, allocs) = Tracker::count(|| {
                     let mut spare = owner.spare();
                     spare
                         .write_slice(b"resident")
@@ -247,24 +285,34 @@ fn freezes_in_place() {
                         .try_compact()
                         .expect("the full owner must compact in place");
                     assert_eq!(owner.capacity(), 8);
-                    owner.try_freeze()
+                    owner.freeze()
                 });
                 assert_eq!(allocs, 0);
-                let shared = frozen
-                    .map_err(|owner| owner.len())
-                    .expect("full resident owner must freeze");
                 assert_eq!(shared.as_slice().as_ptr(), ptr);
                 assert_eq!(budget.resident(), 8);
                 assert_eq!(shared.as_slice(), b"resident");
             }
             assert_eq!(budget.resident(), 0);
 
+            {
+                let owner =
+                    storage::Owned::try_allocate(&budget, 8).expect("empty resident allocation");
+                let shared = owner.freeze();
+                assert!(shared.is_empty());
+                assert_eq!(budget.resident(), 0);
+            }
+
             let mut owner = (storage::Owned::try_allocate(&budget, 8))
                 .expect("the compact-failure resident owner must allocate");
             let ptr = owner.as_ptr();
-            let mut spare = owner.spare();
-            assert_eq!(spare.write(b"part"), 4);
-            spare.commit();
+            // SAFETY: this live eight-byte allocation receives a disjoint
+            // initialized four-byte prefix before publication.
+            unsafe {
+                owner
+                    .as_mut_ptr()
+                    .copy_from_nonoverlapping(b"part".as_ptr(), 4);
+                owner.set_len(4);
+            }
             let compact = Tracker::fail_after(0, || owner.try_compact());
             assert!(compact.is_err());
             assert_eq!(owner.as_ptr(), ptr);
@@ -338,9 +386,8 @@ fn fixed_scope() {
 fn exact_scope() {
     let drops = Cell::new(Some(0));
     let mut domain = resident::Domain::new();
-    let mut arena =
-        (provided::Arena::<_, _>::try_with(num::NonZero::<u32>::MIN, || Ok::<_, alloc::Error>(())))
-            .expect("test precondition");
+    let mut arena = provided::Arena::<_, _>::try_allocate(num::NonZero::<u32>::MIN)
+        .expect("test precondition")(());
     for _ in 0..2 {
         let measured = Tracker::begin();
         arena.scope(pin::Pin::new(&mut domain), |token, root, domain| {
@@ -429,11 +476,9 @@ fn terminal_scope() {
 fn joined_scopes() {
     let drops = Cell::new(Some(0));
     let first =
-        provided::Arena::<_, _>::try_with(num::NonZero::<u32>::MIN, || Ok::<_, alloc::Error>(()))
-            .expect("first arena");
+        provided::Arena::<_, _>::try_allocate(num::NonZero::<u32>::MIN).expect("first arena")(());
     let second =
-        provided::Arena::<_, _>::try_with(num::NonZero::<u32>::MIN, || Ok::<_, alloc::Error>(()))
-            .expect("second arena");
+        provided::Arena::<_, _>::try_allocate(num::NonZero::<u32>::MIN).expect("second arena")(());
     let mut state = (resident::Domain::new(), (first, second));
     for round in 1..=2 {
         region::Token::scope_pinned(pin::Pin::new(&mut state), |token, state| {

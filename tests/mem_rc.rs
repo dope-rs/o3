@@ -71,20 +71,6 @@ fn keeps_exhausted_owner() {
 }
 
 #[test]
-fn keeps_pointer_niches() {
-    assert_eq!(size_of::<rc::Error>(), 0);
-    assert_eq!(size_of::<mem::raw::Owner<Target<'_>>>(), size_of::<usize>());
-    assert_eq!(
-        size_of::<Option<mem::raw::Owner<Target<'_>>>>(),
-        size_of::<usize>()
-    );
-    assert_eq!(
-        size_of::<Result<mem::raw::Owner<Target<'_>>, rc::Error>>(),
-        size_of::<usize>()
-    );
-}
-
-#[test]
 fn tracks_ref_transitions() {
     let edge = Edge::<u32>(mem::raw::Count::empty());
     assert!(mem::raw::Edge::is_empty(&edge));

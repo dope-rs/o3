@@ -132,7 +132,6 @@ impl<'a, K, Q, P, I: crate::depot::raw::Compact> Slot<'a, K, Q, P, (), I> {
     pub(in crate::depot) fn release(self, occupied: num::NonZero<u32>) -> Self {
         let node = crate::depot::raw::StagedNode::of(&self);
         node.phase.set(staged::Phase::Vacant);
-        node.next.set(None);
         self.owner.nodes.state().occupied.set(occupied.get() - 1);
         self
     }

@@ -9,7 +9,7 @@ use o3::depot::{
 
 #[test]
 fn rollback_before_growth() {
-    type Store = slab::Pinned<u8, (), 2, false, 2, storage::Heap, storage::Lazy>;
+    type Store = slab::Pinned<u8, (), 2, false, 2, storage::Lazy>;
     let mut store = pin!(Store::try_new(Count::new(2)).expect("two slots"));
     let first = store.as_mut().vacant().expect("first reservation");
     let index = first.index();

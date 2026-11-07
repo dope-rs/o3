@@ -1,42 +1,5 @@
 use crate::depot::queue::links;
 
-/// Consumes one exact owner and its admitted FIFO membership phase.
-/// # Safety
-/// Parts retain exclusive mutation of one reciprocal chain/store/index in phase `LINKED`; projections and their destruction return normally without changing that phase.
-pub(in crate::depot) unsafe trait Membership<const LINKED: bool>:
-    Sized
-{
-    type Output;
-
-    fn parts(
-        &self,
-    ) -> (
-        &links::Chain<u32>,
-        impl crate::depot::raw::Hooks + '_,
-        links::Index,
-    );
-
-    /// # Safety
-    /// The exact retained hook has transitioned to the opposite membership phase.
-    unsafe fn finish(self) -> Self::Output;
-
-    fn transition(self) -> Self::Output {
-        {
-            let (queue, hooks, index) = self.parts();
-            // SAFETY: Membership retains the same reciprocal topology and the admitted phase.
-            unsafe {
-                if LINKED {
-                    queue.unlink(&hooks, index).idle();
-                } else {
-                    queue.link_back(&hooks, index);
-                }
-            }
-        }
-        // SAFETY: the single transition changed this exact owner's hook to the opposite phase.
-        unsafe { self.finish() }
-    }
-}
-
 /// A prepared removal retaining its exact nonempty chain.
 /// # Safety
 /// This operation owns a linked hook until its consuming commit.

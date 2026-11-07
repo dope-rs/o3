@@ -241,6 +241,17 @@ fn returns_reservations() {
     assert_eq!(queue.available(), 3);
     let ((), counts) = Tracker::measure(|| {
         assert!(slab::Batch::<_, _, 2, 3, 3, _>::new(&mut queue).is_ok());
+        let mut indices = [None; 3];
+        slab::Batch::new(&mut queue)
+            .expect("three slots fit")
+            .insert([0, 1, 2], [0; 3], |slot, available, value| {
+                assert_eq!(slot.available(), available);
+                let entry = slot.select(READY).insert(value);
+                let index = entry.key().index();
+                assert!(!indices.contains(&Some(index)));
+                indices[available] = Some(index);
+                entry.remove();
+            });
     });
     assert_eq!(counts, [0; 4]);
     assert_eq!(queue.available(), 3);

@@ -139,11 +139,6 @@ impl<'source, Tag, M> Shared<'source, Tag, M> {
     pub fn remaining(&self) -> usize {
         self.remaining.remaining()
     }
-
-    /// Returns this reservation's unused quota after every child lease has ended.
-    pub fn refund(self) {
-        drop(self);
-    }
 }
 
 impl<Tag> Shared<'_, Tag, lease::Open> {

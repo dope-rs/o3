@@ -134,15 +134,10 @@ unsafe impl<'id, T, Tag, const MAX: u32, C: crate::depot::raw::Count>
     }
 }
 
-// SAFETY: these phases retain initialized payload and metadata under the exclusive allocation borrow.
-unsafe impl<
-    T,
-    Tag,
-    const MAX: u32,
-    const N: usize,
-    C: crate::depot::raw::Count,
-    P: phase::Initialized,
-> crate::depot::raw::TagEntry for slab::Slot<'_, T, Tag, MAX, tagged::Hook, N, C, P>
+// SAFETY: this private phase retains initialized payload and metadata under the exclusive allocation borrow.
+unsafe impl<T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
+    crate::depot::raw::TagEntry
+    for slab::Slot<'_, T, Tag, MAX, tagged::Hook, N, C, phase::Metadata>
 {
     type Store = slab::Slab<T, Tag, MAX, tagged::Hook, N, C>;
     fn store(&self) -> &Self::Store {
@@ -170,7 +165,7 @@ unsafe impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Co
         Initialized<tagged::Hook>,
     >;
     unsafe fn project(self, (previous, _): &Typed<Tag, MAX>) -> Self::Output {
-        let lane = self.entry.phase.0;
+        let lane = self.phase.0;
         unsafe {
             crate::depot::raw::Proof::new((self.into_phase(phase::Vacant), (lane, *previous)))
         }

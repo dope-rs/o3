@@ -1,7 +1,6 @@
 use std::{num::NonZero, pin::Pin};
 
 use o3::{
-    alloc,
     base::cell::region,
     buffer::{
         self, Complete as _,
@@ -36,9 +35,8 @@ impl Capacity {
             resident::Budget<'d>,
         ),
     ) -> Result<(usize, Option<[u8; N]>), Error> {
-        let mut arena =
-            provided::Arena::<_, _>::try_with(NonZero::<u32>::MIN, || Ok::<(), alloc::Error>(()))
-                .map_err(Error::Allocation)?;
+        let mut arena = provided::Arena::<_, _>::try_allocate(NonZero::<u32>::MIN)
+            .map_err(Error::Allocation)?(());
         let mut domain = resident::Domain::new();
         arena.scope(Pin::new(&mut domain), |token, arena, domain| {
             let budget = domain

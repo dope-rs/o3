@@ -1,4 +1,4 @@
-use std::num::NonZero;
+use std::{marker, num::NonZero};
 
 use crate::depot::index::{bitmap, bitmap::entry::Row};
 
@@ -43,9 +43,16 @@ impl<'a, W: bitmap::Width> Level<'a, W> {
                 loop {
                     if shift == 0 {
                         let position = index * radix.get() + bits.trailing_zeros() as usize;
-                        // SAFETY: descent retains this exact nonempty leaf and
-                        // its current word without intervening mutation.
-                        return Some((unsafe { Row::found(self, position) }, current));
+                        return Some((
+                            Row {
+                                source: self,
+                                // SAFETY: exact tail bits and this source's u32 domain bound the selection.
+                                index: unsafe { NonZero::new_unchecked(position as u32 + 1) },
+                                plane: (),
+                                phase: marker::PhantomData,
+                            },
+                            current,
+                        ));
                     }
                     index = index * radix.get() + bits.trailing_zeros() as usize;
                     offset -= ((self.bits - 1) >> shift) + 1;
@@ -127,4 +134,4 @@ impl<W: bitmap::Width, S: crate::depot::raw::Words<W>, P> Row<S, P, (), W> {
     }
 }
 
-type Found<'l, S, W> = Row<&'l S, (), bitmap::Found, W>;
+type Found<'l, S, W> = Row<&'l S, (), (), W>;

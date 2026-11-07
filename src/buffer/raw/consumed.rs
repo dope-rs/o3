@@ -64,6 +64,18 @@ pub(in crate::buffer) struct Selection<'a, S> {
     len: usize,
 }
 
+impl buffer::bytes::Cursor<'_, '_> {
+    #[inline]
+    pub fn commit(self) -> usize {
+        Selection {
+            source: self.target,
+            len: self.consumed,
+        }
+        .consume();
+        self.consumed
+    }
+}
+
 impl<'a, S> Selection<'a, S> {
     pub(in crate::buffer) const fn len(&self) -> usize {
         self.len

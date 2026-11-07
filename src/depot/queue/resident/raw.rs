@@ -1,8 +1,10 @@
 //! Unsafe boundary for borrowed resident nodes and their stable hooks.
 
-use std::{cell, mem, ops, ptr};
+use std::{cell, mem, ops};
 
 use crate::depot::{self, queue::links};
+
+pub use crate::depot::raw::Node;
 
 /// One resident entry borrowed together with its exact compact identity.
 pub struct View<'a, T> {
@@ -37,7 +39,7 @@ impl<'a, T> View<'a, T> {
     /// # Safety
     /// Reachable hooks belong to these entries and form an acyclic vacant chain.
     pub unsafe fn acquire(free: &links::Free, entries: &'a [Node<T>]) -> Option<Self> {
-        let key = unsafe { depot::raw::Hooks::acquire(Slice::new(entries), free) }?;
+        let key = unsafe { depot::raw::Hooks::acquire(entries, free) }?;
         Some(unsafe { Self::new(entries, key) })
     }
 
@@ -62,29 +64,6 @@ impl<'a, T> View<'a, T> {
 const _: () = {
     assert!(mem::size_of::<View<'static, u64>>() == 2 * mem::size_of::<usize>());
     assert!(mem::size_of::<Option<View<'static, u64>>>() == 2 * mem::size_of::<usize>());
-};
-
-/// Borrowed stable hooks retaining the exact source slice's extent and lifetime.
-#[repr(transparent)]
-pub struct Slice<T>([Node<T>]);
-
-impl<T> Slice<T> {
-    pub fn new(entries: &[Node<T>]) -> &Self {
-        // SAFETY: the transparent unsized view preserves the source pointer and length.
-        unsafe { &*(ptr::from_ref(entries) as *const Self) }
-    }
-}
-
-// SAFETY: each in-bounds node owns one stable hook for this exact borrowed slice.
-unsafe impl<T> depot::raw::Hooks for Slice<T> {
-    unsafe fn hook_raw(&self, index: links::Index) -> &links::Hook {
-        unsafe { self.0.get_unchecked(index.get()) }.hook()
-    }
-}
-
-const _: () = {
-    assert!(mem::size_of::<&Slice<u8>>() == mem::size_of::<&[Node<u8>]>());
-    assert!(mem::align_of::<&Slice<u8>>() == mem::align_of::<&[Node<u8>]>());
 };
 
 /// One optionally initialized resident payload.
@@ -123,33 +102,5 @@ impl<T> Entry<T> {
         let mut value = self.value.replace(mem::MaybeUninit::uninit());
         // SAFETY: the owning topology proves this entry's value is initialized.
         unsafe { value.assume_init_drop() };
-    }
-}
-
-/// One resident value paired with its stable compact hook.
-#[repr(C)]
-pub struct Node<T> {
-    value: T,
-    hook: links::Hook,
-}
-
-impl<T> Node<T> {
-    pub fn vacant(value: T, index: u32, next: u32) -> Self {
-        Self {
-            value,
-            hook: links::Hook::vacant(index, next),
-        }
-    }
-
-    pub const fn hook(&self) -> &links::Hook {
-        &self.hook
-    }
-}
-
-impl<T> ops::Deref for Node<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.value
     }
 }

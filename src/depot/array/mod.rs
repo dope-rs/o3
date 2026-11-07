@@ -7,7 +7,6 @@ use prefix::Prefix;
 use crate::mem::{Lease, lease};
 
 pub mod bits;
-mod compact;
 pub mod copy;
 mod index;
 pub use index::Index;

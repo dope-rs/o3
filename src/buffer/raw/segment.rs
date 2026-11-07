@@ -8,7 +8,9 @@ use crate::{
 /// Retained bytes that narrow without copying their payload.
 /// # Safety
 /// Shared access preserves the range, and consuming advances its exact prefix.
-pub unsafe trait Segment: Seal + AsRef<[u8]> + consume::Consume + buffer::Residency {
+pub unsafe trait Segment:
+    Seal + super::Source + super::Store + consume::Consume + buffer::Residency
+{
     /// # Safety
     /// Preserve this owner's exact initialized extent and its original backing.
     unsafe fn extent(&mut self) -> &mut regions::Extent;
@@ -37,8 +39,9 @@ pub unsafe trait Segment: Seal + AsRef<[u8]> + consume::Consume + buffer::Reside
     }
 
     /// Retains at most `limit` leading bytes without copying the payload.
-    fn prefix(self, limit: usize) -> Self {
-        Seal::truncate(self, limit)
+    fn prefix(mut self, limit: usize) -> Self {
+        buffer::raw::Selection::new(&mut self, limit).commit();
+        self
     }
 
     /// Splits off at most `limit` visible bytes without copying the payload.
@@ -63,7 +66,7 @@ pub unsafe trait Segment: Seal + AsRef<[u8]> + consume::Consume + buffer::Reside
 unsafe impl Segment for storage::Shared {
     unsafe fn extent(&mut self) -> &mut regions::Extent {
         // SAFETY: the caller preserves this exact owner and initialized subrange.
-        unsafe { self.region.extent_mut() }
+        unsafe { self.extent_mut() }
     }
 }
 

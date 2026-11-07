@@ -86,12 +86,4 @@ impl<S: hole::raw::Source> Hole<S> {
         let Self { owner, value, .. } = hole;
         unsafe { heap::Vacancy::new(owner, value) }
     }
-
-    pub(in crate::depot) fn take(entry: heap::Entry<S>) -> S::Value {
-        Self::remove(entry).into_inner().1
-    }
-
-    pub(in crate::depot) fn retire(entry: heap::Entry<S>) -> S {
-        entry.remove().0
-    }
 }

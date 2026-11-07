@@ -10,7 +10,7 @@ pub(in crate::buffer) enum Root<'a, 'd> {
     Allocation(&'a crate::buffer::raw::Header<()>),
     Vec(&'a regions::Header),
     Pool(&'a owners::Slot),
-    Resident(&'a crate::buffer::raw::Header<resident::Lease<'d>>),
+    Resident(&'a crate::buffer::raw::Header<resident::Budget<'d>>),
     Accounted(&'a owners::Account<'d>),
     Provided(&'a provided::Charge<'d>),
 }

@@ -3,9 +3,8 @@ use std::num::NonZero;
 use o3::{
     alloc::VecExt as _,
     buffer::{
-        raw::Scatter as _,
         storage::Owned,
-        write::{self, Reserved, Sink as _, SpareExt as _, Staged, spans},
+        write::{self, Reserved, Sink as _, SpareExt as _, Staged},
     },
 };
 
@@ -345,36 +344,6 @@ fn rollback_after_growth() {
 }
 
 #[test]
-fn commits_empty_span() {
-    let mut owner = Owned::new();
-    let mut writer = owner.spare();
-    let Err(cause) = writer.try_exact(usize::MAX) else {
-        panic!("the largest span must exceed the empty owner");
-    };
-    let (required, room) = cause.into_parts();
-    assert_eq!((required.get(), room), (usize::MAX, 0));
-    let mut exact = writer.exact();
-    let cause =
-        write::Sink::write_byte(&mut exact, 1).expect_err("an empty span must reject a byte");
-    let (required, room) = cause.into_parts();
-    assert_eq!((required.get(), room), (1, 0));
-    write::Sink::write_slice(&mut exact, b"")
-        .as_ref()
-        .expect("required fixture outcome");
-    exact
-        .try_commit()
-        .as_ref()
-        .expect("required fixture outcome");
-    writer
-        .exact()
-        .try_commit()
-        .as_ref()
-        .expect("required fixture outcome");
-    writer.commit();
-    assert!(owner.is_empty());
-}
-
-#[test]
 fn rejects_short_commit() {
     let mut owner = (Owned::try_with(4)).expect("the staged destination must allocate");
     let mut writer = owner.spare();
@@ -397,39 +366,4 @@ fn rejects_short_commit() {
         .try_complete()
         .as_ref()
         .expect("required fixture outcome");
-}
-
-#[test]
-fn cancels_publication() {
-    let mut owner = (Owned::try_with(9)).expect("the staged owner must allocate");
-    let mut writer = owner.spare();
-    assert_eq!(writer.write(b"ok"), 2);
-    {
-        let mut frame = (spans::Tail::<0, 3>::try_new(&mut writer, &[], [b"body"]))
-            .expect("the unpublished frame must fit");
-        frame.split().1.fill(0xff);
-    }
-    assert_eq!(writer.as_mut_slice(), b"ok");
-    assert_eq!(writer.remaining(), 7);
-    let frame = (spans::Tail::<0, 3>::try_new(&mut writer, &[], [b"body"]))
-        .expect("cancellation must preserve the complete reservation");
-    frame.commit(b"end");
-    writer.commit();
-    assert_eq!(owner.as_slice(), b"okbodyend");
-}
-
-#[test]
-fn rejects_before_traversal() {
-    let mut source = &b"body"[..];
-    let mut owner = Owned::new();
-    let mut writer = owner.spare();
-    let Err(write::Error::Capacity(error)) =
-        spans::Tail::<2, 3>::try_scatter(&mut writer, b"hi", source.take_bytes(4), b"!")
-    else {
-        panic!("the complete frame must be rejected");
-    };
-    let (required, room) = error.into_parts();
-    assert_eq!((required.get(), room), (10, 0));
-    assert_eq!(source.remaining(), 4);
-    assert_eq!(writer.len(), 0);
 }

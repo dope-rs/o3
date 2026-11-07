@@ -31,14 +31,16 @@ impl<'input, 'd, R: buffer::Source + 'input> Bound<'input, 'd, R> {
     }
 }
 
-impl<'input, 'd, R: hold::raw::Retain<'d> + 'input> Bound<'input, 'd, R> {
-    pub(super) fn new(source: Deferred<'input, 'd, R>, policy: hold::Policy) -> Self {
-        let logical = source.len();
-        let choice = policy.choose(logical, || R::charge(&source.input.0).resident_bytes);
-        let Deferred { input } = source;
-        Self { input, choice }
+impl<'input, 'd, R: hold::raw::Retain<'d> + 'input> Deferred<'input, 'd, R> {
+    pub fn bind(self, policy: hold::Policy) -> Bound<'input, 'd, R> {
+        let logical = self.len();
+        let choice = policy.choose(logical, || R::charge(&self.input.0).resident_bytes);
+        let Deferred { input } = self;
+        Bound { input, choice }
     }
+}
 
+impl<'input, 'd, R: hold::raw::Retain<'d> + 'input> Bound<'input, 'd, R> {
     /// Maximum resident bytes produced when this exact bound is retained.
     pub fn ceiling(&self) -> usize {
         match self.choice {
@@ -48,23 +50,17 @@ impl<'input, 'd, R: hold::raw::Retain<'d> + 'input> Bound<'input, 'd, R> {
         }
     }
 
-    pub fn try_retain(self) -> Result<resident::Shared<'d>, (Self, hold::Error)> {
-        let budget = self.input.1;
-        self.try_admit(budget)
-    }
-
-    pub fn try_admit(
-        self,
-        budget: &resident::Budget<'d>,
-    ) -> Result<resident::Shared<'d>, (Self, hold::Error)> {
+    pub fn try_retain(self) -> Result<hold::Retained<'d>, (Self, hold::Error)> {
         self.choice
-            .try_retain::<R>(&self.input.0, budget)
+            .try_retain::<R>(&self.input.0, self.input.1)
             .map_err(|error| (self, error))
     }
 
     /// Retains this range and ends the bound if resident admission fails.
     pub fn try_into(self) -> Result<resident::Shared<'d>, hold::Error> {
-        self.choice.try_retain::<R>(&self.input.0, self.input.1)
+        self.choice
+            .try_retain::<R>(&self.input.0, self.input.1)
+            .map(hold::Retained::into_shared)
     }
 }
 
@@ -76,7 +72,7 @@ const _: () = {
     assert!(
         size_of::<
             Result<
-                resident::Shared<'static>,
+                hold::Retained<'static>,
                 (Bound<'static, 'static, storage::Shared>, hold::Error),
             >,
         >() == 9 * word

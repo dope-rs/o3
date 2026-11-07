@@ -19,7 +19,7 @@ mod bounds;
 mod cursor;
 mod error;
 mod slice;
-pub(in crate::buffer::segments) use slice::Build;
+pub(in crate::buffer::segments) use slice::Projected;
 
 mod fifo;
 
@@ -131,11 +131,10 @@ impl<'a, T: buffer::raw::Segment> Iter<'a, T> {
     }
 
     /// # Safety
-    /// Scatter's caller retains positive progress and the exact cap/left bounds.
+    /// The caller proves cap <= self.remaining() and cap <= MAX.
     pub(in crate::buffer) unsafe fn next_chunk<const MAX: usize>(
         &mut self,
         cap: NonZero<usize>,
-        _left: NonZero<usize>,
     ) -> buffer::raw::Chunk<'a, MAX> {
         Step { source: self, cap }.advance()
     }

@@ -64,15 +64,9 @@ pub enum Sent {}
 #[derive(Clone, Copy)]
 pub struct Seed(pub u64);
 
-impl map::Hasher<u64> for Seed {
-    fn hash(&self, key: &u64) -> u64 {
-        mix(*key ^ self.0)
-    }
-}
-
-impl map::Hasher<u32> for Seed {
-    fn hash(&self, key: &u32) -> u64 {
-        mix(u64::from(*key) ^ self.0)
+impl<T: Copy + Into<u64>> map::Hasher<T> for Seed {
+    fn hash(&self, key: &T) -> u64 {
+        mix((*key).into() ^ self.0)
     }
 }
 

@@ -1,9 +1,8 @@
 pub(in crate::buffer::segments) mod sequence;
 use std::{marker, mem, num, ops};
 
-pub(in crate::buffer::segments) use assemble::Assemble;
 use many::Many;
-use segments::{Front, Handle, Pool, Push, Sequence, assembly};
+use segments::{Front, Handle, Pool, handles::Occupied};
 use storage::alloc;
 
 use crate::{
@@ -20,28 +19,6 @@ use crate::{
 pub(in crate::buffer::segments) mod front;
 pub(in crate::buffer::segments) mod many;
 pub(in crate::buffer::segments) mod single;
-
-impl<T: buffer::raw::Segment, H: Handle<T>> Chain<T, H> {
-    pub fn try_insert(
-        &mut self,
-        item: segments::Item<T>,
-    ) -> Result<Front<'_, T, H>, crate::mem::Rejected<segments::Item<T>, segments::Error>> {
-        edit::Insert::try_new(self, item, edit::Back)?.commit();
-        Ok(Front { sequence: self })
-    }
-}
-
-impl<T: buffer::raw::Segment> Assemble<T> for Chain<T> {
-    fn sequence(&mut self) -> &mut segments::Chain<T, segments::Pool<T>> {
-        self
-    }
-}
-
-impl<T: buffer::raw::Segment> buffer::raw::Assemble<T> for Chain<T> {
-    fn finish<S: buffer::raw::Sequence<T, Output = Self>>(input: segments::Built<T, S>) -> Self {
-        input.chain
-    }
-}
 
 impl<T: buffer::raw::Segment> Chain<T> {
     pub fn try_flatten(&self) -> Result<storage::Shared, storage::AllocError> {
@@ -63,37 +40,6 @@ impl<T: buffer::raw::Segment> Chain<T> {
     }
 }
 
-impl<T: buffer::raw::Segment> TryFrom<(Chain<T>, segments::Item<T>)> for Chain<T> {
-    type Error = crate::mem::Rejected<(Chain<T>, segments::Item<T>), assembly::Error>;
-
-    fn try_from(source: (Chain<T>, segments::Item<T>)) -> Result<Self, Self::Error> {
-        Assemble::try_append(source.0, source.1)
-    }
-}
-
-impl<T: buffer::raw::Segment> TryFrom<(segments::Item<T>, Chain<T>)> for Chain<T> {
-    type Error = crate::mem::Rejected<(segments::Item<T>, Chain<T>), assembly::Error>;
-
-    fn try_from(source: (segments::Item<T>, Chain<T>)) -> Result<Self, Self::Error> {
-        Assemble::try_prepend(source.1, source.0)
-    }
-}
-
-impl<T: buffer::raw::Segment> TryFrom<(Chain<T>, Chain<T>)> for Chain<T> {
-    type Error = crate::mem::Rejected<(Chain<T>, Chain<T>), assembly::Error>;
-
-    fn try_from(source: (Chain<T>, Chain<T>)) -> Result<Self, Self::Error> {
-        let (first, second) = source;
-        if first.is_empty() {
-            return Ok(second);
-        }
-        if second.is_empty() {
-            return Ok(first);
-        }
-        edit::Join::new(first, second).try_commit()
-    }
-}
-
 struct Flatten<'a, T> {
     capacity: num::NonZero<u32>,
     sources: segments::Iter<'a, T>,
@@ -110,24 +56,21 @@ impl<T: buffer::raw::Segment> Chain<T> {
     /// Moves every incoming owner into this pool, preserving the source on rejection.
     pub fn try_extend(
         &mut self,
-        source: Many<T>,
+        mut source: Many<T>,
     ) -> Result<(), crate::mem::Rejected<Many<T>, segments::Error>> {
-        let mut source: Chain<T> = source.into();
-        let error = match edit::Relation::new((self, &mut source)).try_commit() {
+        let error = match edit::Relation::new((self, &mut source.0)).try_commit() {
             Ok(()) => return Ok(()),
             Err(error) => error.into_error(),
         };
-        // SAFETY: rejected preflight preserves this operation's original Many source.
-        let source = unsafe { Many::new(source) };
         Err(crate::mem::Rejected::new(source, error))
     }
 
     pub fn into_shape(mut self) -> segments::Shape<T> {
         let index = match self.key.state() {
-            handles::State::Empty => return segments::Shape::Empty,
-            handles::State::Single(index) => index,
+            None => return segments::Shape::Empty,
+            Some(Occupied::Single(index)) => index,
             // SAFETY: this decoded multi key owns its exact initialized descriptor.
-            handles::State::Multi(_) => return segments::Shape::Many(unsafe { Many::new(self) }),
+            Some(Occupied::Multi(_)) => return segments::Shape::Many(unsafe { Many::new(self) }),
         };
         self.key = Key::EMPTY;
         let nodes = handles::nodes(&self.handle);
@@ -147,7 +90,7 @@ impl<T: buffer::raw::Segment> Chain<T> {
 
 impl<T: buffer::raw::Segment, H: segments::Handle<T>> buffer::Residency for Chain<T, H> {
     fn resident(&self) -> usize {
-        self.sequence.resident()
+        Chain::resident(self)
     }
 }
 
@@ -159,17 +102,17 @@ unsafe impl<T: buffer::raw::Segment, H: segments::Handle<T>> buffer::raw::Chunks
         Self: 'data;
 
     fn len(&self) -> usize {
-        self.sequence.len()
+        Chain::len(self)
     }
 
-    fn start(&self) -> Self::Cursor<'_> {
+    fn chunks(&self) -> Self::Cursor<'_> {
         segments::Cursor::new(self)
     }
 }
 
 impl<T: buffer::raw::Segment> Consume for Chain<T> {
     fn remaining(&self) -> usize {
-        self.sequence.len()
+        self.len()
     }
 
     fn try_consume(&mut self, amount: usize) -> Result<(), consume::Error> {
@@ -200,34 +143,21 @@ impl<T: buffer::raw::Segment, H: segments::Handle<T>> Chain<T, H> {
     }
 }
 
-/// Editable chain whose complete topology is owned by its sequence.
+/// Editable chain owning its complete topology.
 #[derive(Debug)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct Chain<T, H: Handle<T> = Pool<T>> {
-    pub(in crate::buffer::segments) sequence: Sequence<T, H>,
-}
-
-impl<T, H: Handle<T>> ops::Deref for Chain<T, H> {
-    type Target = Sequence<T, H>;
-    fn deref(&self) -> &Self::Target {
-        &self.sequence
-    }
-}
-
-impl<T, H: Handle<T>> ops::DerefMut for Chain<T, H> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.sequence
-    }
+    pub(in crate::buffer::segments) handle: H,
+    pub(in crate::buffer::segments) key: Key,
+    pub(in crate::buffer::segments) owner: marker::PhantomData<fn() -> T>,
 }
 
 impl<T, H: Handle<T>> Chain<T, H> {
     pub(in crate::buffer::segments) const fn new(handle: H) -> Self {
         Self {
-            sequence: Sequence {
-                handle,
-                key: Key::EMPTY,
-                owner: marker::PhantomData,
-            },
+            handle,
+            key: Key::EMPTY,
+            owner: marker::PhantomData,
         }
     }
 }
@@ -251,10 +181,7 @@ impl<T: buffer::raw::Segment> Chain<T> {
         if amount == self.len() {
             return edit::Relation::new((target, self))
                 .try_commit()
-                .map_err(|error| match error.into_error() {
-                    segments::Error::Total(cause) => segments::Error::component(cause),
-                    error => error,
-                });
+                .map_err(|error| error.into_error());
         }
         let shape = prefix::Shape::try_new(self, amount)?;
         shape.try_move_to(target)
@@ -263,19 +190,22 @@ impl<T: buffer::raw::Segment> Chain<T> {
 
 impl<T: buffer::raw::Segment, H: Handle<T>> Chain<T, H> {
     pub fn front_entry(&mut self) -> Option<segments::Front<'_, T, H>> {
-        segments::Front::new(self)
+        if self.key.is_empty() {
+            return None;
+        }
+        Some(segments::Front { sequence: self })
     }
 
+    /// Returns an empty owner unchanged, or None after insertion.
     pub fn try_push(
         &mut self,
         value: T,
-    ) -> Result<Push<T>, crate::mem::Rejected<T, segments::Error>> {
+    ) -> Result<Option<T>, crate::mem::Rejected<segments::Item<T>, segments::Error>> {
         let item = match segments::Item::new(value) {
             ops::ControlFlow::Continue(item) => item,
-            ops::ControlFlow::Break(value) => return Ok(Push::Discarded(value)),
+            ops::ControlFlow::Break(value) => return Ok(Some(value)),
         };
-        self.try_insert(item)?;
-        Ok(Push::Loaded)
+        self.try_insert(item).map(|_| None)
     }
 
     pub(in crate::buffer::segments) fn pop_item(&mut self) -> Option<segments::Item<T>> {
@@ -290,7 +220,7 @@ impl<T: buffer::raw::Segment, H: segments::Handle<T>> Chain<T, H> {
         use buffer::raw::SliceExt as _;
 
         let len = self.len();
-        let mut cursor = write::Cursor::try_new(target, len)?;
+        let mut cursor = write::spans::Writer::try_new(target, len)?;
         let (pointer, start) = cursor.suffix();
         // SAFETY: admission covers the retained chain's exact byte sum and
         // disjoint exclusive suffix; traversal retains every source until copying ends.

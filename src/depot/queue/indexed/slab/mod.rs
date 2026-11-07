@@ -72,13 +72,11 @@ impl<
     }
 
     pub fn vacant(&mut self) -> Option<slab::Vacant<'_, T, Tag, MAX, H, N, C, phase::Vacant>> {
-        let (core, [index]) = Reserved::new(self)?.into_parts();
-        Some(slab::Vacant {
-            entry: slab::Slot {
-                core,
-                index,
-                phase: phase::Vacant,
-            },
+        let (core, [index]) = Reserved::admit(self)?.into_parts();
+        Some(slab::Slot {
+            core,
+            index,
+            phase: phase::Vacant,
         })
     }
 
@@ -145,7 +143,7 @@ impl<T, Tag, const MAX: u32, C: crate::depot::raw::Count> Slab<T, Tag, MAX, link
         let index = self.chain.first()?;
         // SAFETY: this exclusive owner retains the selected reciprocal front
         // in its original chain and initialized hook allocation through commit.
-        let (_, detached) =
+        let detached =
             unsafe { crate::depot::raw::Hooks::chain_pop(&self.block, &self.chain, index) };
         detached.idle();
         Some(

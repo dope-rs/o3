@@ -93,24 +93,6 @@ impl<E: alloc::raw::Rows, S> Block<E, S> {
     }
 }
 
-impl<E: alloc::raw::Rows, S> Block<E, S, (), E::Root> {
-    pub(crate) fn try_init(
-        extent: E,
-        state: S,
-        init: impl Fn(usize) -> (E::Root, E::Tail),
-    ) -> Result<Self, alloc::Exhausted> {
-        const { assert!(!mem::needs_drop::<E::Root>() && !mem::needs_drop::<E::Tail>()) };
-        let mut memory = Uninit::try_new(extent)?;
-        let (roots, tails, _, _) = memory.planes_mut();
-        alloc::raw::pair(roots, tails, |index| {
-            let (value, entry) = init(index);
-            (mem::MaybeUninit::new(value), entry)
-        });
-        // SAFETY: Rows gives equal lengths; both complete planes are initialized.
-        Ok(unsafe { memory.finish(state, ()) })
-    }
-}
-
 impl<E: alloc::raw::Shape, S> Block<E, S, (), E::Root> {
     pub fn try_from_fn(
         extent: E,

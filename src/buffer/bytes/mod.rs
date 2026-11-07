@@ -61,16 +61,6 @@ impl<'a, 'pool> Cursor<'a, 'pool> {
             consumed: 0,
         }
     }
-
-    pub fn commit(self) {
-        let len = self.target.len();
-        let target = &mut *self.target;
-        // SAFETY: the transaction tracks a consumed prefix of this unchanged owner.
-        unsafe { target.region.restrict(self.consumed..len) };
-        if target.is_empty() {
-            *self.target = storage::Shared::empty(owners::Edge::NONE);
-        }
-    }
 }
 
 impl<'pool> buffer::Source for Cursor<'_, 'pool> {
@@ -149,7 +139,7 @@ unsafe impl<'pool> hold::raw::Retain<'pool> for Cursor<'_, 'pool> {
     fn try_retain<'a>(
         plan: &Self::View<'a>,
         budget: &resident::Budget<'pool>,
-    ) -> Result<resident::Shared<'pool>, hold::Error>
+    ) -> Result<hold::Retained<'pool>, hold::Error>
     where
         Self: 'a,
     {

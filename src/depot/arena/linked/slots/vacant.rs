@@ -41,17 +41,11 @@ impl<T, H: linked::Source<T>, Tag> Vacant<T, H, Tag> {
         }
         let (index, node) = unsafe { store.claim::<true>() };
         unsafe { node.value.get().cast::<T>().write(value) };
-        slots::Live {
-            vacant: Self {
-                owner,
-                index: slots::Index::new(index),
-                value: marker::PhantomData,
-            },
-        }
+        unsafe { slots::Live::detached(owner, slots::Index::new(index)) }
     }
 
     pub fn insert(self, value: T) -> slots::Live<T, H, Tag> {
-        let node = unsafe { self.owner.store().region.slot(self.index.raw()) };
+        let node = unsafe { self.owner.store().slot(self.index.raw()) };
         unsafe { node.value.get().cast::<T>().write(value) };
         node.next.set(slots::Store::<T>::END);
         slots::Live { vacant: self }
@@ -69,7 +63,7 @@ impl<T, H: linked::Source<T>, Tag> Vacant<T, H, Tag> {
         let this = mem::ManuallyDrop::new(self);
         let store = this.owner.store();
         let index = this.index.raw();
-        let node = unsafe { store.region.slot(index) };
+        let node = unsafe { store.slot(index) };
         store.recycle(index, node);
         unsafe { ptr::read(&this.owner) }
     }

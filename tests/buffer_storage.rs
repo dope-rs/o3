@@ -29,7 +29,7 @@ fn keeps_vec_owner() {
     let pointer = data.as_ptr();
     let (result, created) = Tracker::measure(|| storage::Shared::try_from(&mut data));
     let shared = (result).expect("the vector control block must allocate");
-    assert_eq!(created, [1, 4 * size_of::<usize>(), 0, 0]);
+    assert_eq!(created, [1, 3 * size_of::<usize>(), 0, 0]);
     assert_eq!(shared.resident(), capacity);
     let (result, activity) = Tracker::measure(|| shared.try_clone());
     let plain = (result).expect("the plain edge must retain its vector");
@@ -152,7 +152,7 @@ fn exhaustion_refunds() {
                 assert_eq!(exact.as_slice(), b"payload");
                 assert_eq!(budget.resident(), 7);
             });
-            assert_eq!(activity, [1, 24 + 7, 1, 24 + 7]);
+            assert_eq!(activity, [1, 16 + 7, 1, 16 + 7]);
             assert_eq!(budget.resident(), 0);
         })
         .expect("resident test domain must admit its budget");
@@ -340,48 +340,13 @@ fn compact_retries() {
             assert_eq!(resized[3] - resized[1], 9);
             assert_eq!((owner.capacity(), budget.resident()), (7, 7));
             let pointer = owner.as_ptr();
-            let (result, activity) = Tracker::measure(|| owner.try_freeze());
-            let exact = result.expect("the compacted owner is fully initialized");
-            assert_eq!(exact.bytes(), 7);
+            let (shared, activity) = Tracker::measure(|| owner.freeze());
             assert_eq!(activity, [0; 4]);
             let ((), freed) = Tracker::measure(move || {
-                assert_eq!(exact.as_slice(), b"payload");
-                assert_eq!(exact.as_slice().as_ptr(), pointer);
+                assert_eq!(shared.as_slice(), b"payload");
+                assert_eq!(shared.as_slice().as_ptr(), pointer);
             });
             assert_eq!((freed[0], freed[2], freed[3]), (0, 1, resized[1]));
-            assert_eq!(budget.resident(), 0);
-        })
-        .expect("resident test domain must admit its budget");
-}
-
-#[test]
-fn preserves_partial_owner() {
-    Capacity(8)
-        .try_scope(|budget| {
-            let mut owner =
-                (storage::Owned::try_allocate(&budget, 8)).expect("the owner must fit the budget");
-            let mut spare = owner.spare();
-            assert_eq!(spare.write(b"abc"), 3);
-            spare.commit();
-            let pointer = owner.as_ptr();
-            let (result, activity) = Tracker::measure(|| owner.try_freeze());
-
-            let mut owner = result.expect_err("partial initialization returns its owner");
-            assert_eq!(activity, [0; 4]);
-            assert_eq!(owner.as_ptr(), pointer);
-            assert_eq!(&owner[..], b"abc");
-            assert_eq!((owner.capacity(), budget.resident()), (8, 8));
-            let mut spare = owner.spare();
-            assert_eq!(spare.write(b"defgh"), 5);
-            spare.commit();
-            let (result, activity) = Tracker::measure(|| owner.try_freeze());
-            {
-                let exact = result.expect("the completed owner is fully initialized");
-                assert_eq!(activity, [0; 4]);
-                assert_eq!(exact.as_slice(), b"abcdefgh");
-                assert_eq!(exact.as_slice().as_ptr(), pointer);
-                assert_eq!(budget.resident(), 8);
-            }
             assert_eq!(budget.resident(), 0);
         })
         .expect("resident test domain must admit its budget");
@@ -420,9 +385,8 @@ fn fixed_drop() {
 fn exact_drop() {
     let drops = Cell::new(Some(0));
     {
-        let arena =
-            provided::Arena::<Item>::try_with(NonZero::<u32>::MIN, || Ok::<(), alloc::Error>(()));
-        let mut arena = arena.expect("the exact fixture must allocate");
+        let mut arena = provided::Arena::<Item>::try_allocate(NonZero::<u32>::MIN)
+            .expect("the exact fixture must allocate")(());
         arena.scope(pin::Pin::new(&mut ()), |_, root, _| {
             let vacant = root
                 .vacant()

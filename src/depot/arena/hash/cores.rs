@@ -119,11 +119,11 @@ impl<T, Tag> Core<T, Tag> {
     pub(in crate::depot) fn entry(
         &mut self,
         key: key::Handle<runtime::Domain<Tag>>,
-    ) -> Option<hash::Entry<'_, T, Tag>> {
+    ) -> Option<entry::Live<'_, T, Tag>> {
         Some(hash::Position::try_live(self, key).ok()?.into_entry())
     }
 
-    pub(in crate::depot) fn entry_at(&mut self, index: usize) -> Option<hash::Entry<'_, T, Tag>> {
+    pub(in crate::depot) fn entry_at(&mut self, index: usize) -> Option<entry::Live<'_, T, Tag>> {
         Some(hash::Position::new(self, index)?.live()?.into_entry())
     }
 
@@ -160,7 +160,7 @@ unsafe impl<'a, T, Tag> map::raw::Query for &'a mut Core<T, Tag> {
     fn occupied(entry: map::Found<Self>) -> Self::Occupied {
         let (owner, index) = entry.copied();
         // SAFETY: the occupied bucket retains one live entry at this bounded index.
-        unsafe { hash::Entry::new(owner, index) }.with_phase()
+        unsafe { entry::Live::new(owner, index) }.with_phase()
     }
 }
 

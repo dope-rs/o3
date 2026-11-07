@@ -31,13 +31,12 @@ fn preserves_rotation() {
         .expect("destination")
         .push();
     assert!(
-        queue
+        !queue
             .try_slot(0)
             .expect("resident")
             .try_lane(0)
             .expect("destination")
             .set()
-            == round::Insertion::Present
     );
     assert_eq!(
         round::Lane::try_new(&queue, 0)
@@ -66,7 +65,6 @@ fn preserves_rotation() {
             .try_lane(1)
             .expect("destination")
             .set()
-            == round::Insertion::Inserted
     );
     queue.try_slot(0).expect("resident").clear();
     assert!(queue.group::<0>().active().is_none());
@@ -123,7 +121,6 @@ fn proofs_reject_stale() {
             .try_lane(0)
             .expect("destination")
             .set()
-            == round::Insertion::Inserted
     );
     assert!(
         queue
@@ -132,7 +129,6 @@ fn proofs_reject_stale() {
             .try_lane(0)
             .expect("destination")
             .set()
-            == round::Insertion::Inserted
     );
     assert!(
         queue
@@ -141,7 +137,6 @@ fn proofs_reject_stale() {
             .try_lane(0)
             .expect("destination")
             .set()
-            == round::Insertion::Inserted
     );
     assert!(
         queue
@@ -150,7 +145,6 @@ fn proofs_reject_stale() {
             .try_lane(2)
             .expect("destination")
             .set()
-            == round::Insertion::Inserted
     );
 
     let front = (lane0.front()).expect("lane front must exist before invalidation");
@@ -162,7 +156,6 @@ fn proofs_reject_stale() {
             .try_lane(0)
             .expect("destination")
             .set()
-            == round::Insertion::Inserted
     );
     assert!(front.get().is_none());
     assert!(front.pop_if(|_| true).is_none());
@@ -193,7 +186,7 @@ fn retains_fixed_lanes() {
     let lane = queue.lane(bounded::U32::<0, 1>::exact::<1>());
     let ((), hot) = Tracker::measure(|| {
         for _ in 0..128 {
-            assert!(placed.set() == round::Insertion::Inserted);
+            assert!(placed.set());
             peer.push();
             placed.push();
             assert_eq!(lane.pop_front().map(|entry| entry.get()), Some(1));
@@ -245,10 +238,7 @@ fn stripes_share_allocation() {
     );
     assert_eq!(
         mem::size_of::<
-            round::Snapshot<
-                &'static mut round::Lanes<[cell::Cell<u64>; 3], GROUPS>,
-                round::Idle<false>,
-            >,
+            round::Snapshot<&'static mut round::Lanes<[cell::Cell<u64>; 3], GROUPS>, round::Idle>,
         >(),
         2 * mem::size_of::<usize>()
     );
@@ -257,7 +247,7 @@ fn stripes_share_allocation() {
             Option<
                 round::Snapshot<
                     &'static mut round::Lanes<[cell::Cell<u64>; 3], GROUPS>,
-                    round::Idle<false>,
+                    round::Idle,
                 >,
             >,
         >(),
@@ -289,16 +279,14 @@ fn stripes_share_allocation() {
     let group1 = queue.group::<1>();
 
     let ((), alloc) = Tracker::measure(|| {
-        use round::Insertion::{Inserted, Present};
-
         for (index, expected) in [
-            (0, Inserted),
-            (0, Present),
-            (1, Inserted),
-            (2, Inserted),
-            (3, Inserted),
-            (4, Inserted),
-            (4, Present),
+            (0, true),
+            (0, false),
+            (1, true),
+            (2, true),
+            (3, true),
+            (4, true),
+            (4, false),
         ] {
             assert!(places[index].set() == expected);
         }
@@ -310,6 +298,8 @@ fn stripes_share_allocation() {
             Some(0)
         );
         assert_eq!(group0.active().map(|turn| turn.lane()), Some(5));
+        places[1].push();
+        assert_eq!(group0.active().map(|turn| turn.lane()), Some(0));
         assert_eq!(
             lane5.pop_front().map(|slot| slot[0].get() as usize),
             Some(1)
@@ -356,7 +346,6 @@ fn dequeue_advances_lane() {
             .try_lane(0)
             .expect("destination")
             .set()
-            == round::Insertion::Inserted
     );
     assert!(
         queue
@@ -365,7 +354,6 @@ fn dequeue_advances_lane() {
             .try_lane(1)
             .expect("destination")
             .set()
-            == round::Insertion::Inserted
     );
     assert_eq!(queue.group::<0>().active().map(|turn| turn.lane()), Some(0));
     let mut selected = round::Lane::try_new(&mut queue, 0).expect("lane");

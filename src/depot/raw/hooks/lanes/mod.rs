@@ -1,36 +1,7 @@
-use std::marker;
-
-use crate::{
-    depot::queue::{
-        indexed::{lanes, lanes::runtime},
-        links, tagged,
-    },
-    mem::{Lease, lease},
+use crate::depot::queue::{
+    indexed::{lanes, lanes::runtime},
+    links, tagged,
 };
-
-// SAFETY: the private payload-store contract couples live hooks and initialized values.
-unsafe impl<E: crate::depot::raw::TagEntry> crate::depot::raw::TagFinish<E> for lanes::Rollback
-where
-    E::Store: LaneStore,
-{
-    type Storage = Lease<LaneUndo<E>, lease::Open>;
-
-    fn new(entry: E) -> Self::Storage {
-        Lease::open(LaneUndo(marker::PhantomData), entry)
-    }
-
-    fn entry(storage: &Self::Storage) -> &E {
-        storage.item()
-    }
-
-    fn entry_mut(storage: &mut Self::Storage) -> &mut E {
-        storage.item_mut()
-    }
-
-    fn into_inner(storage: Self::Storage) -> E {
-        storage.into_parts().1
-    }
-}
 
 // SAFETY: construction initializes all nodes from the retained shape and inseparable N heads.
 unsafe impl<T, const N: usize, C: crate::depot::raw::Count> crate::depot::raw::TagStore
@@ -54,7 +25,6 @@ unsafe impl<T, const N: usize, C: crate::depot::raw::Count> crate::depot::raw::L
     for lanes::Fifo<T, N, C>
 {
     type Item = T;
-    type Publish<E: crate::depot::raw::TagEntry<Store = Self>> = lanes::Rollback;
     fn nodes(&self) -> &[lanes::Value<T>] {
         &self.nodes
     }
@@ -95,7 +65,6 @@ unsafe impl<T, C: crate::depot::raw::Count, L: crate::depot::raw::Count, H: tagg
     crate::depot::raw::LaneStore for runtime::Fifo<T, C, L, H>
 {
     type Item = T;
-    type Publish<E: crate::depot::raw::TagEntry<Store = Self>> = ();
     fn nodes(&self) -> &[lanes::Value<T>] {
         self.block.as_ref()
     }

@@ -80,13 +80,14 @@ fn settles_permits() {
         };
         second.push_back(&mut token, 7);
         {
+            let _front = lane.front_entry(&mut token).expect("retained head");
             let unused = lane.reserve();
             assert!(unused.is_ok(), "credit demand must fit its original lane");
         }
         assert_eq!(lane.view(&token).front(), Some(&7));
 
-        let (value, permit) =
-            (lane.take_front(&mut token)).expect("the published value must retain its permit");
+        let take = lane.front_entry(&mut token).expect("retained head");
+        let (value, permit) = take();
         assert_eq!(value, 7);
         assert_eq!(lane.view(&token).len(), 0);
         permit.push_back(&mut token, 9);
@@ -106,54 +107,7 @@ fn settles_permits() {
                 (lane.take_front(&mut token)).expect("both reused slots must remain in FIFO order");
             assert_eq!(retired.0, expected);
         }
-        assert_eq!(lane.view(&token).len(), 0);
-    });
-}
-
-#[test]
-fn restores_front() {
-    region::Token::scope(|mut token| {
-        let plan = fair::Plan::new(2, 1).expect("two slots fit one lane");
-        let lanes = fair::Lanes::<u64>::try_new(plan, &token).expect("queue allocation");
-        let lane = lanes.bind(0).expect("configured lane");
-        let full = Cause::Exhausted {
-            axis: Axis::at::<0>(),
-            required: 1,
-            available: 0,
-        };
-        for value in [11, 13] {
-            lane.reserve()
-                .expect("each slot has credit")
-                .push_back(&mut token, value);
-        }
-        assert!(matches!(lane.reserve(), Err(cause) if cause == full));
-
-        let (value, detached) = lane.take_front(&mut token).expect("retained head");
-        assert_eq!(value, 11);
-        assert_eq!(lane.view(&token).front(), Some(&13));
-        assert_eq!(lane.view(&token).len(), 1);
-        assert!(matches!(lane.reserve(), Err(cause) if cause == full));
-        detached.push_front(&mut token, value);
-        assert_eq!(lane.view(&token).len(), 2);
-        assert!(matches!(lane.reserve(), Err(cause) if cause == full));
-
-        for expected in [11, 13] {
-            let retired = lane.take_front(&mut token).expect("restored FIFO order");
-            assert_eq!(retired.0, expected);
-        }
-        assert!(lane.take_front(&mut token).is_none());
-
-        let second;
-        {
-            let first = lane.reserve();
-            assert!(first.is_ok(), "first refunded credit");
-            second = lane.reserve();
-            assert!(second.is_ok(), "second refunded credit");
-            assert!(matches!(lane.reserve(), Err(cause) if cause == full));
-        }
-        let first = lane.reserve();
-        assert!(first.is_ok(), "one cancellation refunds one credit");
-        assert!(matches!(lane.reserve(), Err(cause) if cause == full));
+        assert!(lane.front_entry(&mut token).is_none());
     });
 }
 

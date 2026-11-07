@@ -14,11 +14,7 @@ use crate::depot::{
 
 mod bounds;
 
-/// Exact-value equality governs rescheduling within each physical slot.
-#[derive(Debug)]
-pub enum Policy {}
-
-impl<T: Copy + Eq, I: crate::depot::raw::Compact> fifo::List<T, I, exact::Policy> {
+impl<T: Copy + Eq, I: crate::depot::raw::Compact> fifo::List<T, I> {
     /// Admits a bounded pass before acquiring its context; every visit retains its exact slot.
     pub fn try_sweep<C, E, B>(
         &mut self,
@@ -70,7 +66,7 @@ impl<T: Copy + Eq, I: crate::depot::raw::Compact> fifo::List<T, I, exact::Policy
 /// One admitted identity retaining exclusive access to its original FIFO.
 #[must_use]
 pub struct Entry<'a, T: Copy + Eq, I: crate::depot::raw::Compact = u32> {
-    pub(in crate::depot::queue::indexed::exact) owner: &'a mut fifo::List<T, I, exact::Policy>,
+    pub(in crate::depot::queue::indexed::exact) owner: &'a mut fifo::List<T, I>,
     pub(in crate::depot::queue::indexed::exact) index: I,
 }
 
@@ -89,8 +85,8 @@ impl<'a, T: Copy + Eq, I: crate::depot::raw::Compact> Entry<'a, T, I> {
         self.slot().replace::<true>(value);
     }
 
-    fn slot(&mut self) -> fifo::NodeEntry<'_, T, links::Chain<u32>> {
-        let store = &self.owner.store.nodes;
+    fn slot(&mut self) -> fifo::NodeEntry<'_, T> {
+        let store = &self.owner.store;
         // SAFETY: admission retained this exact owner and represented identity.
         let index = unsafe { links::Index::new_usize(self.index.into_raw() as usize) };
         unsafe { store.at(index) }
@@ -114,4 +110,4 @@ const _: () = {
 };
 
 /// The source context and FIFO loan retain one admitted identity.
-type Admission<'a, T, I, C> = Live<(&'a mut fifo::List<T, I, exact::Policy>, C), I>;
+type Admission<'a, T, I, C> = Live<(&'a mut fifo::List<T, I>, C), I>;

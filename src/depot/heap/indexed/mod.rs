@@ -20,7 +20,6 @@ mod entry;
 mod error;
 pub mod resident;
 mod slot;
-pub use slot::Slot;
 
 /// The retained source proves this exact heap slot is vacant.
 pub struct Empty;
@@ -130,10 +129,6 @@ unsafe impl<P: Ord, C: alloc::raw::Extent> heap::raw::Store for Min<P, C> {
     type Position = u32;
     type Storage = heap::Capacity<heap::Stored<heap::Direct, P>, u32, (), C>;
     type Extra = ();
-
-    fn precedes(_: &Self::Key, _: &Self::Key) -> bool {
-        false
-    }
 
     fn storage(&self) -> &alloc::raw::Block<Self::Storage, u32, Self::Extra> {
         &self.storage

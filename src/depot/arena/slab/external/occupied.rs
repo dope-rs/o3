@@ -4,8 +4,8 @@ use crate::depot::arena::slab;
 
 /// An exclusive logical identity projection of an initialized native slot.
 pub struct Occupied<B, Tag = (), const ROOT: bool = true> {
-    pub(in crate::depot::arena::slab) entry: B,
-    pub(in crate::depot::arena::slab) tag: marker::PhantomData<fn() -> Tag>,
+    pub(in crate::depot) entry: B,
+    pub(in crate::depot) tag: marker::PhantomData<fn() -> Tag>,
 }
 
 impl<B, Tag, const ROOT: bool> From<slab::Occupied<B, Tag, ROOT>> for Occupied<B, Tag, ROOT> {

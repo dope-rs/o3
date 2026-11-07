@@ -1,4 +1,4 @@
-use std::{cell, marker, num::NonZero};
+use std::{cell::Cell, marker, num::NonZero};
 
 use crate::{
     alloc,
@@ -8,7 +8,6 @@ use crate::{
 
 pub struct Lanes<'d, T, S = ()> {
     pub(super) inner: QueueBlock<T, fair::State<S>, NonZero<u32>>,
-    pub(super) shared: cell::Cell<capacity::Count>,
     domain: marker::PhantomData<*mut &'d region::Token<region::Identity<'d>>>,
 }
 
@@ -20,14 +19,17 @@ impl<'d, T, S> Lanes<'d, T, S> {
     where
         S: Default,
     {
-        let shared = capacity::Count::new(plan.slots.raw() - plan.lanes.get());
         let inner = QueueBlock::try_with(plan.slots, plan.lanes, |index| fair::State {
             index: capacity::Count::new(index.raw()),
-            ..fair::State::default()
+            value: S::default(),
+            held: Cell::new(capacity::Count::EMPTY),
         })?;
+        inner
+            .store
+            .available
+            .set(plan.slots.raw() - plan.lanes.get());
         Ok(Self {
             inner,
-            shared: cell::Cell::new(shared),
             domain: marker::PhantomData,
         })
     }
@@ -49,4 +51,4 @@ impl<'d, T, S> Lanes<'d, T, S> {
 }
 
 const _: () =
-    assert!(std::mem::size_of::<Lanes<'static, u64>>() == 6 * std::mem::size_of::<usize>());
+    assert!(std::mem::size_of::<Lanes<'static, u64>>() == 5 * std::mem::size_of::<usize>());

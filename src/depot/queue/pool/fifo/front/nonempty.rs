@@ -14,6 +14,11 @@ pub struct Nonempty<'pool, T, const TRACK: bool = true> {
 }
 
 impl<T, const TRACK: bool> Nonempty<'_, T, TRACK> {
+    pub fn front(&self) -> &T {
+        // SAFETY: this borrow retains the sole nonempty partition's initialized head.
+        unsafe { self.fifo.arena.inner.value(self.fifo.links.head_raw()) }
+    }
+
     pub fn iter(&self) -> linked::Iter<'_, T> {
         self.fifo.iter()
     }

@@ -14,4 +14,7 @@ pub enum Release {
     Last,
 }
 
-const _: () = assert!(size_of::<Release>() == size_of::<u8>());
+const _: () = {
+    assert!(size_of::<Error>() == 0);
+    assert!(size_of::<Release>() == size_of::<u8>());
+};

@@ -10,7 +10,6 @@ use common::{
     buffer::provided::{Fixed, Input, Item},
 };
 use o3::{
-    alloc,
     buffer::{
         self,
         storage::{self, Str, provided},
@@ -121,9 +120,8 @@ fn recovers_exhaustion() {
 fn retains_admission() {
     let drops = Cell::new(Some(0));
     let count = Cell::new(Some(0));
-    let mut arena =
-        provided::Arena::<Item>::try_with(NonZero::<u32>::MIN, || Ok::<(), alloc::Error>(()))
-            .expect("the single-slot arena must allocate");
+    let mut arena = provided::Arena::<Item>::try_allocate(NonZero::<u32>::MIN)
+        .expect("the single-slot arena must allocate")(());
     let input = Input {
         buffer: Item::try_new(b"body", &drops).expect("fixture buffer must allocate"),
         converted: &count,
@@ -226,6 +224,6 @@ fn split_keeps_owned_tail() {
     assert!(tail.is_empty());
     assert!(tail.backing().is_none());
     let result = tail.try_split::<1>();
-    let cause = result.err().expect("the exhausted owner has no prefix");
+    let cause = result.expect_err("the exhausted owner has no prefix");
     assert_eq!(cause.into_parts(), (NonZero::<usize>::MIN, 0));
 }

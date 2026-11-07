@@ -11,6 +11,19 @@ pub struct Owner<'a> {
 }
 
 #[derive(Debug)]
+pub struct Order<'a>(pub &'a Cell<Option<u64>>, pub u64);
+
+impl Drop for Order<'_> {
+    fn drop(&mut self) {
+        self.0.set(
+            self.0
+                .get()
+                .and_then(|order| order.checked_mul(10)?.checked_add(self.1)),
+        );
+    }
+}
+
+#[derive(Debug)]
 pub struct Counted<C: Borrow<Cell<Option<usize>>>>(pub C);
 
 impl<C: Borrow<Cell<Option<usize>>>> Drop for Counted<C> {

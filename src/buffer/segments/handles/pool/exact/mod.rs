@@ -1,6 +1,4 @@
-use std::mem;
-
-pub(in crate::buffer) use built::Built;
+use std::{mem, num::NonZero};
 
 use crate::{
     buffer,
@@ -11,8 +9,6 @@ use crate::{
     },
     depot::arena::linked::{fifo::ends, slots},
 };
-
-mod built;
 
 /// Fresh, unaliased metadata capacity owned by one prepared build.
 pub struct Exact<T, S> {
@@ -28,26 +24,31 @@ pub(in crate::buffer) struct Writer<'a, T> {
 impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
     pub fn try_new(source: S) -> Result<Self, S::Error> {
         let count = source.count();
-        let handle = Pool::try_new(segments::Plan {
+        let parts = handles::Parts::<T>::try_new(segments::Plan {
             segments: count.into_raw() as usize,
-            chains: usize::from(count.is_many()),
+            chains: 1,
         });
-        Self::try_build(source, handle)
+        Self::try_build(source, parts)
     }
 
+    #[inline(always)]
     pub(in crate::buffer::segments) fn try_reserve(
         source: S,
         current: segments::Count,
     ) -> Result<Self, S::Error> {
-        let handle = Pool::try_reserve(current, source.count());
-        Self::try_build(source, handle)
+        let parts = handles::Parts::<T>::try_reserve(current, source.count());
+        Self::try_build(source, parts)
     }
 
+    #[inline(always)]
     fn try_build(
         source: S,
-        handle: Result<Pool<T>, crate::alloc::Error>,
+        parts: Result<handles::Parts<T>, crate::alloc::Overflow>,
     ) -> Result<Self, S::Error> {
-        let handle = match handle {
+        let handle = match parts
+            .map_err(crate::alloc::Error::from)
+            .and_then(Pool::allocate)
+        {
             Ok(handle) => handle,
             Err(error) => return Err(source.reject(error)),
         };
@@ -56,7 +57,8 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
 }
 
 impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
-    pub fn collect(self) -> S::Output
+    #[inline(always)]
+    pub fn collect(self) -> segments::Many<T>
     where
         S: buffer::raw::Sequence<T, Item = segments::Item<T>>,
     {
@@ -64,15 +66,15 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
         let mut source = source.owners();
         let nodes = handles::nodes(&handle);
         let mut writer = Writer::new(nodes);
-        for value in source.by_ref() {
+        source.0.by_ref().for_each(|value| {
             let claim = unsafe { slots::Vacant::reserve(nodes) };
             unsafe { writer.push_claim(claim, value) };
-        }
+        });
         let links = writer.into_links();
-        Self::finish(handle, links, source)
+        Self::finish(handle, links, &source.1)
     }
 
-    pub fn try_collect<E>(self) -> Result<S::Output, E>
+    pub fn try_collect<E>(self) -> Result<segments::Many<T>, E>
     where
         S: buffer::raw::Sequence<T, Item = Result<segments::Item<T>, E>>,
     {
@@ -80,49 +82,42 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
         let mut source = source.owners();
         let nodes = handles::nodes(&handle);
         let mut writer = Writer::new(nodes);
-        for value in source.by_ref() {
+        for value in source.0.by_ref() {
             let value = value?;
             let claim = unsafe { slots::Vacant::reserve(nodes) };
             unsafe { writer.push_claim(claim, value) };
         }
         let links = writer.into_links();
-        Ok(Self::finish(handle, links, source))
+        Ok(Self::finish(handle, links, &source.1))
     }
 
     fn finish(
         handle: Pool<T>,
         links: ends::Exclusive<slots::Index>,
-        total: impl buffer::raw::Total,
-    ) -> S::Output {
-        let key = match buffer::raw::Total::count(&total).kind() {
-            segments::Kind::Empty => Key::EMPTY,
-            segments::Kind::One => Key::single(links.head_raw()),
-            segments::Kind::Many(count) => {
-                let descs = handles::descriptors(&handle);
-                // SAFETY: `Exact` is constructed with one private descriptor
-                // whenever its admitted source contains at least two owners;
-                // Sequence preserves that total throughout iteration.
-                let claim =
-                    unsafe { slots::Vacant::reserve(descs) }.insert(handles::Descriptor::new(
-                        links,
-                        count.nonzero(),
-                        buffer::raw::Total::len(&total),
-                        buffer::raw::Total::resident(&total),
-                    ));
-                let key = Key::multi(claim.index());
-                unsafe { claim.publish() };
-                key
-            }
-        };
+        total: &impl buffer::raw::Total,
+    ) -> segments::Many<T> {
+        // SAFETY: Sequence preserves its admitted count of at least two owners.
+        let count = unsafe { NonZero::new_unchecked(total.count().into_raw()) };
+        let descs = handles::descriptors(&handle);
+        // SAFETY: Exact reserves one private descriptor for its admitted Sequence.
+        let claim = unsafe { slots::Vacant::reserve(descs) }.insert(handles::Descriptor {
+            links,
+            count,
+            len: total.len(),
+            resident_bytes: total.resident(),
+        });
+        let key = Key::multi(claim.index());
+        unsafe { claim.publish() };
         let mut sequence = Chain::new(handle);
         sequence.key = key;
-        buffer::raw::Assemble::finish::<S>(Built::new(sequence))
+        // SAFETY: the published descriptor owns the Sequence's at least two owners.
+        unsafe { segments::Many::new(sequence) }
     }
 }
 
 impl<T: buffer::raw::Segment> Writer<'_, T> {
     /// # Safety
-    /// `index` is an outstanding vacancy in this writer's exact node store.
+    /// `claim` is an outstanding vacancy in this writer's exact node store.
     pub(in crate::buffer::segments::handles::pool) unsafe fn push_claim(
         &mut self,
         claim: slots::Vacant<segments::Item<T>, &'_ slots::Store<segments::Item<T>>>,
@@ -150,8 +145,7 @@ impl<'a, T> Writer<'a, T> {
 impl<T> Drop for Writer<'_, T> {
     fn drop(&mut self) {
         // SAFETY: this writer owns its exact initialized node-store partition.
-        let mut links = unsafe { ends::Bound::new(self.nodes, &mut self.links) };
-        links.clear();
+        unsafe { self.links.clear(self.nodes) };
     }
 }
 

@@ -2,10 +2,7 @@
 
 use std::{cell, mem};
 
-use crate::depot::{
-    arena::pool::{self, recycle},
-    capacity,
-};
+use crate::depot::arena::pool::{self, recycle};
 
 #[derive(Debug)]
 pub struct Resident<T> {
@@ -16,16 +13,13 @@ pub struct Resident<T> {
 pub type Header<T> = recycle::Header<Resident<T>>;
 
 /// Fixed storage for locally shared immutable values.
-#[repr(transparent)]
-pub struct Store<T> {
-    block: recycle::Store<Resident<T>>,
-}
+pub type Store<T> = recycle::Store<Resident<T>>;
 
 #[derive(Debug)]
 pub struct Initialized;
 
-impl<T> Resident<T> {
-    const fn new() -> Self {
+impl<T> Default for Resident<T> {
+    fn default() -> Self {
         Self {
             references: crate::mem::raw::Count::empty(),
             value: cell::UnsafeCell::new(mem::MaybeUninit::uninit()),
@@ -34,23 +28,13 @@ impl<T> Resident<T> {
 }
 
 impl<T> Store<T> {
-    pub fn try_new(capacity: capacity::Count) -> Result<Self, crate::alloc::Error> {
-        Ok(Self {
-            block: recycle::Store::try_from_fn(capacity, |_| Resident::new())?,
-        })
-    }
-
-    pub fn vacancies(&self) -> &Header<T> {
-        self.block.vacancies()
-    }
-
-    pub fn vacancy(&self) -> Option<pool::Vacant<'_, Resident<T>, Header<T>>> {
+    pub fn vacancy(&self) -> Option<pool::Vacant<'_, Resident<T>>> {
         self.vacancies().vacancy()
     }
 }
 
 impl<T> Header<T> {
-    pub fn vacancy(&self) -> Option<pool::Vacant<'_, Resident<T>, Header<T>>> {
+    pub fn vacancy(&self) -> Option<pool::Vacant<'_, Resident<T>>> {
         pool::Vacant::new(self)
     }
 }
@@ -59,39 +43,31 @@ const _: () = {
     assert!(mem::size_of::<Store<()>>() == mem::size_of::<usize>());
     assert!(mem::size_of::<&'static Header<()>>() == mem::size_of::<usize>());
     assert!(mem::size_of::<Option<&'static Header<()>>>() == mem::size_of::<usize>());
+    assert!(mem::size_of::<pool::Vacant<'static, Resident<()>>>() == 2 * mem::size_of::<usize>());
     assert!(
-        mem::size_of::<pool::Vacant<'static, Resident<()>, Header<()>>>()
+        mem::size_of::<Option<pool::Vacant<'static, Resident<()>>>>()
             == 2 * mem::size_of::<usize>()
     );
+    assert!(mem::size_of::<pool::Unique<'static, Resident<()>>>() == mem::size_of::<usize>());
     assert!(
-        mem::size_of::<Option<pool::Vacant<'static, Resident<()>, Header<()>>>>()
-            == 2 * mem::size_of::<usize>()
-    );
-    assert!(
-        mem::size_of::<pool::Unique<'static, Resident<()>, Header<()>>>()
+        mem::size_of::<pool::Unique<'static, Resident<()>, (), Initialized>>()
             == mem::size_of::<usize>()
     );
     assert!(
-        mem::size_of::<pool::Unique<'static, Resident<()>, Header<()>, Initialized>>()
+        mem::size_of::<Option<pool::Unique<'static, Resident<()>, (), Initialized>>>()
             == mem::size_of::<usize>()
     );
+    assert!(mem::size_of::<pool::Shared<'static, ()>>() == mem::size_of::<usize>());
+    assert!(mem::size_of::<Option<pool::Shared<'static, ()>>>() == mem::size_of::<usize>());
     assert!(
-        mem::size_of::<Option<pool::Unique<'static, Resident<()>, Header<()>, Initialized>>>()
-            == mem::size_of::<usize>()
-    );
-    assert!(
-        mem::size_of::<pool::Shared<'static, Resident<()>, Header<()>, Initialized>>()
-            == mem::size_of::<usize>()
-    );
-    assert!(
-        mem::size_of::<Option<pool::Shared<'static, Resident<()>, Header<()>, Initialized>>>()
-            == mem::size_of::<usize>()
+        mem::size_of::<Result<pool::Shared<'static, ()>, crate::mem::rc::Error>>()
+            == mem::size_of::<pool::Shared<'static, ()>>()
     );
 };
 
 // SAFETY: this policy is installed only after the resident value is initialized.
-unsafe impl<T> crate::depot::raw::PoolPolicy<Resident<T>, Header<T>> for Initialized {
-    fn retire(mut entry: pool::Terminal<'_, Resident<T>, Header<T>>) {
+unsafe impl<T> crate::depot::raw::PoolPolicy<Resident<T>, ()> for Initialized {
+    fn retire(mut entry: pool::Terminal<'_, Resident<T>>) {
         // SAFETY: this policy is installed only after the resident value is initialized.
         unsafe { (*entry.get_mut().value.get()).assume_init_drop() };
         entry.recycle();

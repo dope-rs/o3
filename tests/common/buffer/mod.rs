@@ -4,11 +4,12 @@ use o3::{
     buffer::{
         self,
         bytes::scope,
+        raw::Chunks as _,
         resident::{
             self,
             staging::{self, reserve},
         },
-        segments::{self, scatter::Source as _},
+        segments,
         storage::{self, range},
         write::{
             Sink as _,
@@ -22,6 +23,29 @@ pub mod domain;
 pub mod pool;
 pub mod provided;
 pub mod scatter;
+
+pub struct Bounds<'a> {
+    pub range: (ops::Bound<usize>, ops::Bound<usize>),
+    pub calls: &'a Cell<u16>,
+}
+
+impl ops::RangeBounds<usize> for Bounds<'_> {
+    fn start_bound(&self) -> ops::Bound<&usize> {
+        self.calls.set(self.calls.get() * 10 + 1);
+        self.range.0.as_ref()
+    }
+
+    fn end_bound(&self) -> ops::Bound<&usize> {
+        self.calls.set(self.calls.get() * 10 + 2);
+        self.range.1.as_ref()
+    }
+}
+
+impl Drop for Bounds<'_> {
+    fn drop(&mut self) {
+        self.calls.set(self.calls.get() * 10 + 3);
+    }
+}
 
 pub struct Selected<'id> {
     range: ops::Range<usize>,
@@ -73,21 +97,17 @@ impl Consume for Redirect {
     }
 }
 
-pub trait Bytes {
-    fn try_bytes(&self) -> Result<Vec<u8>, collections::TryReserveError>;
-}
+pub fn try_bytes<T: buffer::raw::Segment>(
+    chain: &segments::Chain<T>,
+) -> Result<Vec<u8>, collections::TryReserveError> {
+    use o3::buffer::raw::Scatter as _;
 
-impl<T: buffer::raw::Segment> Bytes for segments::Chain<T> {
-    fn try_bytes(&self) -> Result<Vec<u8>, collections::TryReserveError> {
-        use o3::buffer::raw::Scatter as _;
-
-        let mut output = Vec::new();
-        output.try_reserve_exact(self.len())?;
-        for chunk in self.chunks().take_bytes(usize::MAX) {
-            output.extend_from_slice(chunk.bytes());
-        }
-        Ok(output)
+    let mut output = Vec::new();
+    output.try_reserve_exact(chain.len())?;
+    for chunk in chain.chunks().take_bytes(usize::MAX) {
+        output.extend_from_slice(chunk.bytes());
     }
+    Ok(output)
 }
 
 #[derive(Debug)]
@@ -120,23 +140,14 @@ pub fn try_many(
     }
 }
 
-pub trait Fill<'a> {
-    fn try_fill(
-        &mut self,
-        values: &[&'a [u8]],
-    ) -> Result<(), mem::Rejected<resident::Shared<'a>, segments::Error>>;
-}
-
-impl<'a> Fill<'a> for segments::Chain<resident::Shared<'a>> {
-    fn try_fill(
-        &mut self,
-        values: &[&'a [u8]],
-    ) -> Result<(), mem::Rejected<resident::Shared<'a>, segments::Error>> {
-        for value in values {
-            self.try_push(resident::Shared::from(*value))?;
-        }
-        Ok(())
+pub fn try_fill<'a>(
+    chain: &mut segments::Chain<resident::Shared<'a>>,
+    values: &[&'a [u8]],
+) -> Result<(), mem::Rejected<segments::Item<resident::Shared<'a>>, segments::Error>> {
+    for value in values {
+        chain.try_push(resident::Shared::from(*value))?;
     }
+    Ok(())
 }
 
 pub struct Counted {

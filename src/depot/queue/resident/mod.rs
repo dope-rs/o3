@@ -60,22 +60,6 @@ pub enum Error {
     Overflow(alloc::Overflow),
 }
 
-/// Exact outcome of one bounded drain transition.
-#[derive(Eq, PartialEq)]
-#[must_use = "a drained item remains caller-owned"]
-pub enum Drain<T> {
-    Done,
-    Item(T),
-}
-
-/// Exact outcome of one single-item take transition.
-#[derive(Eq, PartialEq)]
-#[must_use = "a taken item remains caller-owned"]
-pub enum Take<T> {
-    Empty,
-    Item(T),
-}
-
 #[derive(Default)]
 #[repr(transparent)]
 pub struct Draining(cell::Cell<bool>);
@@ -89,18 +73,19 @@ impl Draining {
         self.0.get()
     }
 
-    pub fn drain<T, F>(&self, take: F) -> Drain<T>
+    #[must_use = "a drained item remains caller-owned"]
+    pub fn drain<T, F>(&self, take: F) -> Option<T>
     where
         F: FnOnce() -> Option<T>,
     {
         if !self.is_active() {
-            return Drain::Done;
+            return None;
         }
         let Some(value) = take() else {
             self.0.set(false);
-            return Drain::Done;
+            return None;
         };
-        Drain::Item(value)
+        Some(value)
     }
 }
 
@@ -162,6 +147,4 @@ const _: () = {
     assert!(mem::size_of::<Bounds<usize>>() == 2 * mem::size_of::<usize>());
     assert!(mem::size_of::<Error>() == 2 * mem::size_of::<usize>());
     assert!(mem::size_of::<Draining>() == mem::size_of::<bool>());
-    assert!(mem::size_of::<Drain<num::NonZero<usize>>>() == mem::size_of::<usize>());
-    assert!(mem::size_of::<Take<num::NonZero<usize>>>() == mem::size_of::<usize>());
 };

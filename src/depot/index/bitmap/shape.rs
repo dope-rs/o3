@@ -48,17 +48,41 @@ impl<W: bitmap::Width> Shape<NonZero<u32>, W> {
     }
 }
 
-impl<N: bitmap::Size, W: bitmap::Width> Shape<N, W> {
+impl<N: Copy + Into<u32>, W: bitmap::Width> Shape<N, W> {
     pub fn bits(self) -> usize {
-        self.bits.bits() as usize
+        self.bits.into() as usize
     }
 
     pub fn words(self) -> usize {
-        self.words.bits() as usize
+        self.words.into() as usize
     }
 
     pub fn fill(self, fill: bitmap::Fill) -> impl Iterator<Item = bitmap::Word<W>> {
-        bitmap::Init::new(self.bits(), fill)
+        let mut bits = self.bits();
+        let mut word = 0;
+        let mut words = bits.div_ceil(W::BITS as usize);
+        std::iter::from_fn(move || {
+            if bits == 0 {
+                return None;
+            }
+            if word == words {
+                if words == 1 {
+                    return None;
+                }
+                bits = words;
+                word = 0;
+                words = bits.div_ceil(W::BITS as usize);
+            }
+            let left = bits - word * W::BITS as usize;
+            let value = match fill {
+                bitmap::Fill::Empty => 0,
+                bitmap::Fill::Full if left >= W::BITS as usize => W::MAX.get(),
+                bitmap::Fill::Full => (1usize << left) - 1,
+            };
+            word += 1;
+            // SAFETY: a full word uses W::MAX and a partial word has fewer than W::BITS bits.
+            Some(bitmap::Word::new(unsafe { W::from_offset(value) }))
+        })
     }
 }
 

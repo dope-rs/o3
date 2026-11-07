@@ -11,8 +11,8 @@ use common::{
     depot::{
         model::drops::Block,
         queue::{
-            Sequence,
-            indexed::{DropValue, Drops, Ordinal},
+            indexed::{DropValue, drop_values, storage},
+            try_sequence,
         },
     },
 };
@@ -30,19 +30,21 @@ fn allocation_contract() {
     assert_eq!(planes::Set::<u64, 3>::ENTRY_BYTES, ENTRY_BYTES);
 
     let ((), alloc) = Tracker::measure(|| {
-        let result = planes::Set::<u64, 3>::try_seed(0, ());
+        let result = planes::Set::<u64, 3>::try_seed(0, |_| u64::default());
         let empty = result.expect("the empty plane set must be allocation-free");
         assert!(empty.is_empty());
     });
     assert_eq!(alloc, [0, 0, 0, 0]);
 
-    let (defaults, alloc) = Tracker::measure(|| planes::Set::<u64, 3>::try_seed(CAPACITY, ()));
+    let (defaults, alloc) =
+        Tracker::measure(|| planes::Set::<u64, 3>::try_seed(CAPACITY, |_| u64::default()));
     let defaults = defaults.expect("the default plane set must allocate");
     assert_eq!(alloc, [1, CAPACITY * ENTRY_BYTES, 0, 0]);
     let ((), alloc) = Tracker::measure(move || assert_eq!(defaults.len(), CAPACITY));
     assert_eq!(alloc, [0, 0, 1, CAPACITY * ENTRY_BYTES]);
 
-    let (result, alloc) = Tracker::measure(|| planes::Set::<u64, 3>::try_seed(CAPACITY, Ordinal));
+    let (result, alloc) =
+        Tracker::measure(|| planes::Set::<u64, 3>::try_seed(CAPACITY, |index| index.get() as u64));
     let mut planes = result.expect("the 257-entry plane set must allocate");
     assert_eq!(alloc, [1, CAPACITY * ENTRY_BYTES, 0, 0]);
 
@@ -79,7 +81,7 @@ fn allocation_contract() {
 
 #[test]
 fn independent_fifo_order() {
-    let seed = Sequence::try_new(10).expect("factor");
+    let seed = try_sequence(10).expect("factor");
     let result = planes::Set::<usize, 3>::try_seed(6, seed);
     let mut planes = result.expect("the six-entry plane set must allocate");
 
@@ -148,7 +150,7 @@ fn independent_fifo_order() {
 
 #[test]
 fn entry_transitions() {
-    let seed = Sequence::try_new(1).expect("factor");
+    let seed = try_sequence(1).expect("factor");
     let result = planes::Set::<usize, 3>::try_seed(4, seed);
     let mut planes = result.expect("the four-entry transition set must allocate");
     {
@@ -176,7 +178,7 @@ fn entry_transitions() {
 
 #[test]
 fn rotate_front() {
-    let seed = Sequence::try_new(1).expect("factor");
+    let seed = try_sequence(1).expect("factor");
     let result = planes::Set::<usize, 3>::try_seed(4, seed);
     let mut planes = result.expect("required fixture outcome");
     for index in [1, 3, 2] {
@@ -221,9 +223,17 @@ fn rotate_front() {
 
 #[test]
 fn growth_preserves_state() {
-    let seed = Sequence::try_new(1).expect("factor");
-    let result = planes::Set::<usize, 3>::try_seed(4, seed);
-    let mut planes = result.expect("the four-entry growth set must allocate");
+    use o3::depot::{capacity::Limit, heap::indexed};
+
+    let seed = try_sequence(1).expect("factor");
+    let mut planes: planes::Set<usize, 3, groups::Index<u64, Limit<8>, (), 1, 1>> =
+        planes::Set::<usize, 3, indexed::Min<u64, Limit<8>>>::try_seed_in::<2>(
+            Limit::fixed::<4>(),
+            seed,
+        )
+        .expect("the four-entry growth set must allocate")
+        .try_into()
+        .expect("companion rows");
     assert_eq!(planes.resolve(4), None);
     assert_eq!(planes.resolve(usize::MAX), None);
     let resolved = planes.resolve(1);
@@ -238,10 +248,12 @@ fn growth_preserves_state() {
     entry.plane::<0>().link_back();
     entry.plane::<1>().link_back();
 
-    let result = planes.try_grow_to(8, Sequence::try_new(1).expect("factor"));
-    let grown = result.expect("growth from four to eight entries must allocate");
-    assert_eq!(grown, 4..8);
-    assert_eq!(planes.len(), 8);
+    let records = groups::Index::<u64, Limit<8>, (), 1, 1>::reserve(Limit::fixed::<8>())
+        .expect("replacement rows");
+    planes
+        .try_replace::<2>(records, try_sequence(1).expect("factor"))
+        .expect("growth from four to eight entries must allocate")();
+    assert_eq!((planes.len(), planes.limit().get()), (8, 8));
     let front = planes.front_entry::<0>();
     let front = front.expect("plane zero must have a front");
     assert_eq!(front.position(), position);
@@ -256,7 +268,7 @@ fn growth_preserves_state() {
     assert!(entry.is_linked::<1>());
     let entry = planes.entry(7);
     let mut entry = entry.expect("grown entry seven must exist");
-    entry.plane::<2>().link_back();
+    entry.plane::<1>().link_back();
     assert_eq!(planes.get(7), Some(&7));
     assert_eq!(planes.resolve(8), None);
 }
@@ -264,7 +276,7 @@ fn growth_preserves_state() {
 #[test]
 fn borrowed_lifetime() {
     let owner = String::from("resident");
-    let result = planes::Set::<&str, 3>::try_seed(1, ());
+    let result = planes::Set::<&str, 3>::try_seed(1, |_| <&str>::default());
     let mut planes = result.expect("the borrowed one-entry set must allocate");
     let entry = planes.entry(0);
     let mut entry = entry.expect("entry zero must exist");
@@ -282,10 +294,18 @@ fn borrowed_lifetime() {
 
 #[test]
 fn topology_keeps_payloads() {
+    use o3::depot::{capacity::Limit, heap::indexed};
+
     let drops = Rc::new(cell::Cell::new(Some(0)));
     {
-        let result = planes::Set::<DropValue, 3>::try_seed(3, Drops(Rc::clone(&drops)));
-        let mut planes = result.expect("the three-payload topology must allocate");
+        let mut planes: planes::Set<DropValue, 3, groups::Index<u64, Limit<5>, (), 1, 1>> =
+            planes::Set::<DropValue, 3, indexed::Min<u64, Limit<5>>>::try_seed_in::<2>(
+                Limit::fixed::<3>(),
+                drop_values(Rc::clone(&drops)),
+            )
+            .expect("the three-payload topology must allocate")
+            .try_into()
+            .expect("companion rows");
 
         let entry = planes.entry(0);
         let mut entry = entry.expect("entry zero must exist");
@@ -300,10 +320,12 @@ fn topology_keeps_payloads() {
         planes.clear::<2>();
         assert_eq!(drops.get(), Some(0));
 
-        let result = planes.try_grow_to(5, Drops(Rc::clone(&drops)));
-        let grown = result.expect("growth from three to five payloads must allocate");
-        assert_eq!(grown, 3..5);
-        assert_eq!(planes.len(), 5);
+        let records = groups::Index::<u64, Limit<5>, (), 1, 1>::reserve(Limit::fixed::<5>())
+            .expect("replacement rows");
+        planes
+            .try_replace::<2>(records, drop_values(Rc::clone(&drops)))
+            .expect("growth from three to five payloads must allocate")();
+        assert_eq!((planes.len(), planes.limit().get()), (5, 5));
         assert_eq!(drops.get(), Some(0));
     }
     assert_eq!(drops.get(), Some(5));
@@ -372,14 +394,14 @@ fn scoped_resident_reuses() {
         groups::Index<u64, Limit<4>, u64, 2, 4>,
     > = planes::Set::<Storage<Owner<'_>, usize>, 3, indexed::Min<u64, Limit<4>>>::try_seed_in::<0>(
         Limit::fixed::<3>(),
-        Ordinal,
+        storage,
     )
     .expect("physical rows")
     .try_into()
     .expect("reset rows");
     let records = groups::Index::<u64, Limit<4>, u64, 2, 4>::reserve(Limit::fixed::<1>())
         .expect("smaller active prefix");
-    set.try_replace::<0>(records, Ordinal)
+    set.try_replace::<0>(records, storage)
         .expect("retained physical rows")();
     assert_eq!((set.len(), set.limit().get(), set.len_in::<0>()), (3, 1, 1));
     let ((), activity) = Tracker::measure(|| {
@@ -442,7 +464,7 @@ fn abandoned_resize_keeps() {
         let next = Limit::<4>::new(next).expect("new prefix");
         let mut set: planes::Set<_, 3, groups::Index<u64, Limit<4>, u64, 2, 4>> =
             planes::Set::<Storage<u8, usize>, 3, indexed::Min<u64, Limit<4>>>::try_seed_in::<0>(
-                old, Ordinal,
+                old, storage,
             )
             .expect("physical rows")
             .try_into()
@@ -450,7 +472,7 @@ fn abandoned_resize_keeps() {
         let records =
             groups::Index::<u64, Limit<4>, u64, 2, 4>::reserve(next).expect("replacement rows");
         drop(
-            set.try_replace::<0>(records, Ordinal)
+            set.try_replace::<0>(records, storage)
                 .expect("staged resize"),
         );
         assert_eq!(

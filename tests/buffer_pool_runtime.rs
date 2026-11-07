@@ -54,10 +54,9 @@ fn prefix_keeps_spare() {
             let mut edit = lease.try_prefix::<2>(1).expect("interior prefix fits");
             edit.prefix().copy_from_slice(b"XY");
             edit.write_slice(b"gh").expect("staged bytes fit");
-            let result = edit.write_slice(b"too-long");
-            let error = result
-                .err()
-                .expect("staged suffix exceeds the remaining spare capacity");
+            let error = edit
+                .write_slice(b"too-long")
+                .expect_err("staged suffix exceeds the remaining spare capacity");
             let (required, spare) = error.into_parts();
             assert_eq!((required.get(), spare), (8, 4));
             assert_eq!(edit.len(), 2);
@@ -90,10 +89,9 @@ fn prefix_keeps_spare() {
 #[test]
 fn copies_with_ownership() {
     let pool = (pool::Pool::try_new(1, 4)).expect("the single-slot copy pool must allocate");
-    let result = pool.try_copy(b"large");
-    let error = result
-        .err()
-        .expect("a five-byte source must not fit the four-byte slot");
+    let error = pool
+        .try_copy(b"large")
+        .expect_err("a five-byte source must not fit the four-byte slot");
     assert_eq!(
         {
             let (required, spare) = error.into_parts();
@@ -193,16 +191,6 @@ fn builds_from_layout() {
     assert_eq!(second.available(), 2);
     assert_eq!(first.capacity().get(), 32);
     assert_eq!(second.capacity().get(), 32);
-}
-
-#[test]
-fn keeps_compact_layouts() {
-    use std::mem::size_of;
-
-    assert_eq!(
-        size_of::<pool::Span<pool::owners::Plain<pool::Layout>, pool::Owned, pool::Frozen>>(),
-        2 * size_of::<usize>()
-    );
 }
 
 #[test]

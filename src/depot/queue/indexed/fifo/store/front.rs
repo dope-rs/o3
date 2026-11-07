@@ -1,14 +1,14 @@
-use crate::depot::queue::{indexed::fifo, links};
+use crate::depot::queue::indexed::fifo;
 /// The live head retained under its exact FIFO's unchanged borrow.
 #[must_use = "a front capability retains its exact FIFO head"]
 pub(in crate::depot::queue::indexed) struct Front<'a, T> {
-    entry: fifo::NodeEntry<'a, T, links::Chain<u32>>,
+    entry: fifo::NodeEntry<'a, T>,
 }
 
 impl<'a, T> Front<'a, T> {
     /// # Safety
     /// `entry` remains this store's live head for the capability's lifetime.
-    pub(super) const unsafe fn new(entry: fifo::NodeEntry<'a, T, links::Chain<u32>>) -> Self {
+    pub(super) const unsafe fn new(entry: fifo::NodeEntry<'a, T>) -> Self {
         Self { entry }
     }
 
@@ -17,9 +17,7 @@ impl<'a, T> Front<'a, T> {
         unsafe { (*node.value.get()).assume_init_ref() }
     }
 
-    pub(in crate::depot::queue::indexed) fn take(
-        self,
-    ) -> (fifo::NodeEntry<'a, T, links::Chain<u32>>, T) {
+    pub(in crate::depot::queue::indexed) fn take(self) -> (fifo::NodeEntry<'a, T>, T) {
         let store = self.entry.store();
         // SAFETY: this capability retains the store's unchanged live head.
         crate::depot::raw::Removal::commit(unsafe {

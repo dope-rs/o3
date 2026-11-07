@@ -15,7 +15,7 @@ use o3::{
         hold::ranges,
         resident::{self, copy},
         segments,
-        storage::{self, Shared, provided},
+        storage::{self, Shared},
         write::consume::Consume as _,
     },
 };
@@ -149,38 +149,6 @@ fn admitted_owner() {
     assert_eq!(activity, [0; 4]);
     assert_eq!(owner.as_ref(), b"bounded");
     assert_eq!(owner.as_ref().as_ptr(), pointer);
-}
-
-#[test]
-fn rejection_layout() {
-    use std::mem::{align_of, size_of};
-
-    assert_eq!(
-        size_of::<Result<bounded::Value<Vec<u8>>, bounded::Rejected<Vec<u8>>>>(),
-        size_of::<Result<bounded::Value<Vec<u8>>, Vec<u8>>>(),
-    );
-    assert_eq!(
-        size_of::<Result<bounded::Value<&[u8]>, bounded::Rejected<&[u8]>>>(),
-        size_of::<Result<bounded::Value<&[u8]>, &[u8]>>(),
-    );
-    assert_eq!(
-        size_of::<
-            Result<
-                bounded::Value<storage::Shared<provided::Owner<'_>>>,
-                bounded::Rejected<storage::Shared<provided::Owner<'_>>>,
-            >,
-        >(),
-        size_of::<
-            Result<
-                bounded::Value<storage::Shared<provided::Owner<'_>>>,
-                storage::Shared<provided::Owner<'_>>,
-            >,
-        >(),
-    );
-    assert_eq!(
-        align_of::<bounded::Rejected<Vec<u8>>>(),
-        align_of::<Vec<u8>>()
-    );
 }
 
 #[test]

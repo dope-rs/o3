@@ -150,7 +150,11 @@ impl<Q: map::raw::Query> Probe<Q> {
         let mut scan = Scan::<_, true>::new(owner.table(), hash);
         loop {
             if let map::Entry::Vacant(bucket) = scan.next() {
-                return map::Vacancy::new(map::raw::Bucket { owner, bucket }).with_phase(hash);
+                return map::Vacancy {
+                    owner,
+                    bucket,
+                    phase: hash,
+                };
             }
         }
     }
@@ -161,22 +165,25 @@ impl<Q: map::raw::Query> Probe<Q> {
         owner: Q,
         hash: u64,
         matches: impl Fn(&Q::Value) -> bool,
-    ) -> map::Entry<map::Found<Q>, map::Vacancy<Q, u64>> {
+    ) -> Result<map::Vacancy<Q, u64>, Q::Occupied> {
         let mut scan = Scan::<_, true>::new(owner.table(), hash);
         loop {
             let bucket = match scan.next() {
                 map::Entry::Occupied(bucket) => bucket,
                 map::Entry::Vacant(bucket) => {
-                    return map::Entry::Vacant(
-                        map::Vacancy::new(map::raw::Bucket { owner, bucket }).with_phase(hash),
-                    );
+                    return Ok(map::Vacancy {
+                        owner,
+                        bucket,
+                        phase: hash,
+                    });
                 }
             };
-            if matches(Q::value(map::Found::new(map::raw::Bucket {
+            if matches(Q::value(map::Found {
                 owner: &owner,
                 bucket,
-            }))) {
-                return map::Entry::Occupied(map::Found::new(map::raw::Bucket { owner, bucket }));
+            })) {
+                drop(matches);
+                return Err(Q::occupied(map::Found { owner, bucket }));
             }
         }
     }
@@ -190,13 +197,13 @@ impl<Q: map::raw::Query> Probe<Q> {
     ) -> map::Found<Q> {
         let bucket = unsafe {
             map::raw::member(owner.table(), hash, |bucket| {
-                matches(Q::value(map::Found::new(map::raw::Bucket {
+                matches(Q::value(map::Found {
                     owner: &owner,
                     bucket,
-                })))
+                }))
             })
         };
-        map::Found::new(map::raw::Bucket { owner, bucket })
+        map::Found { owner, bucket }
     }
 
     pub(crate) fn new(owner: Q, hash: u64, matches: impl Fn(&Q::Value) -> bool) -> Self {
@@ -225,12 +232,7 @@ impl<Q: map::raw::Query> Probe<Q> {
         hash: u64,
         matches: &impl Fn(&Q::Value) -> Result<bool, E>,
     ) -> Result<State, E> {
-        let matches = |bucket| {
-            matches(Q::value(map::Found::new(map::raw::Bucket {
-                owner,
-                bucket,
-            })))
-        };
+        let matches = |bucket| matches(Q::value(map::Found { owner, bucket }));
         if Q::SPARE {
             map::raw::scan::<_, _, true>(owner.table(), hash, matches)
         } else {
@@ -242,10 +244,7 @@ impl<Q: map::raw::Query> Probe<Q> {
         let State::Occupied(bucket) = Self::scan(&owner, hash, &matches) else {
             return None;
         };
-        Some(Q::occupied(map::Found::new(map::raw::Bucket {
-            owner,
-            bucket,
-        })))
+        Some(Q::occupied(map::Found { owner, bucket }))
     }
 
     pub(crate) fn try_find<E>(
@@ -256,27 +255,23 @@ impl<Q: map::raw::Query> Probe<Q> {
         let State::Occupied(bucket) = Self::try_scan(&owner, hash, &matches)? else {
             return Ok(None);
         };
-        Ok(Some(Q::occupied(map::Found::new(map::raw::Bucket {
-            owner,
-            bucket,
-        }))))
+        Ok(Some(Q::occupied(map::Found { owner, bucket })))
     }
 }
 
 impl<Q: map::raw::Insertion> Probe<Q> {
     pub(crate) fn entry(self) -> map::Entry<Q::Occupied, Option<Q::Vacant>> {
         match self.state {
-            State::Occupied(bucket) => {
-                map::Entry::Occupied(Q::occupied(map::Found::new(map::raw::Bucket {
-                    owner: self.owner,
-                    bucket,
-                })))
-            }
+            State::Occupied(bucket) => map::Entry::Occupied(Q::occupied(map::Found {
+                owner: self.owner,
+                bucket,
+            })),
             State::Vacant(bucket) => map::Entry::Vacant(Q::vacant(
-                map::Vacancy::new(map::raw::Bucket {
+                map::Vacancy {
                     owner: self.owner,
                     bucket,
-                }),
+                    phase: (),
+                },
                 self.hash,
             )),
             State::Full => map::Entry::Vacant(None),
@@ -291,7 +286,11 @@ impl<Q: map::raw::Insertion> Probe<Q> {
         match Self::scan(&owner, hash, &matches) {
             State::Occupied(_) => map::Entry::Occupied(()),
             State::Vacant(bucket) => map::Entry::Vacant(Q::vacant(
-                map::Vacancy::new(map::raw::Bucket { owner, bucket }),
+                map::Vacancy {
+                    owner,
+                    bucket,
+                    phase: (),
+                },
                 hash,
             )),
             State::Full => map::Entry::Vacant(None),
@@ -309,23 +308,3 @@ const _: () = {
             == size_of::<(&map::flat::Table<u64>, u64, u64)>()
     );
 };
-
-/// Owns a nonempty directory with at least one vacant bucket until consumed.
-/// # Safety
-/// The retained owner must keep at least one vacant bucket throughout probing and transfer that same vacancy into the returned insertion capability.
-pub(crate) unsafe trait Spare: map::raw::Query {
-    fn try_reserve<Q: Eq + ?Sized>(
-        self,
-        hash: u64,
-        key: &Q,
-    ) -> Result<map::Vacancy<Self, u64>, Self::Occupied>
-    where
-        Self::Value: AsRef<Q>,
-    {
-        // SAFETY: this consumed admission retains the same spare directory through probing.
-        match unsafe { Probe::spare(self, hash, |value| value.as_ref() == key) } {
-            map::Entry::Occupied(entry) => Err(Self::occupied(entry)),
-            map::Entry::Vacant(entry) => Ok(entry),
-        }
-    }
-}

@@ -1,44 +1,45 @@
-use std::num;
+use std::{mem, num};
 
-/// One exact policy charge request.
-#[derive(Debug)]
-pub struct Debit<P: crate::buffer::raw::Policy> {
-    seed: P::Seed,
-    amount: num::NonZero<u32>,
-}
+use crate::buffer::{resident, write::consume};
 
-impl<P: crate::buffer::raw::Policy> Debit<P> {
-    pub(in crate::buffer) const fn new(seed: P::Seed, amount: num::NonZero<u32>) -> Self {
-        Self { seed, amount }
-    }
+pub(in crate::buffer) type Debit<P> = crate::mem::Lease<Refund<P>>;
 
-    pub(in crate::buffer) fn grow(policy: &P, amount: num::NonZero<u32>) -> Self {
-        Self::new(policy.seed(), amount)
-    }
+pub(in crate::buffer) struct Refund<P: crate::buffer::raw::Policy>(P);
 
-    pub(in crate::buffer) const fn amount(&self) -> num::NonZero<u32> {
-        self.amount
-    }
+impl<P: crate::buffer::raw::Policy> crate::mem::Return for Refund<P> {
+    type Item = num::NonZero<u32>;
 
-    pub(in crate::buffer) const fn seed(&self) -> P::Seed {
-        self.seed
+    fn return_item(self, amount: Self::Item) {
+        // SAFETY: only acquired debits construct this private sink, and the
+        // sealed lease transfers its unchanged amount exactly once.
+        unsafe { self.0.refund(amount) };
     }
 }
 
-pub trait Token<P: crate::buffer::raw::Policy>: Sized {
-    fn debit(&self) -> &Debit<P>;
-
-    fn commit(self) -> (P, num::NonZero<u32>);
-}
-
-impl Token<()> for Debit<()> {
-    fn debit(&self) -> &Self {
-        self
+impl<P: crate::buffer::raw::Policy> crate::mem::Lease<Refund<P>> {
+    pub(in crate::buffer) fn try_new(
+        policy: P,
+        amount: num::NonZero<u32>,
+    ) -> Result<Self, P::Failure> {
+        policy.try_acquire(amount)?;
+        Ok(Self::new(Refund(policy), amount))
     }
 
-    fn commit(self) -> ((), num::NonZero<u32>) {
-        (self.seed, self.amount)
+    pub(in crate::buffer) fn commit(self) -> P {
+        mem::ManuallyDrop::new(self).sink().0
+    }
+}
+
+impl<'d> crate::mem::Lease<Refund<resident::Budget<'d>>> {
+    pub(in crate::buffer) fn try_from_charge(
+        charge: resident::Charge<'d>,
+    ) -> Result<Option<Self>, consume::Error> {
+        consume::Error::check(charge.capacity(), u32::MAX as usize)?;
+        let charge = mem::ManuallyDrop::new(charge);
+        Ok(num::NonZero::new(charge.capacity() as u32)
+            .map(|amount| Self::new(Refund(charge.budget()), amount)))
     }
 }
 
 const _: () = assert!(size_of::<Debit<()>>() == size_of::<num::NonZero<u32>>());
+const _: () = assert!(size_of::<Debit<resident::Budget<'static>>>() == size_of::<usize>() * 2);

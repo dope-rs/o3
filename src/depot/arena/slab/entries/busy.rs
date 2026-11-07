@@ -20,26 +20,18 @@ pub struct Busy<
     const PARTITIONS: usize = 1,
     P = (),
     S = storage::Heap,
-    I = storage::Eager,
 > where
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot) plane: marker::PhantomData<fn(P) -> P>,
-    pub(in crate::depot) core: &'a entries::Core<T, MAX, M, PARTITIONS, S, I>,
-    pub(in crate::depot) slot: &'a crate::depot::raw::SlabSlot<
-        T,
-        key::Generation<MAX>,
-        M::Busy,
-        <M::Cycle as Policy>::Retired,
-    >,
+    pub(in crate::depot) core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
+    pub(in crate::depot) slot: &'a storage::Slot<T, MAX, M>,
 }
 
-impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S, I>
-    Busy<'a, T, MAX, M, PARTITIONS, P, S, I>
+impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S>
+    Busy<'a, T, MAX, M, PARTITIONS, P, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot) fn index(&self) -> u32 {
         // SAFETY: both constructors retain a slot borrowed from this core's allocation.
@@ -47,7 +39,7 @@ where
     }
 
     pub(in crate::depot) fn generation(&self) -> key::Generation<MAX> {
-        self.slot.generation.get()
+        <M::Cycle as Policy>::generation(self.slot.generation.get())
     }
 
     pub(in crate::depot) fn value(&self) -> &T {
@@ -101,17 +93,16 @@ where
     }
 }
 
-impl<'a, T, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, P, S, I>
-    Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, P, S, I>
+impl<'a, T, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, P, S>
+    Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, P, S>
 where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot) fn withdraw(
         self,
     ) -> (
-        entries::Pending<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, P, S, I>,
+        entries::Pending<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, P, S>,
         T,
     ) {
         // SAFETY: this Exclusive guard owns the initialized slot's sole take authority.
@@ -129,12 +120,6 @@ where
         )
     }
 
-    pub(in crate::depot) fn read<Q>(
-        live: crate::depot::raw::Proof<(&Self, links::Index), Initialized<Q>>,
-    ) -> &T {
-        Self::project(live).1
-    }
-
     pub(in crate::depot) fn project<Q>(
         live: crate::depot::raw::Proof<(&Self, links::Index), Initialized<Q>>,
     ) -> (key::Generation<MAX>, &T) {
@@ -142,7 +127,10 @@ where
         // SAFETY: Live retains an initialized slot in this exact core and a shared
         // reborrow of the root guard's exclusive loan through the returned reference.
         let slot = unsafe { slots.get_unchecked(live.key().get()) };
-        (slot.generation.get(), unsafe { slot.value() })
+        (
+            <cycle::Mode<RECYCLE> as Policy>::generation(slot.generation.get()),
+            unsafe { slot.value() },
+        )
     }
 
     pub(in crate::depot) fn into_mut(self) -> &'a mut T {
@@ -153,16 +141,17 @@ where
 
     pub(in crate::depot) fn replace(mut self, next: key::Generation<MAX>, value: T) -> (Self, T) {
         let prior = mem::replace(self.value_mut(), value);
-        self.slot.generation.set(next);
+        self.slot
+            .generation
+            .set(<cycle::Mode<RECYCLE> as Policy>::stored(next));
         (self, prior)
     }
 }
 
-impl<T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S, I> Drop
-    for Busy<'_, T, MAX, M, PARTITIONS, P, S, I>
+impl<T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S> Drop
+    for Busy<'_, T, MAX, M, PARTITIONS, P, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     fn drop(&mut self) {
         if M::REENTRANT {
@@ -171,11 +160,10 @@ where
     }
 }
 
-impl<T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S, I> crate::mem::Return
-    for Busy<'_, T, MAX, M, PARTITIONS, P, S, I>
+impl<T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, P, S> crate::mem::Return
+    for Busy<'_, T, MAX, M, PARTITIONS, P, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     type Item = ();
 

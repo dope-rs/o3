@@ -1,3 +1,5 @@
+use std::ops;
+
 use crate::depot::queue::links;
 
 /// Stable one-to-one compact-index mapping.
@@ -31,11 +33,10 @@ pub unsafe trait Hooks {
         &'a self,
         chain: &'a links::Chain<C>,
         index: links::Index,
-    ) -> (links::Edge, links::Detached<'a>) {
+    ) -> links::Detached<'a> {
         // SAFETY: the caller retains this exact front, chain, and hook store.
         let change = unsafe { crate::depot::raw::Pop::at(chain, self, index) };
-        let edge = change.edge();
-        (edge, crate::depot::raw::Removal::commit(change))
+        crate::depot::raw::Removal::commit(change)
     }
 
     /// # Safety
@@ -120,12 +121,48 @@ pub unsafe trait Hooks {
     }
 }
 
+/// One resident value paired with its stable compact hook.
+#[derive(Debug)]
+#[repr(C)]
+pub struct Node<T> {
+    value: T,
+    hook: links::Hook,
+}
+
+impl<T> Node<T> {
+    pub fn vacant(value: T, index: u32, next: u32) -> Self {
+        Self {
+            value,
+            hook: links::Hook::vacant(index, next),
+        }
+    }
+
+    pub const fn hook(&self) -> &links::Hook {
+        &self.hook
+    }
+}
+
+impl<T> ops::Deref for Node<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+// SAFETY: each in-bounds node owns one stable hook for this exact borrowed slice.
+unsafe impl<T> Hooks for [Node<T>] {
+    unsafe fn hook_raw(&self, index: links::Index) -> &links::Hook {
+        unsafe { self.get_unchecked(index.get()) }.hook()
+    }
+}
+
 mod endpoint;
 mod member;
 mod mutation;
 pub(in crate::depot) use endpoint::{EndpointHook, EndpointWord, Neighbor};
-pub(in crate::depot) use member::{Membership, Removal};
-pub(in crate::depot) use mutation::{Detach, Insert, Pop, Relink, Splice};
+pub(in crate::depot) use member::Removal;
+pub(in crate::depot) use mutation::{Detach, Insert, Pop, Splice};
 
 mod lanes;
-pub(in crate::depot) use lanes::{LaneInit, LaneStore};
+pub(in crate::depot) use lanes::{LaneInit, LaneStore, LaneUndo};

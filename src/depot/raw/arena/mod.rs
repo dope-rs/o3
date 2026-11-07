@@ -7,7 +7,6 @@ use crate::{
             linked,
             linked::{fifo, head, slots},
         },
-        capacity,
         queue::pool::fifo::Fifo,
     },
 };
@@ -19,7 +18,7 @@ pub struct Arena<T, Tag = (), const TRACK: bool = true> {
 }
 
 impl<T, Tag, const TRACK: bool> Arena<T, Tag, TRACK> {
-    pub fn try_new<N: capacity::Extent>(capacity: N) -> Result<Self, alloc::Error> {
+    pub fn try_new(capacity: usize) -> Result<Self, alloc::Error> {
         let capacity = slots::Capacity::new(capacity)?;
         let bundle = capacity.bundle();
         let nodes = bundle.try_allocate()?.root();
@@ -96,15 +95,15 @@ impl<T, Tag> Arena<T, Tag> {
 impl<T, Tag, const TRACK: bool> Drop for Arena<T, Tag, TRACK> {
     fn drop(&mut self) {
         unsafe { self.inner.drop_values() };
-        let bundle = self.inner.region.capacity().bundle();
-        unsafe { bundle.deallocate(self.inner.region.pointer()) };
+        let bundle = self.inner.capacity().bundle();
+        unsafe { bundle.deallocate(self.inner.pointer()) };
     }
 }
 
 const _: () = assert!(mem::size_of::<Arena<u64>>() == 3 * mem::size_of::<usize>());
 
 mod pool;
-pub(in crate::depot) use pool::{PoolMutable, PoolOwner, PoolPolicy, PoolSharing};
+pub(in crate::depot) use pool::{PoolMutable, PoolPolicy};
 
 mod queues;
 pub(in crate::depot) use queues::{QueueBlock, QueueSlot};

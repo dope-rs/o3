@@ -1,15 +1,10 @@
 use crate::base::cell::{
     local,
     region::{Brand, Identity, Token},
-    values,
 };
 
 /// A value accessible only with the matching state [`Token`].
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct Value<B: Brand, T> {
-    pub(super) value: values::Value<B, T>,
-}
+pub use crate::base::cell::values::Value;
 
 impl<B: Brand, T> Value<B, T> {
     pub fn read<R>(&self, access: local::Read<'_, B>, f: impl for<'a> FnOnce(&'a T) -> R) -> R {
@@ -25,14 +20,6 @@ impl<B: Brand, T> Value<B, T> {
         T: Unpin,
     {
         f(access.region.borrow_mut(self))
-    }
-
-    pub fn get_mut(&mut self) -> &mut T {
-        self.value.get_mut()
-    }
-
-    pub fn into_inner(self) -> T {
-        self.value.into_inner()
     }
 }
 

@@ -71,26 +71,6 @@ impl<'a> Detach<'a, ()> {
         previous.set(index.raw());
         next.set(index.raw());
     }
-
-    /// # Safety
-    /// The exact chain owns this live hook and reciprocal neighbors exclusively until commit.
-    pub(in crate::depot) unsafe fn resolved(
-        chain: &'a links::Chain,
-        edge: links::Edge,
-        hook: &'a links::Hook,
-        previous: Option<&'a links::Hook>,
-        next: Option<&'a links::Hook>,
-    ) -> Self {
-        Self {
-            links: chain,
-            index: edge.key(),
-            previous_index: edge.links().0,
-            next_index: edge.links().1,
-            hook,
-            previous: previous.map_or((unsafe { chain.parts() }).0, |hook| &hook.next),
-            next: next.map_or((unsafe { chain.parts() }).1, |hook| &hook.previous),
-        }
-    }
 }
 
 const _: () = assert!(mem::size_of::<Detach<'static, ()>>() == 6 * mem::size_of::<usize>());

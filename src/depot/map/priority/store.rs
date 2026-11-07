@@ -162,17 +162,6 @@ impl<K, V, P> Store<K, V, P> {
         // SAFETY: the caller bounds `index` into this owner's node allocation; the exclusive borrow keeps it unique.
         unsafe { (*self.nodes.as_ptr().add(index as usize)).bucket = bucket.index() as u32 };
     }
-
-    pub(in crate::depot::map::priority) fn clear(&mut self) {
-        for index in 0..self.next {
-            // SAFETY: `index < next` names one node this store has initialized.
-            let node = unsafe { &mut *self.nodes.as_ptr().add(index as usize) };
-            if node.position != NONE {
-                // SAFETY: a live position marks exactly one pair left to drop.
-                unsafe { node.pair.assume_init_drop() };
-            }
-        }
-    }
 }
 
 /// Node slots retain their initialization state beside heap positions.

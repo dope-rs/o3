@@ -72,49 +72,23 @@ impl<'a, L: buffer::raw::Length> Staged<'a, L> {
 impl<L: buffer::raw::Length> write::Sink for Staged<'_, L> {
     type Error = consume::Error;
 
-    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
-        let added = bytes.len();
-        consume::Error::check(added, self.capacity() - self.len())?;
-        buffer::raw::Copy::copy(Init {
-            stage: self,
-            sources: bytes,
-            added,
-        });
-        Ok(())
-    }
-
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
-        let added = consume::Error::checked_end(0, self.capacity() - self.len(), &slices)?;
-        buffer::raw::Copy::copy(Init {
-            stage: self,
-            sources: slices,
-            added,
-        });
+        use buffer::raw::SliceExt as _;
+
+        let remaining = self.capacity() - self.len();
+        let added = match slices.as_slice() {
+            [source] => {
+                consume::Error::check(source.len(), remaining)?;
+                source.len()
+            }
+            _ => consume::Error::checked_end(0, remaining, &slices)?,
+        };
+        let start = self.out.len() + self.len();
+        // SAFETY: admission retains every source and room for its disjoint suffix.
+        unsafe { slices.copy_to(self.out.as_mut_ptr().add(start)) };
+        // SAFETY: every admitted byte is initialized within this stage's L capacity.
+        self.len = unsafe { self.len.add(added) };
         Ok(())
-    }
-}
-
-struct Init<'stage, 'out, L, S> {
-    stage: &'stage mut Staged<'out, L>,
-    sources: S,
-    added: usize,
-}
-
-// SAFETY: complete admission retains this exact stage and disjoint sources;
-// added publishes precisely their initialized suffix without changing the vector.
-unsafe impl<L: buffer::raw::Length, S: buffer::raw::SliceExt> buffer::raw::Copy
-    for Init<'_, '_, L, S>
-{
-    type Output = ();
-
-    fn parts(&mut self) -> (impl buffer::raw::SliceExt, *mut u8, usize) {
-        let start = self.stage.out.len() + self.stage.len();
-        (&self.sources, self.stage.out.as_mut_ptr(), start)
-    }
-
-    unsafe fn publish(self) {
-        // SAFETY: admission bounds the combined initialized prefix by this stage's L capacity.
-        self.stage.len = unsafe { self.stage.len.add(self.added) };
     }
 }
 

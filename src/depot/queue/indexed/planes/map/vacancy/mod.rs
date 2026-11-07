@@ -46,8 +46,8 @@ impl<'a, K, V, const N: usize> Vacancy<'a, K, V, N> {
                 .directory
                 .insert(self.bucket, self.hash, self.index)
         };
-        let core = &self.owner.core;
-        let node = unsafe { core.node(self.index) };
+        let owner = &*self.owner;
+        let node = unsafe { owner.node(self.index) };
         unsafe {
             (*node.record.get()).write(Record {
                 key: self.key,
@@ -55,7 +55,7 @@ impl<'a, K, V, const N: usize> Vacancy<'a, K, V, N> {
                 bucket,
             })
         };
-        unsafe { core.queues[0].link_back(&Hooks { core, plane: 0 }, self.index) };
+        unsafe { owner.queues[0].link_back(&Hooks { owner, plane: 0 }, self.index) };
         Occupied::new(self.owner, self.index)
     }
 }

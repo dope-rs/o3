@@ -106,7 +106,7 @@ impl<'a, S> Entry<&'a mut S> {
         S: heap::raw::Store,
     {
         let change = self.change();
-        heap::raw::Hole::retire(self);
+        self.clear();
         change
     }
 
@@ -180,6 +180,6 @@ impl<S: hole::raw::Source> Entry<S> {
 
     /// Removes this exact initialized member and restores the retained heap.
     pub fn clear(self) -> S {
-        heap::raw::Hole::retire(self)
+        self.remove().0
     }
 }

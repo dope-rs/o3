@@ -3,7 +3,6 @@ use std::marker;
 use crate::depot::{map::direct, queue::links, raw::Live};
 
 /// A direct-address slot validated occupied for one exact key.
-#[must_use = "an occupied entry retains exclusive access to its table slot"]
 pub struct Occupied<'a, K: crate::depot::raw::Key, V, P = ()> {
     pub(in crate::depot::map::direct) table: &'a mut direct::Table<K, V>,
     pub(in crate::depot::map::direct) key: K,

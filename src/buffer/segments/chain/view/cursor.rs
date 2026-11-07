@@ -53,33 +53,6 @@ impl<'a, T: buffer::raw::Segment> Cursor<'a, T> {
         }
     }
 
-    pub(in crate::buffer) fn remaining(&self) -> usize {
-        self.remaining
-    }
-
-    /// # Safety
-    /// Positive remaining and cap/left bounds belong to this unchanged borrowed chain.
-    pub(in crate::buffer) unsafe fn next_chunk<const MAX: usize>(
-        &mut self,
-        cap: NonZero<usize>,
-        _left: NonZero<usize>,
-    ) -> buffer::raw::Chunk<'a, MAX> {
-        if self.current.is_empty() {
-            // SAFETY: positive remaining bytes and an exhausted current span
-            // prove that this exact borrowed topology has a live next item.
-            let item = unsafe { self.nodes.next_live() };
-            self.current = item.chunk().bytes();
-        }
-        // SAFETY: the retained current span or newly loaded item is nonempty.
-        let len = unsafe { NonZero::new_unchecked(self.current.len()) }.min(cap);
-        let (bytes, suffix) = self.current.split_at(len.get());
-        self.current = suffix;
-        self.remaining -= len.get();
-        // SAFETY: the retained item proves nonemptiness; cap and left preserve
-        // the caller's byte bound and the source's exact progress.
-        unsafe { buffer::raw::Chunk::new(bytes) }
-    }
-
     pub(in crate::buffer::segments) fn new<H: Handle<T>>(source: &'a Chain<T, H>) -> Self {
         let sequence = source;
         let nodes = handles::nodes(&sequence.handle);
@@ -94,6 +67,34 @@ impl<'a, T: buffer::raw::Segment> Cursor<'a, T> {
             current: &[],
             remaining: len,
         }
+    }
+}
+
+// SAFETY: construction borrows the same sequence for topology and byte total;
+// every node retains a nonempty Item and each advance consumes an exact prefix.
+unsafe impl<'a, T: buffer::raw::Segment> buffer::raw::Scatter<'a> for Cursor<'a, T> {
+    fn remaining(&self) -> usize {
+        self.remaining
+    }
+
+    unsafe fn advance<const MAX: usize>(
+        &mut self,
+        cap: NonZero<usize>,
+    ) -> buffer::raw::Chunk<'a, MAX> {
+        if self.current.is_empty() {
+            // SAFETY: positive remaining bytes and an exhausted current span
+            // prove that this exact borrowed topology has a live next item.
+            let item = unsafe { self.nodes.next_live() };
+            self.current = item.chunk().bytes();
+        }
+        // SAFETY: the retained current span or newly loaded item is nonempty.
+        let len = unsafe { NonZero::new_unchecked(self.current.len()) }.min(cap);
+        let (bytes, suffix) = self.current.split_at(len.get());
+        self.current = suffix;
+        self.remaining -= len.get();
+        // SAFETY: the retained item proves nonemptiness; the admitted cap
+        // preserves the caller's byte bound and the source's exact progress.
+        unsafe { buffer::raw::Chunk::new(bytes) }
     }
 }
 

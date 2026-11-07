@@ -6,24 +6,17 @@ pub mod observed;
 pub mod resident;
 pub mod split;
 
-pub trait EntryExt<'a, P: Ord> {
-    fn into_vacant(self) -> Option<indexed::Vacant<'a, P>>;
-    fn occupied(self) -> Option<indexed::Occupied<'a, P>>;
+pub fn into_vacant<'a, P: Ord>(entry: indexed::Entry<'a, P>) -> Option<indexed::Vacant<'a, P>> {
+    match entry {
+        indexed::Entry::Vacant(entry) => Some(entry),
+        indexed::Entry::Occupied(_) => None,
+    }
 }
 
-impl<'a, P: Ord> EntryExt<'a, P> for indexed::Entry<'a, P> {
-    fn into_vacant(self) -> Option<indexed::Vacant<'a, P>> {
-        match self {
-            Self::Vacant(entry) => Some(entry),
-            Self::Occupied(_) => None,
-        }
-    }
-
-    fn occupied(self) -> Option<indexed::Occupied<'a, P>> {
-        match self {
-            Self::Occupied(entry) => Some(entry),
-            Self::Vacant(_) => None,
-        }
+pub fn occupied<'a, P: Ord>(entry: indexed::Entry<'a, P>) -> Option<indexed::Occupied<'a, P>> {
+    match entry {
+        indexed::Entry::Occupied(entry) => Some(entry),
+        indexed::Entry::Vacant(_) => None,
     }
 }
 

@@ -1,7 +1,6 @@
 use crate::{
     buffer,
     buffer::segments::{Item, Many, Shape},
-    mem::rc,
 };
 
 /// Physical owners proved to contain at least one byte.
@@ -28,23 +27,6 @@ impl<T: buffer::raw::Segment> Nonempty<T> {
 
     pub fn is_single(&self) -> bool {
         matches!(self, Self::One(_))
-    }
-
-    pub fn try_pop(self, limit: usize) -> Result<(T, Shape<T>), (rc::Error, Self)> {
-        match self {
-            Self::One(owner) => {
-                let (head, rest) = owner
-                    .try_split(limit)
-                    .map_err(|(error, owner)| (error, Self::One(owner)))?;
-                Ok((head, rest.map_or(Shape::Empty, Shape::One)))
-            }
-            Self::Many(owners) => {
-                let (head, rest) = owners
-                    .try_pop(limit)
-                    .map_err(|(error, owners)| (error, Self::Many(owners)))?;
-                Ok((head, rest.into_shape()))
-            }
-        }
     }
 }
 

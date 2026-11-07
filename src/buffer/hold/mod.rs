@@ -2,6 +2,7 @@
 
 use std::num::NonZero;
 
+pub use crate::buffer::storage::regions::retained::Retained;
 pub use charge::Charge;
 pub use error::Error;
 
@@ -28,10 +29,10 @@ impl Choice {
         self,
         plan: &R::View<'a>,
         budget: &resident::Budget<'d>,
-    ) -> Result<resident::Shared<'d>, Error> {
+    ) -> Result<Retained<'d>, Error> {
         match self {
-            Self::Empty => Ok(resident::Shared::new()),
-            Self::Copy => R::try_copy(plan, budget),
+            Self::Empty => Ok(resident::Shared::new().into()),
+            Self::Copy => R::try_copy(plan, budget).map(Retained::from),
             Self::Share => R::try_retain(plan, budget),
         }
     }

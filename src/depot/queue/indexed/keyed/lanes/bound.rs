@@ -42,20 +42,16 @@ impl<
 
     pub(super) fn append<const L: usize>(&self) {
         const { assert!(L < N) };
-        let entry = self.slot.slot();
+        let (pos, link) = keyed::selected::<_, P>(&self.slot);
         let heads = &self.slot.fifo().heads[L];
-        let pos = entry.index();
         let adjacent = heads.last().map(|tail| {
             // SAFETY: this exact lane retains its live tail and original root.
-            let previous = S::entry(unsafe { crate::depot::raw::Proof::new((&self.slot, tail)) });
-            (
-                tail,
-                crate::depot::raw::EndpointHook::from(&previous.link().raw),
-            )
+            let previous = S::link(unsafe { crate::depot::raw::Proof::new((&self.slot, tail)) });
+            (tail, crate::depot::raw::EndpointHook::from(&previous.raw))
         });
         // SAFETY: this exact vacant slot and selected lane retain the same root and plane.
         unsafe {
-            crate::depot::raw::EndpointHook::from(&entry.link().raw).push::<false, _>(
+            crate::depot::raw::EndpointHook::from(&link.raw).push::<false, _>(
                 heads,
                 pos,
                 fifo::endpoint(L),
@@ -65,14 +61,14 @@ impl<
     }
 
     fn detach_links(&self) {
-        let entry = self.slot.slot();
-        let hook = &entry.link().raw;
+        let (index, link) = keyed::selected::<_, P>(&self.slot);
+        let hook = &link.raw;
         let previous = hook.previous.get();
         let next = hook.next.get();
         // SAFETY: membership retains this exact compact slot and both reciprocal neighbors.
         unsafe {
             crate::depot::raw::EndpointHook::from(hook).detach(
-                entry.index(),
+                index,
                 self.neighbor(previous),
                 self.neighbor(next),
             )
@@ -87,16 +83,16 @@ impl<
             Some(head) => raw::Neighbor::head(raw, head),
             None => {
                 // SAFETY: a linked non-endpoint neighbor is live in this exact owner and plane.
-                let entry = S::entry(unsafe {
+                let link = S::link(unsafe {
                     crate::depot::raw::Proof::new((&self.slot, links::Index::new_raw(raw)))
                 });
-                raw::Neighbor::node(raw, raw::EndpointHook::from(&entry.link().raw))
+                raw::Neighbor::node(raw, raw::EndpointHook::from(&link.raw))
             }
         }
     }
 
     pub fn key(&self) -> S::Key {
-        self.slot.slot().key()
+        self.slot.parts().0
     }
 }
 
@@ -130,9 +126,8 @@ impl<
 
     pub fn move_to_back<const L: usize>(&mut self) {
         const { assert!(L < N) };
-        let entry = self.slot.slot();
-        let pos = entry.index();
-        if self.slot.fifo().heads[L].last() == Some(pos) {
+        let (pos, _) = keyed::selected::<_, P>(&self.slot);
+        if links::Index::encode(self.slot.fifo().heads[L].last()) == pos.raw() {
             return;
         }
         self.detach_links();

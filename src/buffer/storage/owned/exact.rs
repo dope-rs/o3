@@ -3,7 +3,7 @@ use crate::{
     buffer::{
         storage,
         storage::regions,
-        write::{SpareExt as _, consume, spans},
+        write::{SpareExt as _, spans},
     },
 };
 
@@ -22,24 +22,24 @@ impl Exact {
 
     pub fn try_build<E>(
         capacity: usize,
-        build: impl FnOnce(&mut spans::Writer<'_, '_, true>) -> Result<(), E>,
+        build: impl FnOnce(&mut spans::Writer<'_, '_>) -> Result<(), E>,
     ) -> Result<Self, storage::BuildError<E>> {
         use storage::BuildError;
 
         let mut owned = storage::Owned::try_with(capacity)?;
         let mut spare = owned.spare();
-        let mut exact = spare.exact();
-        build(&mut exact).map_err(BuildError::Build)?;
-        consume::Error::check(exact.cursor.limit() as usize, exact.cursor.len() as usize)
-            .map_err(BuildError::Length)?;
-        exact.cursor.commit();
-        spare.commit();
-        let Some(heap) = owned.bytes.allocation else {
+        let mut writer = spare.bounded();
+        build(&mut writer).map_err(BuildError::Build)?;
+        writer.commit();
+        spare
+            .try_complete()
+            .map_err(|error| BuildError::Length(error.into()))?;
+        let Some(heap) = owned.allocation else {
             return Ok(Self::new());
         };
-        // SAFETY: the exact span completed this owner's entire uninitialized suffix.
+        // SAFETY: the original spare completed this owner's entire uninitialized suffix.
         Ok(Self {
-            inner: Some(unsafe { regions::Init::new(heap.into_shared()) }),
+            inner: Some(unsafe { regions::Init::new(heap) }),
         })
     }
 

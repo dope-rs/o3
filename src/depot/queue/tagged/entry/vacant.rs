@@ -116,11 +116,10 @@ impl<E: crate::depot::raw::LaneInit> tagged::Vacant<E>
 where
     E::Store: crate::depot::raw::LaneStore,
 {
-    pub fn insert<const FRONT: bool>(
+    pub(in crate::depot) fn insert_linked<const FRONT: bool>(
         self,
         value: <E::Store as crate::depot::raw::LaneStore>::Item,
-    ) -> tagged::Linked<E::Ready, <E::Store as crate::depot::raw::LaneStore>::Publish<E::Ready>>
-    {
+    ) -> tagged::Linked<E::Ready> {
         // SAFETY: vacancy retains the exact exclusive payload and protects its hook.
         unsafe {
             (*<E::Store as crate::depot::raw::LaneStore>::node(self.entry())
@@ -129,8 +128,6 @@ where
             .write(value)
         };
         let entry = unsafe { self.into_inner().ready() };
-        unsafe { tagged::Vacant::new(entry) }
-            .push::<FRONT>()
-            .into_policy()
+        unsafe { tagged::Vacant::new(entry) }.push::<FRONT>()
     }
 }

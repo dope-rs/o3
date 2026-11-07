@@ -1,69 +1,26 @@
 pub(in crate::buffer::segments) mod flatten;
 use std::{iter, mem, num};
 
-use chain::Assemble;
 use segments::{Chain, Single, assembly};
 
 use crate::{
     buffer,
     buffer::{
         hold, segments,
-        segments::{Exact, chain, chain::edit, handles},
+        segments::{Exact, chain::edit, handles},
         storage,
     },
-    depot::arena::linked::slots,
     mem::rc,
 };
 
 /// A chain proved to contain at least two owners.
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct Many<T: buffer::raw::Segment>(Chain<T>);
-
-struct View<'a, T: buffer::raw::Segment>(&'a Many<T>);
-
-// SAFETY: Many retains its own live multi descriptor and nonempty node partition.
-unsafe impl<'a, T: buffer::raw::Segment + 'a> buffer::raw::Linked<'a> for View<'a, T> {
-    type Item = segments::Item<T>;
-    type Metadata = handles::Descriptor;
-
-    fn parts(
-        self,
-    ) -> (
-        &'a slots::Store<Self::Item>,
-        &'a slots::Store<Self::Metadata>,
-        slots::Index,
-    ) {
-        let sequence = &self.0.0;
-        // SAFETY: Many's constructors retain the exact live multi key.
-        let index = unsafe { sequence.key.multi_index() };
-        (
-            handles::nodes(&sequence.handle),
-            handles::descriptors(&sequence.handle),
-            index,
-        )
-    }
-
-    fn head(metadata: &Self::Metadata) -> slots::Index {
-        metadata.links.head_raw()
-    }
-}
-
-impl<T: buffer::raw::Segment> Assemble<T> for Many<T> {
-    fn sequence(&mut self) -> &mut segments::Chain<T, segments::Pool<T>> {
-        &mut self.0
-    }
-}
+pub struct Many<T: buffer::raw::Segment>(pub(in crate::buffer::segments::chain) Chain<T>);
 
 impl<T: buffer::raw::Segment> From<Many<T>> for Chain<T> {
     fn from(val: Many<T>) -> Self {
         val.0
-    }
-}
-
-impl<T: buffer::raw::Segment> buffer::raw::Assemble<T> for Many<T> {
-    fn finish<S: buffer::raw::Sequence<T, Output = Self>>(input: segments::Built<T, S>) -> Self {
-        Self(input.chain)
     }
 }
 
@@ -112,7 +69,9 @@ impl<T: buffer::raw::Segment> Many<T> {
     }
 
     pub fn front(&self) -> &T {
-        buffer::raw::Linked::front(View(self)).as_ref()
+        let head = self.descriptor().links.head_raw();
+        // SAFETY: Many retains this descriptor's initialized head in its own node store.
+        unsafe { handles::nodes(&self.0.handle).value(head) }.as_ref()
     }
 
     /// Moves at most one physical owner's prefix, preserving the remaining chain.
@@ -120,11 +79,9 @@ impl<T: buffer::raw::Segment> Many<T> {
         mut self,
         limit: usize,
     ) -> Result<(T, segments::Nonempty<T>), (rc::Error, Self)> {
-        use segments::Tail;
-
         let mut edit = self.edit();
         let (desc, owner) = edit.front();
-        let Some(tail) = Tail::new(&mut owner.value, limit) else {
+        let Some(tail) = owner.tail(limit) else {
             return Ok(self.take_front());
         };
         let prefix = match tail.try_commit() {
@@ -136,10 +93,14 @@ impl<T: buffer::raw::Segment> Many<T> {
     }
 
     fn descriptor(&self) -> &handles::Descriptor {
-        buffer::raw::Linked::metadata(View(self))
+        let sequence = &self.0;
+        // SAFETY: Many retains the initialized descriptor selected by its exact multi key.
+        unsafe { handles::descriptors(&sequence.handle).value(sequence.key.multi_index()) }
     }
 
-    fn edit(&mut self) -> edit::Multi<'_, T, segments::Pool<T>> {
+    pub(in crate::buffer::segments::chain) fn edit(
+        &mut self,
+    ) -> edit::Multi<'_, T, segments::Pool<T>> {
         let sequence = &mut self.0;
         // SAFETY: Many exclusively retains this multi key and at least two initialized items.
         let index = unsafe { sequence.key.multi_index() };
@@ -170,21 +131,15 @@ impl<T: buffer::raw::Segment> TryFrom<(segments::Item<T>, segments::Item<T>)> fo
 impl<T: buffer::raw::Segment> TryFrom<(Many<T>, segments::Item<T>)> for Many<T> {
     type Error = crate::mem::Rejected<(Many<T>, segments::Item<T>), assembly::Error>;
     fn try_from(source: (Many<T>, segments::Item<T>)) -> Result<Self, Self::Error> {
-        Assemble::try_append(source.0, source.1)
+        Self::try_insert::<false>(source.0, source.1)
     }
 }
 
 impl<T: buffer::raw::Segment> TryFrom<(segments::Item<T>, Many<T>)> for Many<T> {
     type Error = crate::mem::Rejected<(segments::Item<T>, Many<T>), assembly::Error>;
     fn try_from(source: (segments::Item<T>, Many<T>)) -> Result<Self, Self::Error> {
-        Assemble::try_prepend(source.1, source.0)
-    }
-}
-
-impl<T: buffer::raw::Segment> TryFrom<(Many<T>, Many<T>)> for Many<T> {
-    type Error = crate::mem::Rejected<(Many<T>, Many<T>), assembly::Error>;
-    fn try_from(source: (Many<T>, Many<T>)) -> Result<Self, Self::Error> {
-        edit::Join::new(source.0, source.1).try_commit()
+        Self::try_insert::<true>(source.1, source.0)
+            .map_err(|error| error.map(|(chain, item)| (item, chain)))
     }
 }
 
@@ -200,16 +155,16 @@ impl<T: buffer::raw::Segment> buffer::raw::Total for &Many<T> {
     }
 }
 
+// SAFETY: this borrow retains at least two owners and their exact checked totals.
 unsafe impl<T: buffer::raw::Segment> buffer::raw::Sequence<T> for &Many<T> {
-    type Output = Many<T>;
     type Item = Result<segments::Item<T>, rc::Error>;
     type Error = crate::alloc::Error;
-    fn owners(self) -> impl Iterator<Item = Self::Item> + buffer::raw::Total {
+    fn owners(self) -> (impl Iterator<Item = Self::Item>, impl buffer::raw::Total) {
         let mut owners = self.0.segments();
-        buffer::raw::Batch {
-            owners: iter::from_fn(move || owners.next_item()).map(segments::Item::try_clone),
-            total: self,
-        }
+        (
+            iter::from_fn(move || owners.next_item()).map(segments::Item::try_clone),
+            self,
+        )
     }
 
     fn reject(self, error: crate::alloc::Error) -> Self::Error {

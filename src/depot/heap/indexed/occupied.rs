@@ -35,11 +35,11 @@ impl<'a, P: Ord, C: alloc::raw::Extent> indexed::Occupied<'a, P, C> {
     }
 
     pub fn retire(self) {
-        heap::raw::Hole::retire(self.entry);
+        self.entry.clear();
     }
 
     pub fn take(self) -> P {
-        heap::raw::Hole::take(self.entry).priority
+        self.entry.remove().1.priority
     }
 
     pub fn remove(self) -> (indexed::Vacant<'a, P, C>, P) {

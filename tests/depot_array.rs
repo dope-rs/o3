@@ -2,11 +2,7 @@ pub mod common;
 
 use std::{cell::Cell, mem, ops, ptr};
 
-use common::{
-    Counted,
-    alloc::system::Tracker,
-    depot::{CompactBytes, model::drops},
-};
+use common::{Counted, Order, alloc::system::Tracker, depot::CompactBytes};
 use o3::depot::array::{self, Len, copy, init, sorted};
 
 #[global_allocator]
@@ -22,10 +18,6 @@ fn copy_shape() {
     assert!(!mem::needs_drop::<copy::Vec<u64, 4>>());
     assert!(!mem::needs_drop::<copy::IntoIter<u64, 4>>());
     assert_eq!(
-        mem::size_of::<copy::IntoIter<u64, 4>>(),
-        mem::size_of::<copy::Vec<u64, 4>>()
-    );
-    assert_eq!(
         mem::size_of::<copy::Vec<u64, 4>>(),
         mem::size_of::<[u64; 4]>() + mem::size_of::<usize>()
     );
@@ -33,26 +25,6 @@ fn copy_shape() {
         mem::size_of::<copy::Vec<u8, 65>>(),
         mem::size_of::<CompactBytes>()
     );
-}
-
-#[test]
-fn copies_prefix() {
-    let mut source = copy::Vec::<u64, 4>::from_one(3);
-    source.vacancy().expect("second position").insert(5);
-    let mut target = copy::Vec::from([17, 19, 23, 29]);
-    let ((), counts) = Tracker::measure(|| target.copy_from(&source));
-    assert_eq!(counts, [0; 4]);
-    assert_eq!(target.as_slice(), [3, 5]);
-    assert!(target.extent() == source.extent());
-    assert_eq!(source.as_slice(), [3, 5]);
-    target.copy_from(&copy::Vec::new());
-    assert!(target.is_empty());
-    let mut empty = copy::Vec::<u64, 0>::new();
-    empty.copy_from(&copy::Vec::new());
-    assert!(empty.is_empty());
-    let mut zero = copy::Vec::<(), 2>::new();
-    zero.copy_from(&copy::Vec::from([(), ()]));
-    assert!(zero.extent().is_full());
 }
 
 #[test]
@@ -133,35 +105,25 @@ fn sorted_membership() {
 }
 
 #[test]
-fn selects_without_mutation() {
-    let source = copy::Vec::from([7, 2, 5, 4]);
-    let mut selected = copy::Vec::from([0; 4]);
-    let ((), allocs) = Tracker::measure(|| {
-        selected.filter_from(&source, |value| value % 2 == 0);
-    });
-    assert_eq!(allocs, [0; 4]);
-    assert_eq!(source.as_slice(), [7, 2, 5, 4]);
-    assert_eq!(selected.as_slice(), [2, 4]);
-    let mut retained = source;
-    retained.retain(|value| value % 2 == 0);
-    assert_eq!(retained.as_slice(), selected.as_slice());
+fn retains_original_slots() {
+    let mut values = std::hint::black_box(copy::Vec::from([[2_u64; 6], [7; 6], [4; 6], [5; 6]]));
+    let base = values.as_ptr();
     let mut calls = 0;
-    selected.filter_from(&retained, |_| {
-        calls += 1;
-        true
+    let ((), allocs) = Tracker::measure(|| {
+        values.retain(|value| {
+            assert_eq!(ptr::from_ref(value), base.wrapping_add(calls));
+            calls += 1;
+            value[0] % 2 == 0
+        });
     });
-    assert_eq!(calls, 2);
-    assert_eq!(selected.as_slice(), retained.as_slice());
-    selected.filter_from(&source, |_| false);
-    assert!(selected.is_empty());
-    calls = 0;
-    selected.retain(|_| {
-        calls += 1;
-        true
-    });
-    assert_eq!(calls, 0);
-    selected.filter_from(&source, |_| true);
-    assert_eq!(selected.as_slice(), source.as_slice());
+    assert_eq!(calls, 4);
+    assert_eq!(values.as_slice(), [[2; 6], [4; 6]]);
+    assert_eq!(allocs, [0; 4]);
+    values.retain(|_| true);
+    assert_eq!(values.as_slice(), [[2; 6], [4; 6]]);
+    values.retain(|_| false);
+    values.retain(|_| unreachable!("empty"));
+    assert!(values.is_empty());
 }
 
 #[test]
@@ -283,21 +245,20 @@ fn guard_release_order() {
     let order = Cell::new(Some(0));
     let mut backing = mem::MaybeUninit::uninit();
     assert!(matches!(
-        drops::Order::fill(init::Guard::<_, 3, false>::new(&mut backing), &order, true),
+        Order::fill(init::Guard::<_, 3, false>::new(&mut backing), &order, true),
         Err(3)
     ));
     assert_eq!(order.get(), Some(12));
     order.set(Some(0));
     assert!(matches!(
-        drops::Order::fill(init::Guard::<_, 3, true>::new(&mut backing), &order, true),
+        Order::fill(init::Guard::<_, 3, true>::new(&mut backing), &order, true),
         Err(3)
     ));
     assert_eq!(order.get(), Some(21));
     order.set(Some(0));
     {
-        let values =
-            drops::Order::fill(init::Guard::<_, 3, true>::new(&mut backing), &order, false)
-                .expect("complete array");
+        let values = Order::fill(init::Guard::<_, 3, true>::new(&mut backing), &order, false)
+            .expect("complete array");
         assert_eq!(values.each_ref().map(|value| value.1), [1, 2, 3]);
         assert_eq!(order.get(), Some(0));
     }

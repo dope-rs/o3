@@ -213,7 +213,7 @@ impl<'a, K, V, P: Ord> Occupied<'a, K, P, V> {
     }
 
     pub(in crate::depot::map::priority) fn remove_parts(mut self) -> (K, V, P) {
-        heap::raw::Hole::retire(self.entry(()));
+        self.entry(()).clear();
         unsafe { map::raw::Hole::retire(&mut *self.core, self.bucket) };
         let Pair {
             key,
@@ -260,7 +260,13 @@ impl<K, V, P: Ord> Drop for Core<K, V, P> {
     fn drop(&mut self) {
         let layout = Layout::from_plan(self.store.plan());
         let base = self.table.base();
-        self.store.clear();
+        for position in 0..self.store.len() {
+            // SAFETY: the heap contains each live node once, owned exclusively by this core.
+            unsafe {
+                let index = self.indices.as_ptr().add(position).read();
+                ptr::drop_in_place(self.store.pair_mut(index));
+            }
+        }
         unsafe { layout.bundle.deallocate(base) }
     }
 }
@@ -292,11 +298,7 @@ unsafe impl<K, V, P: Ord> hole::raw::Source for &mut Core<K, V, P> {
 
     fn read<const REMOVE: bool>(entry: hole::At<&mut Self>) -> u32 {
         let (owner, position, ()) = entry.into_inner();
-        let index = unsafe { owner.indices.as_ptr().add(position).read() };
-        if REMOVE {
-            unsafe { owner.reindex(index, u32::MAX) };
-        }
-        index
+        unsafe { owner.indices.as_ptr().add(position).read() }
     }
 
     fn shift(step: hole::Step<'_, Self>) {

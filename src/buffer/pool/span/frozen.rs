@@ -10,6 +10,8 @@ unsafe impl<L> buffer::raw::Source for pool::Span<owners::Plain<L>, pool::Owned,
 impl<L> pool::Span<owners::Plain<L>, pool::Owned, Frozen> {
     #[must_use]
     pub fn into_shared(self) -> storage::Shared {
-        pool::raw::Init::into_shared(self).into()
+        let len = self.len();
+        // SAFETY: consuming the frozen span retains its exact initialized prefix.
+        unsafe { pool::raw::into_shared(self, 0, len) }.into()
     }
 }

@@ -1,6 +1,6 @@
 use std::{
     cell, marker,
-    mem::{ManuallyDrop, size_of},
+    mem::{ManuallyDrop, MaybeUninit, size_of},
     ops, ptr,
 };
 
@@ -23,6 +23,7 @@ enum State {
 #[repr(C, align(8))]
 pub(in crate::buffer::storage::provided) struct Entry<'d> {
     state: cell::Cell<State>,
+    pub(super) resident: cell::Cell<MaybeUninit<u32>>,
     pub(super) domain: &'d arena::State<'d>,
     pub(super) free: cell::Cell<Option<arena::Empty<'d>>>,
     pub(super) returned: cell::Cell<Option<arena::Ready<'d>>>,
@@ -30,9 +31,13 @@ pub(in crate::buffer::storage::provided) struct Entry<'d> {
 }
 
 impl<'d> Entry<'d> {
-    pub(in crate::buffer::storage::provided) const fn new(domain: &'d arena::State<'d>) -> Self {
+    pub(in crate::buffer::storage::provided) const fn new(
+        domain: &'d arena::State<'d>,
+        resident: MaybeUninit<u32>,
+    ) -> Self {
         Self {
             state: cell::Cell::new(State::Empty),
+            resident: cell::Cell::new(resident),
             domain,
             free: cell::Cell::new(None),
             returned: cell::Cell::new(None),
@@ -54,31 +59,13 @@ impl<'d> Entry<'d> {
     }
 
     /// # Safety
-    /// The complete newly initialized slot belongs to this scope for `'d`.
-    pub(in crate::buffer::storage::provided) unsafe fn seed<T, L>(slot: &'d arena::Slot<'d, T, L>) {
-        let entry = ptr::NonNull::from(slot).cast::<Self>();
-        slot.entry.domain.push_free(arena::Empty { entry });
-    }
-
-    /// # Safety
     /// The pointer retains the complete slot allocation for its active scope.
+    /// Its resident was initialized by the fixed scope or exact admission.
     pub(in crate::buffer::storage::provided) unsafe fn resident(
         pointer: ptr::NonNull<Self>,
     ) -> u32 {
-        // SAFETY: the caller retains the complete live slot, including its leading Entry.
-        match unsafe { pointer.as_ref() }.domain.mode() {
-            provided::Mode::Fixed(resident) => resident.get(),
-            provided::Mode::Exact => {
-                // SAFETY: the exact Slot places its resident cell after Entry.
-                let value = unsafe {
-                    &*pointer
-                        .as_ptr()
-                        .byte_add(size_of::<Self>())
-                        .cast::<cell::Cell<u32>>()
-                };
-                value.get()
-            }
-        }
+        // SAFETY: the caller retains the slot and its initialized resident value.
+        unsafe { pointer.as_ref().resident.get().assume_init() }
     }
 
     pub(in crate::buffer::storage::provided) fn try_account(

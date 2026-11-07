@@ -187,13 +187,13 @@ impl<T, M, L> Lanes<T, M, L> {
         &'a self,
         lane: Lane,
         entries: &'a [resident::raw::Node<T>],
-    ) -> round::Join<'a, resident::raw::Slice<T>, resident::raw::Slice<links::Chain>> {
+    ) -> round::Join<'a, [resident::raw::Node<T>], [resident::raw::Node<links::Chain>]> {
         let lanes = self.storage.tail();
         // SAFETY: each private Lane was admitted by this owner's immutable extent.
         let lane = unsafe { resident::raw::View::new(lanes, lane.index()) };
         round::Join {
-            hooks: resident::raw::Slice::new(entries),
-            lanes: resident::raw::Slice::new(lanes),
+            hooks: entries,
+            lanes,
             entries: lane.into_ref(),
             active: &self.round,
             index: *lane.key(),
@@ -244,13 +244,7 @@ impl<T, L> Lanes<T, Parking, L> {
             // SAFETY: this key is neither linked nor parked, so its hook is
             // detached from every list of this owner and returns to `self.free`,
             // which owns this exact slice.
-            unsafe {
-                depot::raw::Hooks::recycle(
-                    resident::raw::Slice::new(entries),
-                    &self.free,
-                    *view.key(),
-                )
-            };
+            unsafe { depot::raw::Hooks::recycle(entries, &self.free, *view.key()) };
             Removal::Empty
         }
     }
@@ -271,13 +265,7 @@ impl<T, L> Lanes<T, Plain, L> {
             // SAFETY: this key is not linked, so its hook is detached from every
             // list of this owner and returns to `self.free`, which owns this exact
             // slice.
-            unsafe {
-                depot::raw::Hooks::recycle(
-                    resident::raw::Slice::new(entries),
-                    &self.free,
-                    *view.key(),
-                )
-            };
+            unsafe { depot::raw::Hooks::recycle(entries, &self.free, *view.key()) };
             Some(key.lane)
         }
     }

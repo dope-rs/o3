@@ -62,10 +62,7 @@ where
     pub fn vacancy(
         &self,
     ) -> Option<slab::Vacant<entries::Pending<'_, T, MAX, entries::Interior<RECYCLE>>, Tag>> {
-        Some(slab::Vacant {
-            entry: self.core.free()?,
-            tag: marker::PhantomData,
-        })
+        Some(slab::Vacant::new(self.core.free()?))
     }
 
     /// Reserves a slot or preserves the exact temporary or permanent refusal.

@@ -18,14 +18,17 @@ pub struct Header<T> {
     pub(super) descriptors: slots::Store<Descriptor>,
 }
 
-impl<T> Header<T> {
-    pub(in crate::buffer) fn count(&self) -> &mem::raw::Count {
+// SAFETY: every published header owns exactly this reference domain.
+unsafe impl<T> mem::raw::Edge for Header<T> {
+    fn count(&self) -> &mem::raw::Count {
         &self.refs
     }
+}
 
-    /// # Safety
-    /// The terminal edge excludes every chain and borrowed header.
-    pub(in crate::buffer) unsafe fn destroy(mut pointer: ptr::NonNull<Self>) {
+// SAFETY: the header owns the exact bundled node and descriptor allocations.
+unsafe impl<T> mem::raw::Target for Header<T> {
+    unsafe fn destroy(mut pointer: ptr::NonNull<Self>) {
+        // SAFETY: the terminal edge excludes every chain and borrowed header.
         unsafe {
             let header = pointer.as_mut();
             header.nodes.drop_values();

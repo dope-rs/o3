@@ -125,50 +125,10 @@ impl Layout {
     }
 }
 
-/// `N` stacked directories whose control mirrors are merged over one arena.
-///
-/// A merged control byte admits an offset in some directory plane,
-/// never the initialized record named by a bucket in that plane.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Planes<const N: usize> {
-    layouts: [Layout; N],
-}
-
-impl<const N: usize> Planes<N> {
-    /// Stacks one directory per capacity and returns the retained end offset.
-    pub fn try_new(counts: [usize; N], start: usize) -> Result<(Self, usize), compact::Error> {
-        let (seed, _) = Layout::try_new(0, start)?;
-        let mut layouts = [seed; N];
-        let mut end = start;
-        for (layout, capacity) in layouts.iter_mut().zip(counts) {
-            let (plane, next) = Layout::try_new(capacity, end)?;
-            *layout = plane;
-            end = next;
-        }
-        Ok((Self { layouts }, end))
-    }
-
-    /// The directory owning the statically checked plane `INDEX`.
-    pub const fn layout<const INDEX: usize>(&self) -> Layout {
-        const { assert!(INDEX < N, "plane") };
-        self.layouts[INDEX]
-    }
-
-    /// Merges every plane's control byte at one arena offset.
-    pub fn byte(&self, offset: usize) -> u8 {
-        let mut merged = 0;
-        for layout in &self.layouts {
-            merged = merged.max(layout.byte(offset));
-        }
-        merged
-    }
-}
-
 const _: () = {
     assert!(size_of::<Layout>() == 12);
     assert!(align_of::<Layout>() == 4);
     assert!(size_of::<Option<Layout>>() == 12);
-    assert!(size_of::<Planes<2>>() == 2 * size_of::<Layout>());
 };
 
 /// Retains the queried owner whether a candidate matches or the search ends.

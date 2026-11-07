@@ -7,15 +7,4 @@ pub struct Bounds {
     pub ceiling: usize,
 }
 
-impl Bounds {
-    pub(super) const fn new(offset: usize, amount: usize, floor: usize, ceiling: usize) -> Self {
-        Self {
-            offset,
-            amount,
-            floor,
-            ceiling,
-        }
-    }
-}
-
 const _: () = assert!(size_of::<Bounds>() == 4 * size_of::<usize>());

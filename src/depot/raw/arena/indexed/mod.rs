@@ -40,21 +40,6 @@ unsafe impl IndexedHook for links::Hook {
     }
 }
 
-// SAFETY: tagged hooks distinguish detached indices from admitted lane endpoints.
-unsafe impl IndexedHook for tagged::Hook {
-    type Head = links::Chain;
-    type Chain = ();
-    fn new(index: links::Index, next: Option<links::Index>) -> Self {
-        Self::free(index, next)
-    }
-    fn is_linked(&self, index: links::Index) -> bool {
-        self.is_linked(index)
-    }
-    unsafe fn next(&self) -> u32 {
-        unsafe { tagged::Hook::next(self) }
-    }
-}
-
 pub(in crate::depot) struct IndexedBlock<
     T,
     Tag,

@@ -1,9 +1,6 @@
 use std::{cell, mem};
 
-use crate::depot::queue::resident::{
-    self,
-    handoff::{self, Cancel, Registration},
-};
+use crate::depot::queue::resident::{self, handoff};
 
 /// Registry-owned FIFO lanes for one-at-a-time affine handoff.
 pub struct Registry<W, G, L> {
@@ -35,7 +32,8 @@ impl<W, G, L> Registry<W, G, L> {
     }
 
     /// Takes the next value in drain order and ends draining at quiescence.
-    pub fn drain_next(&self) -> resident::Drain<W> {
+    #[must_use = "a drained item remains caller-owned"]
+    pub fn drain_next(&self) -> Option<W> {
         self.draining
             .drain(|| Some(self.lanes.take::<false>()?.take_value()))
     }
@@ -46,30 +44,6 @@ impl<W, G, const N: usize> Registry<W, G, resident::Fixed<N>> {
         handoff::Lane {
             registry: self,
             lane: resident::Lane::new::<N, I>(),
-        }
-    }
-}
-
-impl<W, G, L> Registry<W, G, L> {
-    pub(super) fn claim(
-        &self,
-        key: resident::Key,
-        slot: &mut Registration<'_, W, G, L>,
-    ) -> handoff::Grant<G> {
-        match self.lanes.claim(key) {
-            None => handoff::Grant::Pending,
-            Some(entry) => {
-                slot.lease.detach();
-                handoff::Grant::Ready(entry.take_grant())
-            }
-        }
-    }
-
-    pub(super) fn cancel(&self, key: resident::Key) -> Cancel<G> {
-        match self.lanes.remove(key) {
-            resident::Removal::Linked => Cancel::Wake,
-            resident::Removal::Parked(entry) => Cancel::Grant(entry.take_grant()),
-            resident::Removal::Empty => Cancel::Empty,
         }
     }
 }

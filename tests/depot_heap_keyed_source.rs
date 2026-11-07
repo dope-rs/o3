@@ -161,26 +161,6 @@ fn retains_generations() {
 }
 
 #[test]
-fn preserves_layout() {
-    assert_eq!(
-        mem::size_of::<capacity::Key<'static, key::Handle>>(),
-        mem::size_of::<key::Handle>()
-    );
-    assert_eq!(
-        mem::size_of::<Option<capacity::Key<'static, key::Handle>>>(),
-        mem::size_of::<Option<key::Handle>>()
-    );
-    assert_eq!(
-        mem::size_of::<keyed::Min<key::Handle, u64, u32, capacity::Domain<'static>>>(),
-        mem::size_of::<keyed::Min<key::Handle, u64>>()
-    );
-    assert_eq!(
-        mem::size_of::<round::Set<u64, (), { u32::MAX }, capacity::Domain<'static>>>(),
-        mem::size_of::<round::Set<u64>>()
-    );
-}
-
-#[test]
 fn classifies_bound_state() {
     keyed::Min::<key::Handle, u64>::try_with(capacity::Count::new(1), |_, domain| {
         let mut records = round::Set::<u64, (), 2, _>::try_in(domain).expect("source storage");

@@ -2,11 +2,9 @@
 
 pub use domain::{
     Domain,
-    budget::{BindError, Budget},
+    budget::{BindError, Budget, Charge},
     errors::AllocError,
-    lease::{Lease, charge::Charge},
     reuse::Reuse,
-    scope::Scope,
 };
 pub(in crate::buffer) use shared::state::State;
 pub use shared::{Shared, exact::Exact};

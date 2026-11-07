@@ -25,22 +25,6 @@ pub(in crate::buffer::segments) struct Descriptor {
     pub(in crate::buffer::segments) resident_bytes: usize,
 }
 
-impl Descriptor {
-    pub(in crate::buffer::segments) const fn new(
-        links: ends::Exclusive<slots::Index>,
-        count: NonZero<u32>,
-        len: usize,
-        resident: usize,
-    ) -> Self {
-        Self {
-            links,
-            count,
-            len,
-            resident_bytes: resident,
-        }
-    }
-}
-
 struct Parts<T> {
     bundle: Fields<T>,
     nodes: slots::Capacity<segments::Item<T>>,
@@ -60,7 +44,7 @@ impl<T> Parts<T> {
         .min(segments::Plan::max_segments());
         let plan = segments::Plan {
             segments: capacity,
-            chains: usize::from(required.is_many()),
+            chains: 1,
         };
         Self::try_new(plan).or_else(|error| {
             if capacity == count {
@@ -74,9 +58,6 @@ impl<T> Parts<T> {
     }
 
     fn try_new(plan: segments::Plan) -> Result<Self, crate::alloc::Overflow> {
-        if plan.segments > segments::Plan::max_segments() || plan.chains > plan.segments / 2 {
-            return Err(crate::alloc::Overflow);
-        }
         let nodes = slots::Capacity::new(plan.segments)?;
         let desc = slots::Capacity::new(plan.chains)?;
         let bundle = alloc::raw::Bundle::try_root::<Header<T>>(1)?
@@ -95,12 +76,6 @@ impl<T> Parts<T> {
 #[repr(transparent)]
 pub(in crate::buffer::segments) struct Key(usize);
 
-pub(in crate::buffer::segments) enum State {
-    Empty,
-    Single(slots::Index),
-    Multi(slots::Index),
-}
-
 /// A decoded key whose retained owner is known to be nonempty.
 pub(in crate::buffer::segments) enum Occupied {
     Single(slots::Index),
@@ -116,15 +91,12 @@ impl Key {
         self.0 == 0
     }
 
-    pub(in crate::buffer::segments) const fn state(&self) -> State {
+    pub(in crate::buffer::segments) const fn state(&self) -> Option<Occupied> {
         if self.0 == 0 {
-            return State::Empty;
+            return None;
         }
         // SAFETY: the empty key was excluded above.
-        match unsafe { self.occupied() } {
-            Occupied::Single(index) => State::Single(index),
-            Occupied::Multi(index) => State::Multi(index),
-        }
+        Some(unsafe { self.occupied() })
     }
 
     /// # Safety

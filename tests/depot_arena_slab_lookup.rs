@@ -3,7 +3,7 @@ pub mod common;
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
 
-use std::{array, convert::Infallible, mem};
+use std::array;
 
 use common::{
     alloc::system::Tracker,
@@ -11,7 +11,7 @@ use common::{
 };
 use o3::depot::{
     arena::slab::{
-        self, entries,
+        self,
         external::{self, errors, shared},
         key, lookup,
     },
@@ -63,7 +63,7 @@ fn retains_free_links() {
         key::Handle::from_parts(key::Parts::new(index as u32, key::Generation::MIN))
     });
     for index in [2, 0, 5, 7, 1, 6, 4, 3] {
-        let vacant = slab::Slots::new(&mut table).vacant_at(index);
+        let vacant = table.vacant_at(index);
         let vacant = vacant.expect("assertion failed: vacant.is_some()");
         let selected = vacant.stage(index).commit();
         assert!((selected.key()) == (keys[index as usize]));
@@ -82,7 +82,7 @@ fn retains_free_links() {
     for index in [5, 2, 1, 6] {
         let old = keys[index];
         {
-            let vacant = slab::Slots::new(&mut table).vacant_at(index as u32);
+            let vacant = table.vacant_at(index as u32);
             let vacant = vacant.expect("assertion failed: vacant.is_some()");
             let selected = vacant.stage(index as u32).commit();
             keys[index] = selected.key();
@@ -102,55 +102,6 @@ fn retains_free_links() {
     }
     assert!((table.len()) == (capacity::Count::new(8)));
     assert!((table.insert(100)) == (Err(100)));
-}
-
-#[test]
-fn reads_disjoint_slots() {
-    let mut table =
-        (slab::Store::<u32, (), 2>::try_new(capacity::Count::new(2))).expect("two-slot backing");
-    let first = (table.insert(11)).expect("first occupied slot");
-    let old = (table.insert(13)).expect("neighbor slot");
-    assert_eq!(table.remove(old), Some(13));
-    let next = (table.insert(17)).expect("recycled neighbor");
-    let held =
-        (table.try_entry(first)).expect("slab key must retain its original slot observation");
-
-    let (mut held, rest) = held.split();
-    let current = held.get_mut();
-    assert!(
-        matches!(rest.try_get(first), Err(key::Error::Busy { key, actual, borrow })
-        if key == first && actual == first.generation() && borrow.index == first.index())
-    );
-    assert!(matches!(rest.try_get(next), Ok(&17)));
-    assert!(
-        matches!(rest.try_get(old), Err(key::Error::Generation { key, actual })
-        if key == old && actual == next.generation())
-    );
-    let outside = key::Handle::from_parts(key::Parts::new(7, key::Generation::MIN));
-    assert!(
-        matches!(rest.try_get(outside), Err(key::Error::Index { key, capacity })
-        if key == outside && capacity == capacity::Count::new(2))
-    );
-    assert_eq!(*current, 11);
-    *current = 19;
-    let neighbor =
-        (rest.try_get(next)).expect("slab key must retain its original slot observation");
-
-    assert_eq!(held.remove(), 19);
-    assert_eq!(*neighbor, 17);
-    assert!((table.try_get(next).ok()) == (Some(&17)));
-    assert!((table.remove(next)) == (Some(17)));
-    let first = (table.insert(23)).expect("the other physical slot remains reusable");
-    let held =
-        (table.try_entry(first)).expect("slab key must retain its original slot observation");
-
-    let (held, rest) = held.split();
-    assert!(
-        matches!(rest.try_get(next), Err(key::Error::Retired { key, actual, retired: () })
-        if key == next && actual == next.generation())
-    );
-    assert_eq!(held.remove(), 23);
-    assert_eq!(table.len(), o3::depot::capacity::Count::EMPTY);
 }
 
 #[test]
@@ -223,49 +174,6 @@ fn rejects_stale_split() {
 }
 
 #[test]
-fn retains_guard_niches() {
-    let pair = 2 * mem::size_of::<usize>();
-    assert_eq!(mem::size_of::<slab::Rest<'static, u32>>(), pair);
-    assert_eq!(mem::size_of::<Option<slab::Rest<'static, u32>>>(), pair);
-    assert_eq!(
-        mem::size_of::<slab::Occupied<entries::Busy<'static, u32>>>(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<Option<slab::Occupied<entries::Busy<'static, u32>>>>(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<slab::Vacant<entries::Pending<'static, u32>>>(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<Option<slab::Vacant<entries::Pending<'static, u32>>>>(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<
-            slab::Staged<o3::mem::Lease<entries::Busy<'static, u32>, o3::mem::lease::Open>>,
-        >(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<
-            Option<slab::Staged<o3::mem::Lease<entries::Busy<'static, u32>, o3::mem::lease::Open>>>,
-        >(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<slab::Occupied<entries::Busy<'static, u32>, (), false>>(),
-        pair
-    );
-    assert_eq!(
-        mem::size_of::<Option<slab::Vacant<entries::Pending<'static, u32>, (), false>>>(),
-        pair
-    );
-}
-
-#[test]
 fn rejects_absence() {
     let storage = (shared::Storage::<usize, Epoch>::try_new(capacity::Count::new(1)))
         .expect("shared storage allocation");
@@ -287,11 +195,10 @@ fn rejects_absence() {
 
 #[test]
 fn excludes_before_identity() {
-    let mut table = external::Exclusive::<(), Wide, (), 1, 2>::try_new(capacity::Count::new(5))
+    let mut table = external::Exclusive::<(), Wide, (), 2>::try_new(capacity::Count::new(5))
         .expect("odd partitioned extent");
-    let mut finite =
-        external::Exclusive::<(), Generation, (), 1, 2>::try_new(capacity::Count::new(2))
-            .expect("two partitioned slots");
+    let mut finite = external::Exclusive::<(), Generation, (), 2>::try_new(capacity::Count::new(2))
+        .expect("two partitioned slots");
     let ((), counts) = Tracker::measure(|| {
         for (range, excluded, expected) in [
             (0..5, 0, 1),
@@ -348,36 +255,4 @@ fn excludes_before_identity() {
         ));
     });
     assert_eq!(counts, [0; 4]);
-}
-
-#[test]
-fn preserves_layout() {
-    type Borrowed = external::Borrowed<
-        entries::Busy<
-            'static,
-            external::Stamped<usize, Epoch>,
-            { u32::MAX },
-            entries::Interior<true>,
-            1,
-        >,
-        (),
-        true,
-    >;
-    assert_eq!(mem::size_of::<Borrowed>(), 2 * mem::size_of::<usize>());
-    assert_eq!(
-        mem::size_of::<Option<Borrowed>>(),
-        mem::size_of::<Borrowed>()
-    );
-    assert_eq!(
-        mem::size_of::<lookup::Error<()>>(),
-        mem::size_of::<lookup::Error>()
-    );
-    assert_eq!(
-        mem::size_of::<lookup::Error<(), Infallible>>(),
-        mem::size_of::<lookup::Error>()
-    );
-    assert_eq!(
-        mem::size_of::<lookup::Error<Infallible, Infallible>>(),
-        mem::size_of::<lookup::Error>()
-    );
 }

@@ -1,10 +1,9 @@
 use std::{marker, pin};
 
-pub use value::Value;
+/// A value accessible only with the matching application [`Token`].
+pub use crate::base::cell::values::Value;
 
-use crate::base::cell::{Sealed, brand, region, values};
-
-mod value;
+use crate::base::cell::{Sealed, region};
 
 /// One generative application identity, invariant and unforgeable.
 ///
@@ -22,49 +21,25 @@ impl<'id> Sealed for Identity<'id> {}
 impl<'id> Brand for Identity<'id> {}
 
 /// Exclusive permission for one generative application domain.
-#[repr(transparent)]
-pub struct Token<B: Brand> {
-    token: values::Token<B>,
+pub use crate::base::cell::values::Token;
+
+/// Creates matching domains and lends one pinned root for their lifetime.
+pub fn scope_pinned<T: ?Sized, R>(
+    root: pin::Pin<&mut T>,
+    f: impl for<'id> FnOnce(
+        Token<Identity<'id>>,
+        (
+            region::Token<region::Identity<'id>>,
+            region::Token<region::Identity<'id, 1>>,
+        ),
+        pin::Pin<&'id mut T>,
+    ) -> R,
+) -> R {
+    f(Token::new(), (Token::new(), Token::new()), root)
 }
 
-impl<B: Brand> Token<B> {
-    pub const fn bind<T>(&self, value: T) -> brand::Value<B, T> {
-        brand::Value {
-            value: self.token.proof().bind(value),
-        }
-    }
-
-    pub fn pin_mut<'a, T>(
-        &'a mut self,
-        value: pin::Pin<&'a brand::Value<B, T>>,
-    ) -> pin::Pin<&'a mut T> {
-        self.token.pin_mut(value)
-    }
-
-    pub fn borrow_pin<'a, T>(&'a self, value: pin::Pin<&'a brand::Value<B, T>>) -> pin::Pin<&'a T> {
-        self.token.borrow_pin(value)
-    }
-}
-
-impl Token<Identity<'_>> {
-    /// Creates matching domains and lends one pinned root for their lifetime.
-    pub fn scope_pinned<T: ?Sized, R>(
-        root: pin::Pin<&mut T>,
-        f: impl for<'id> FnOnce(
-            Token<Identity<'id>>,
-            (
-                region::Token<region::Identity<'id>>,
-                region::Token<region::Identity<'id, 1>>,
-            ),
-            pin::Pin<&'id mut T>,
-        ) -> R,
-    ) -> R {
-        f(
-            Token {
-                token: values::Token::new(),
-            },
-            (values::Token::new().into(), values::Token::new().into()),
-            root,
-        )
-    }
-}
+const _: () = {
+    assert!(size_of::<Token<Identity<'static>>>() == 0);
+    assert!(size_of::<Value<Identity<'static>, u64>>() == size_of::<u64>());
+    assert!(align_of::<Value<Identity<'static>, u64>>() == align_of::<u64>());
+};

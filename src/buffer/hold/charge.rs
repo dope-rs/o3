@@ -89,6 +89,7 @@ impl Charge {
 /// Borrowed topology and Segment's shared-range contract retain this subset
 /// within the chain's admitted length and cardinality.
 impl<T: buffer::raw::Segment> From<&segments::Chain<T>> for Charge {
+    #[inline(always)]
     fn from(chain: &segments::Chain<T>) -> Self {
         let mut logical = 0usize;
         let mut owners = 0usize;

@@ -11,25 +11,18 @@ pub struct Slot<'a, T: Copy, const G: usize, const N: usize = 0>(
 );
 
 impl<'a, T: Copy, const G: usize, const N: usize> Slot<'a, T, G, N> {
-    fn inner(&self) -> round::Slot<'a, Cell<Option<T>>, G, N> {
-        round::Slot {
-            owner: self.0.owner,
-            index: self.0.index,
-        }
-    }
-
     pub fn get(&self) -> Option<T> {
         self.0.get().get()
     }
 
     /// Replaces this payload and leaves it outside every queue.
     pub fn write(&self, value: T) {
-        self.inner().clear().set(Some(value));
+        self.0.clear().set(Some(value));
     }
 
     /// Removes membership before transferring this payload's initialization.
     pub fn take(&self) -> Option<T> {
-        self.inner().clear().take()
+        self.0.clear().take()
     }
 
     pub fn try_lane(

@@ -9,30 +9,6 @@ use crate::buffer;
 pub mod raw;
 mod reader;
 
-/// Safe traversal for a source whose raw implementation proves exactness.
-pub trait Source: buffer::raw::Chunks {
-    fn chunks(&self) -> Self::Cursor<'_> {
-        buffer::raw::Chunks::start(self)
-    }
-
-    /// Copies an exact array-sized suffix without changing the retained source.
-    fn suffix<const N: usize>(&self) -> Option<[u8; N]> {
-        let mut cursor = self.chunks();
-        let skipped = buffer::raw::Scatter::remaining(&cursor).checked_sub(N)?;
-        Take::new(&mut cursor, skipped).finish();
-        let mut output = [0; N];
-        let source = Take::new(&mut cursor, usize::MAX);
-        // SAFETY: admission and exact traversal leave N bytes in the retained
-        // source, disjoint from this exclusive array of the same length.
-        unsafe {
-            buffer::raw::copy_slices(source.map(|chunk| chunk.bytes()), output.as_mut_ptr());
-        }
-        Some(output)
-    }
-}
-
-impl<T: buffer::raw::Chunks + ?Sized> Source for T {}
-
 /// An exclusively borrowed byte-bounded view of an exact cursor.
 #[must_use = "a bounded scatter view does nothing until it is iterated"]
 pub struct Take<'cursor, 'data, C> {
@@ -40,6 +16,8 @@ pub struct Take<'cursor, 'data, C> {
     remaining: usize,
     data: marker::PhantomData<&'data [u8]>,
 }
+
+const _: () = assert!(size_of::<Take<'static, 'static, &'static [u8]>>() == 2 * size_of::<usize>());
 
 impl<'cursor, 'data, C> Take<'cursor, 'data, C> {
     pub fn new(cursor: &'cursor mut C, limit: usize) -> Self
@@ -68,16 +46,11 @@ impl<'data, C: buffer::raw::Scatter<'data>> Take<'_, 'data, C> {
     pub fn next_chunk<const MAX: usize>(&mut self) -> Option<buffer::raw::Chunk<'data, MAX>> {
         const { assert!(MAX > 0) };
         let cap = NonZero::new(self.remaining.min(MAX))?;
-        Some(self.advance(cap))
-    }
-
-    fn advance<const MAX: usize>(&mut self, cap: NonZero<usize>) -> buffer::raw::Chunk<'data, MAX> {
         // SAFETY: the exclusive cursor borrow retains this admitted prefix.
         // Exact advancement consumes at most cap, which fits both remaining counts.
-        let left = unsafe { NonZero::new_unchecked(self.cursor.remaining()) };
-        let chunk = unsafe { self.cursor.advance(cap, left) };
+        let chunk = unsafe { self.cursor.advance(cap) };
         self.remaining -= chunk.len().get();
-        chunk
+        Some(chunk)
     }
 
     pub(in crate::buffer) fn finish(mut self) {
@@ -91,8 +64,7 @@ impl<'data, C: buffer::raw::Scatter<'data>> Iterator for Take<'_, 'data, C> {
     type Item = buffer::raw::Chunk<'data>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let cap = NonZero::new(self.remaining)?;
-        Some(self.advance(cap))
+        self.next_chunk::<{ usize::MAX }>()
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

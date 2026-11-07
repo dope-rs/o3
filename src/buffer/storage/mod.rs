@@ -1,6 +1,5 @@
 pub use owned::{
     Owned,
-    bytes::Bytes,
     exact::Exact,
     nonempty::{NonEmpty, Zero},
 };

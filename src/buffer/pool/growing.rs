@@ -40,7 +40,7 @@ impl Growing {
         plan: pool::Layout,
         first: Option<pool::NonEmpty>,
     ) -> Result<Self, alloc::Exhausted> {
-        let groups = array::Plan::from(Self::count(plan))
+        let groups = array::Plan::from(Self::count(plan, first))
             .try_allocate(())?
             .repeat_with(|| cell::Cell::new(mem::MaybeUninit::uninit()));
         let pool = Self {
@@ -129,13 +129,12 @@ impl Growing {
         }
     }
 
-    fn count(plan: pool::Layout) -> u8 {
-        let max = plan.slots();
-        if max <= 1 {
-            return max as u8;
-        }
-        let width = (max - 1).bit_width();
-        (width + 1) as u8
+    fn count(plan: pool::Layout, first: Option<pool::NonEmpty>) -> u8 {
+        first.map_or(0, |first| {
+            let warm = first.into_layout().slots();
+            let shift = (plan.slots().bit_width() - warm.bit_width()) & 31;
+            (1 + shift + u32::from((warm << shift) < plan.slots())) as u8
+        })
     }
 
     /// Borrows the monotonically initialized prefix at its permanent address.
@@ -155,7 +154,7 @@ impl Growing {
         let index = self.initialized.get();
         // SAFETY: the nonempty first group and subsequent Layout::next steps
         // at least double the allocated count until its last bounded group.
-        // count(plan) reserves that maximum group count; try_take also checks
+        // count reserves the exact bound of at most 33 groups; try_take also checks
         // its admission survived allocator reentry. Each insertion owns the
         // next vacant cell without relocating readers.
         unsafe {

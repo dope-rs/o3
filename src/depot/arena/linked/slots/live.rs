@@ -13,7 +13,8 @@ pub struct Live<T, H: linked::Source<T>, Tag = ()> {
 
 impl<T, H: linked::Source<T>, Tag> Live<T, H, Tag> {
     /// # Safety
-    /// The slot was detached from this owner's topology exactly once.
+    /// `index` is an initialized, unlinked live slot in this owner's exact store,
+    /// with no outstanding loans or capabilities and its unchanged TRACK return right.
     pub(crate) unsafe fn detached(owner: H, index: slots::Index<Tag>) -> Self {
         Self {
             vacant: slots::Vacant {
@@ -30,28 +31,10 @@ impl<T, H: linked::Source<T>, Tag> Live<T, H, Tag> {
 
     pub(crate) fn take(self) -> (T, slots::Vacant<T, H, Tag>) {
         let this = mem::ManuallyDrop::new(self);
-        let node = unsafe {
-            this.vacant
-                .owner
-                .store()
-                .region
-                .slot(this.vacant.index.raw())
-        };
+        let node = unsafe { this.vacant.owner.store().slot(this.vacant.index.raw()) };
         let value = unsafe { (&*node.value.get()).assume_init_read() };
         node.next.set(this.vacant.index.raw());
         (value, unsafe { ptr::read(&this.vacant) })
-    }
-
-    /// Destroys the detached value and retains its exact slot reservation.
-    pub(crate) fn clear(self) -> slots::Vacant<T, H, Tag> {
-        let this = mem::ManuallyDrop::new(self);
-        let index = this.vacant.index.raw();
-        let node = unsafe { this.vacant.owner.store().region.slot(index) };
-        // SAFETY: this consumed Live owns this node's initialized value.
-        unsafe { node.clear(index) };
-        // SAFETY: destruction consumed the initialized value; the sole vacant
-        // entitlement transfers unchanged without running Live::drop again.
-        unsafe { ptr::read(&this.vacant) }
     }
 
     pub(crate) const fn index(&self) -> slots::Index<Tag> {
@@ -74,19 +57,19 @@ impl<T, H: linked::Source<T>, Tag> Live<T, H, Tag> {
 impl<T, H: linked::Source<T>, Tag> Drop for Live<T, H, Tag> {
     fn drop(&mut self) {
         let index = self.vacant.index.raw();
-        let node = unsafe { self.vacant.owner.store().region.slot(index) };
+        let node = unsafe { self.vacant.owner.store().slot(index) };
         // SAFETY: Drop consumes this node's sole initialized-value owner.
-        unsafe { node.clear(index) };
+        unsafe { (&mut *node.value.get()).assume_init_drop() };
     }
 }
 
 impl<T, Tag> Live<T, &slots::Store<T>, Tag> {
     /// # Safety
-    /// The links are a live partition in this claim's exact store.
+    /// The links are a live partition in this claim's exact store; the claim has no successor.
     pub(crate) unsafe fn append(self, links: &mut ends::Exclusive<slots::Index<Tag>>) {
         let mut claim = self;
         let index = claim.index();
-        unsafe { links.append_store(claim.owner_mut(), index) };
+        unsafe { links.append_end(claim.owner_mut(), index) };
         unsafe { claim.publish() };
     }
 

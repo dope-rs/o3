@@ -2,8 +2,9 @@ use std::convert;
 
 use crate::{alloc, mem::credit};
 
-pub(in crate::buffer) enum Error<E> {
-    Policy(E),
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Error<E> {
+    Budget(E),
     Allocation(alloc::Exhausted),
 }
 

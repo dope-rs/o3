@@ -119,6 +119,13 @@ impl<Tag> State<Tag> {
         Some(unsafe { store.value(index) })
     }
 
+    /// # Safety
+    /// Reachable indices are this store's unique live partition.
+    pub(crate) unsafe fn back<'a, T>(&'a self, store: &'a slots::Store<T>) -> Option<&'a T> {
+        let index = slots::Index::<Tag>::new(self.back_index()?);
+        Some(unsafe { store.value(index) })
+    }
+
     /// Detaches the front value named by its checked owner-bound index.
     /// # Safety
     /// `index` is this state's front and its reachable indices are this store's unique live partition.
@@ -259,9 +266,7 @@ impl<'a, T, Tag, O: crate::depot::raw::SlotOwner<Tag>> Front<'a, T, Tag, O> {
     }
 
     pub fn discard(self) {
-        unsafe { self.owner.detach(self.store, self.index) }
-            .clear()
-            .release();
+        drop(unsafe { self.owner.detach(self.store, self.index) });
     }
 }
 

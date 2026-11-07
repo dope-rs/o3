@@ -6,7 +6,7 @@ use crate::{base::cell::region, buffer::storage::provided::fixed};
 #[repr(transparent)]
 pub struct Loan<'d, T> {
     pub(in crate::buffer::storage::provided) target: &'d mut T,
-    pub(in crate::buffer::storage::provided) brand: region::Proof<region::Identity<'d>>,
+    pub(in crate::buffer::storage::provided) brand: region::Identity<'d>,
 }
 
 impl<'d, T> Loan<'d, T> {

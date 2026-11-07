@@ -22,9 +22,7 @@ pub unsafe trait TagEntry {
     }
     /// # Safety
     /// Mutations preserve the exact entry and hook; implementations return its retained entry.
-    unsafe fn linked_mut<P: crate::depot::raw::TagFinish<Self>>(
-        state: &mut tagged::Linked<Self, P>,
-    ) -> &mut Self
+    unsafe fn linked_mut(state: &mut tagged::Linked<Self>) -> &mut Self
     where
         Self: Sized,
     {

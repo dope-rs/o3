@@ -13,7 +13,7 @@ use crate::{
             queue,
         },
     },
-    depot::capacity,
+    depot::{capacity, raw::Input as _},
     mem::rc,
 };
 
@@ -25,18 +25,14 @@ pub struct Pool<T> {
 
 impl<T> Pool<T> {
     pub fn try_new(plan: segments::Plan) -> Result<Self, crate::alloc::Error> {
+        if plan.chains > plan.segments / 2 {
+            return Err(crate::alloc::Overflow.into());
+        }
         let layout = Parts::<T>::try_new(plan)?;
         Self::allocate(layout)
     }
 
-    pub(in crate::buffer::segments) fn try_reserve(
-        current: segments::Count,
-        required: segments::Count,
-    ) -> Result<Self, crate::alloc::Error> {
-        let layout = Parts::<T>::try_reserve(current, required)?;
-        Self::allocate(layout)
-    }
-
+    #[inline]
     fn allocate(layout: Parts<T>) -> Result<Self, crate::alloc::Error> {
         let heap = layout.bundle.layout();
         let fields = layout.bundle.try_allocate()?;
@@ -61,8 +57,8 @@ impl<T> Pool<T> {
 
     pub fn capacity(&self) -> segments::Plan {
         segments::Plan {
-            segments: self.header().nodes.region.capacity().len(),
-            chains: self.header().descriptors.region.capacity().len(),
+            segments: self.header().nodes.capacity().len(),
+            chains: self.header().descriptors.capacity().len(),
         }
     }
 
@@ -119,10 +115,10 @@ impl<T> Pool<T> {
     }
 
     /// Retains owners transactionally within the available metadata capacity.
-    pub(in crate::buffer::segments) fn try_build<E: From<segments::Error>>(
+    pub(in crate::buffer::segments) fn try_build(
         &self,
-        plan: impl queue::Build<T, E>,
-    ) -> Result<segments::Chain<T>, E>
+        plan: &queue::Projected<'_, T>,
+    ) -> Result<segments::Chain<T>, queue::RetainError>
     where
         T: buffer::raw::Segment,
     {
@@ -146,7 +142,7 @@ impl<T> Pool<T> {
         let handle = self.try_clone().map_err(segments::Error::Retain)?;
         let key = {
             let mut writer = exact::Writer::new(nodes);
-            let plan = reserve.start().0.try_run(|claim, owner| {
+            let (len, resident) = reserve.start().0.try_run(|claim, owner| {
                 unsafe { writer.push_claim(claim, owner) };
             })?;
             let links = writer.into_links();
@@ -154,12 +150,12 @@ impl<T> Pool<T> {
                 State::Empty => Key::EMPTY,
                 State::One => Key::single(links.head_raw()),
                 State::Many { count, claim } => {
-                    let live = claim.insert(Descriptor::new(
+                    let live = claim.insert(Descriptor {
                         links,
-                        count.nonzero(),
-                        plan.len(),
-                        plan.resident(),
-                    ));
+                        count: count.nonzero(),
+                        len,
+                        resident_bytes: resident,
+                    });
                     let key = Key::multi(live.index());
                     unsafe { live.publish() };
                     key

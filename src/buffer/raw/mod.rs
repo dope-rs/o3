@@ -1,9 +1,7 @@
 use std::{
     marker, mem,
     num::NonZero,
-    ops,
     slice::{from_raw_parts, from_raw_parts_mut},
-    str,
 };
 
 use crate::{
@@ -25,9 +23,7 @@ mod segment;
 pub use segment::Segment;
 mod scatter;
 pub use scatter::Scatter;
-pub(in crate::buffer) use slices::{
-    Batch, Copy, Exclusive, Indexed, IndexedMut, Linked, LinkedMut, Prefix, SliceExt,
-};
+pub(in crate::buffer) use slices::{Exclusive, Prefix, SliceExt};
 
 /// # Safety
 /// The `buffer::raw::Source` contract must hold. `buffer::Cursor` must expose that same range.
@@ -70,41 +66,12 @@ unsafe impl<T: Retain> Retain for Option<T> {
     }
 }
 
-/// A complete immutable source whose entire visible range is valid UTF-8.
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct Utf8<O: buffer::raw::Source> {
-    owner: O,
-}
-
-impl<O: buffer::raw::Source> Utf8<O> {
-    /// Validates and retains one complete immutable UTF-8 source.
-    pub fn try_new(owner: O) -> Result<Self, str::Utf8Error> {
-        str::from_utf8(owner.as_ref())?;
-        Ok(Self { owner })
-    }
-
-    /// # Safety
-    /// The source's entire unchanged visible range is valid UTF-8.
-    pub unsafe fn new(owner: O) -> Self {
-        Self { owner }
-    }
-
-    pub fn as_str(&self) -> &str {
-        // SAFETY: construction proves UTF-8 and buffer::raw::Source preserves the complete range.
-        unsafe { str::from_utf8_unchecked(self.owner.as_ref()) }
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        self.owner.as_ref()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn len(&self) -> usize {
-        self.owner.as_ref().len()
-    }
+/// Retains a complete source whose UTF-8 was already validated.
+/// # Safety
+/// The source's entire unchanged visible range is valid UTF-8.
+pub unsafe fn utf8<O: Source>(owner: O) -> buffer::storage::Str<O> {
+    // SAFETY: the caller proves UTF-8 for this complete immutable source.
+    unsafe { buffer::storage::Str::new(owner) }
 }
 
 /// # Safety
@@ -127,19 +94,15 @@ pub trait Unary<T> {
 }
 
 /// # Safety
-/// Source and iterator totals remain equal and unchanged through exhaustion: exact nonoverflowing owner count, visible byte sum and resident charge sum.
-/// Success yields exactly that many nonempty owners, never more on failure; preserve backing, borrows and `Output` cardinality (`Many` requires at least two).
+/// Source and returned totals remain equal and unchanged through exhaustion: exact nonoverflowing owner count, visible byte sum and resident charge sum.
+/// The count is at least two. Success yields exactly that many nonempty owners, never more on failure; preserve backing and borrows.
+/// The returned iterator and totals remain valid when either is dropped first.
 pub unsafe trait Sequence<T: buffer::raw::Segment>: Sized + Total {
     type Item;
     type Error;
-    type Output: Assemble<T>;
-    fn owners(self) -> impl Iterator<Item = Self::Item> + Total;
+    fn owners(self) -> (impl Iterator<Item = Self::Item>, impl Total);
 
     fn reject(self, error: crate::alloc::Error) -> Self::Error;
-}
-
-pub trait Assemble<T: buffer::raw::Segment>: Sized {
-    fn finish<S: Sequence<T, Output = Self>>(input: segments::Built<T, S>) -> Self;
 }
 
 pub trait Total {
@@ -152,22 +115,10 @@ pub trait Total {
     fn resident(&self) -> usize;
 }
 
-impl<I, M: Total> Total for buffer::raw::Batch<I, M> {
-    fn count(&self) -> segments::Count {
-        self.total.count()
-    }
-    fn len(&self) -> usize {
-        self.total.len()
-    }
-    fn resident(&self) -> usize {
-        self.total.resident()
-    }
-}
-
 /// Immutable scattered bytes with an exact length and borrowed cursor.
 ///
 /// # Safety
-/// `start()` has `len()` remaining; offset cursors exist through the end.
+/// `chunks()` has `len()` remaining; offset cursors exist through the end.
 pub unsafe trait Chunks {
     type Cursor<'data>: Scatter<'data>
     where
@@ -178,9 +129,24 @@ pub unsafe trait Chunks {
     }
 
     fn len(&self) -> usize;
-    fn start(&self) -> Self::Cursor<'_>;
+    fn chunks(&self) -> Self::Cursor<'_>;
     fn cursor(&self, offset: usize) -> Option<Self::Cursor<'_>> {
-        Scatter::seek(self.start(), offset)
+        Scatter::seek(self.chunks(), offset)
+    }
+
+    /// Copies an exact array-sized suffix without changing the retained source.
+    fn suffix<const N: usize>(&self) -> Option<[u8; N]> {
+        let mut cursor = self.chunks();
+        let skipped = buffer::raw::Scatter::remaining(&cursor).checked_sub(N)?;
+        segments::scatter::Take::new(&mut cursor, skipped).finish();
+        let mut output = [0; N];
+        let source = segments::scatter::Take::new(&mut cursor, usize::MAX);
+        // SAFETY: admission and exact traversal leave N bytes in the retained
+        // source, disjoint from this exclusive array of the same length.
+        unsafe {
+            buffer::raw::copy_slices(source.map(|chunk| chunk.bytes()), output.as_mut_ptr());
+        }
+        Some(output)
     }
 }
 
@@ -266,49 +232,20 @@ impl<'a> Projection<'a, '_> {
 }
 
 /// Immutable UTF-8 in one exact allocation bound to its paying domain.
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct Text<'d> {
-    text: buffer::raw::Utf8<resident::Exact<'d>>,
-}
-
-impl<'d> Text<'d> {
-    /// # Safety
-    /// The complete immutable owner must contain valid UTF-8.
-    pub unsafe fn from_utf8(owner: resident::Exact<'d>) -> Self {
-        // SAFETY: the caller proves UTF-8 for this complete immutable allocation.
-        Self {
-            text: unsafe { buffer::raw::Utf8::new(owner) },
-        }
-    }
-
-    pub fn try_clone(&self) -> Result<Self, rc::Error> {
-        // SAFETY: retaining the exact owner preserves its complete validated UTF-8 range.
-        Ok(unsafe { Self::from_utf8(self.text.owner.try_clone()?) })
-    }
-}
-
-const _: () = assert!(size_of::<Text<'static>>() == size_of::<usize>());
-
-impl<'d> ops::Deref for Text<'d> {
-    type Target = buffer::raw::Utf8<resident::Exact<'d>>;
-    fn deref(&self) -> &Self::Target {
-        &self.text
-    }
-}
+pub type Text<'d> = buffer::storage::Str<resident::Exact<'d>>;
 
 /// Exclusive initialized suffix retained through its output operation.
 pub struct Output<'a, L = pool::Layout> {
     target: &'a mut pool::Span<owners::Plain<L>, pool::Owned, state::Initialized>,
 }
 
-impl<'a, L> Output<'a, L> {
-    pub(in crate::buffer) const fn new(
-        target: &'a mut pool::Span<owners::Plain<L>, pool::Owned, state::Initialized>,
-    ) -> Self {
-        Self { target }
+impl<L> pool::Span<owners::Plain<L>, pool::Owned, state::Initialized> {
+    pub fn output(&mut self) -> Output<'_, L> {
+        Output { target: self }
     }
+}
 
+impl<'a, L> Output<'a, L> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -318,15 +255,15 @@ impl<'a, L> Output<'a, L> {
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        let (data, start) = buffer::raw::Prefix::prefix(&**self.target);
+        let (data, start) = buffer::raw::Prefix::prefix(self.target);
         // SAFETY: Initialized retains every byte of this exact exclusive suffix.
         unsafe { range_mut(data.cast(), start as usize, self.len()) }
     }
 
     /// # Safety
     /// The foreign operation must prove `len` fits this unchanged output.
-    pub unsafe fn complete(self, len: NonZero<usize>) -> pool::Complete<'a, L> {
-        unsafe { pool::Complete::new(self.target, len) }
+    pub unsafe fn complete(self, len: NonZero<usize>) {
+        *Exclusive::len_mut(self.target) += len.get() as u32;
     }
 }
 
@@ -394,9 +331,7 @@ pub unsafe trait Initializer {
     unsafe fn initialize(&self, target: *mut mem::MaybeUninit<u8>);
 }
 
-pub(in crate::buffer) use store::{
-    Backing, Debit, Growth, Header, Heap, Policy, Rc, Space, Token, Unique,
-};
+pub(in crate::buffer) use store::{Backing, Debit, Header, Heap, Policy, Rc, Unique};
 
 mod length;
 pub use length::Length;
@@ -468,10 +403,16 @@ const _: () = {
     assert!(mem::size_of::<Option<Chunk<'static>>>() == mem::size_of::<&[u8]>());
 };
 
-pub(in crate::buffer) unsafe fn copy_slices<'a>(
-    sources: impl IntoIterator<Item = &'a [u8]>,
-    target: *mut u8,
-) {
+/// Copies slices consecutively without publishing a length.
+///
+/// # Safety
+/// The finite source sequence's total length must fit `isize` without overflow.
+/// `target` must be nonnull and retain exclusive writable storage for that range
+/// in one allocation; an aligned dangling pointer is allowed for a zero total.
+/// Sources must remain valid and disjoint from the entire destination throughout
+/// the call. Iterator callbacks must preserve these conditions and must not
+/// access the destination.
+pub unsafe fn copy_slices<'a>(sources: impl IntoIterator<Item = &'a [u8]>, target: *mut u8) {
     let mut offset = 0;
     for source in sources {
         // SAFETY: the caller retains all sources and their complete disjoint target.

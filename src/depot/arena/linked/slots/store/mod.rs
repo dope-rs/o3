@@ -18,29 +18,31 @@ mod input;
 /// Access to one exact linked-slot region without owning its allocation.
 #[derive(Debug)]
 pub struct Store<T> {
-    pub(crate) region: Region<T>,
+    slots: ptr::NonNull<mem::MaybeUninit<slots::Node<T>>>,
+    capacity: slots::Capacity<T>,
+    initialized: cell::Cell<u32>,
     pub(super) free: cell::Cell<u32>,
-    pub(super) available: cell::Cell<u32>,
+    pub(in crate::depot) available: cell::Cell<u32>,
     ownership: marker::PhantomData<T>,
 }
 
 /// Moving the descriptor preserves its region pointer and resident addresses.
 impl<T> Unpin for Store<T> {}
 
-/// Address and initialized prefix of one exact slot allocation.
-#[derive(Debug)]
-pub(crate) struct Region<T> {
-    slots: ptr::NonNull<mem::MaybeUninit<slots::Node<T>>>,
-    capacity: slots::Capacity<T>,
-    initialized: cell::Cell<u32>,
-}
+impl<T> Store<T> {
+    pub(crate) const END: u32 = u32::MAX;
 
-impl<T> Region<T> {
-    const unsafe fn new(base: ptr::NonNull<slots::Node<T>>, capacity: slots::Capacity<T>) -> Self {
+    pub(crate) const unsafe fn new(
+        base: ptr::NonNull<slots::Node<T>>,
+        capacity: slots::Capacity<T>,
+    ) -> Self {
         Self {
             slots: base.cast(),
             capacity,
             initialized: cell::Cell::new(0),
+            free: cell::Cell::new(Self::END),
+            available: cell::Cell::new(capacity.get()),
+            ownership: marker::PhantomData,
         }
     }
 
@@ -57,7 +59,7 @@ impl<T> Region<T> {
     unsafe fn init<const LIVE: bool>(&self) -> (u32, &slots::Node<T>) {
         let index = self.initialized.get();
         let node = unsafe { self.slots.as_ptr().add(index as usize) };
-        let next = if LIVE { Store::<T>::END } else { index };
+        let next = if LIVE { Self::END } else { index };
         unsafe {
             node.write(mem::MaybeUninit::new(slots::Node::vacant(next)));
         }
@@ -69,22 +71,6 @@ impl<T> Region<T> {
     /// `index` is below this region's initialized prefix.
     pub(super) unsafe fn slot(&self, index: u32) -> &slots::Node<T> {
         unsafe { (&*self.slots.as_ptr().add(index as usize)).assume_init_ref() }
-    }
-}
-
-impl<T> Store<T> {
-    pub(crate) const END: u32 = u32::MAX;
-
-    pub(crate) const unsafe fn new(
-        base: ptr::NonNull<slots::Node<T>>,
-        capacity: slots::Capacity<T>,
-    ) -> Self {
-        Self {
-            region: unsafe { Region::new(base, capacity) },
-            free: cell::Cell::new(Self::END),
-            available: cell::Cell::new(capacity.get()),
-            ownership: marker::PhantomData,
-        }
     }
 
     pub(crate) fn available(&self) -> usize {
@@ -118,9 +104,9 @@ impl<T> Store<T> {
         let mut free = Free::new(self.free.get());
         let index = free.head;
         if index == Self::END {
-            return unsafe { self.region.init::<LIVE>() };
+            return unsafe { self.init::<LIVE>() };
         }
-        let node = unsafe { self.region.slot(index) };
+        let node = unsafe { self.slot(index) };
         let next = node.next.replace(if LIVE { Self::END } else { index });
         free.pop(index, next, Self::END);
         self.free.set(free.head);
@@ -136,7 +122,7 @@ impl<T> Store<T> {
     /// # Safety
     /// The caller solely owns this detached live slot with this exact TRACK policy.
     pub(crate) unsafe fn take<Tag, const TRACK: bool>(&self, index: slots::Index<Tag>) -> T {
-        let node = unsafe { self.region.slot(index.raw()) };
+        let node = unsafe { self.slot(index.raw()) };
         let value = unsafe { (&*node.value.get()).assume_init_read() };
         self.recycle(index.raw(), node);
         if TRACK {
@@ -156,16 +142,14 @@ impl<T> Store<T> {
     /// # Safety
     /// `index` belongs to the calling topology in this region.
     pub(crate) unsafe fn next<Tag>(&self, index: slots::Index<Tag>) -> slots::Index<Tag> {
-        slots::Index::new(unsafe { self.region.slot(index.raw()) }.next.get())
+        slots::Index::new(unsafe { self.slot(index.raw()) }.next.get())
     }
 
     /// Replaces one live slot's successor.
     /// # Safety
     /// `index` is live and `next` is empty or live in the same topology domain.
     pub(crate) unsafe fn set_next<Tag>(&self, index: slots::Index<Tag>, next: slots::Index<Tag>) {
-        unsafe { self.region.slot(index.raw()) }
-            .next
-            .set(next.raw());
+        unsafe { self.slot(index.raw()) }.next.set(next.raw());
     }
 
     /// Borrows one live value.
@@ -179,7 +163,7 @@ impl<T> Store<T> {
     /// # Safety
     /// `index` is live; reference aliases must derive from its exact owner.
     pub(crate) unsafe fn value_ptr<Tag>(&self, index: slots::Index<Tag>) -> *mut T {
-        unsafe { self.region.slot(index.raw()) }.value.get().cast()
+        unsafe { self.slot(index.raw()) }.value.get().cast()
     }
 
     /// Binds the sole detached live slot ownership to this store.
@@ -198,14 +182,13 @@ impl<T> Store<T> {
         }
         let mut free = self.free.get();
         while free != Self::END {
-            let slot = unsafe { self.region.slot(free) };
+            let slot = unsafe { self.slot(free) };
             let next = slot.next.replace(free);
             free = if next == free { Self::END } else { next };
         }
-        for offset in 0..self.region.initialized.get() {
-            let slot = unsafe {
-                (&mut *self.region.slots.as_ptr().add(offset as usize)).assume_init_mut()
-            };
+        for offset in 0..self.initialized.get() {
+            let slot =
+                unsafe { (&mut *self.slots.as_ptr().add(offset as usize)).assume_init_mut() };
             if slot.next.get() != offset {
                 unsafe { (&mut *slot.value.get()).assume_init_drop() };
             }
@@ -221,10 +204,7 @@ impl<T> linked::Source<T> for Store<T> {
     }
 }
 
-const _: () = {
-    assert!(mem::size_of::<Region<u64>>() == 2 * mem::size_of::<usize>());
-    assert!(mem::size_of::<Store<u64>>() == 3 * mem::size_of::<usize>());
-};
+const _: () = assert!(mem::size_of::<Store<u64>>() == 3 * mem::size_of::<usize>());
 
 #[repr(C)]
 pub(crate) struct Node<T> {
@@ -239,14 +219,6 @@ impl<T> Node<T> {
             next: cell::Cell::new(index),
         }
     }
-
-    /// # Safety
-    /// The caller solely owns this detached initialized node at `index`.
-    pub(super) unsafe fn clear(&self, index: u32) {
-        // SAFETY: the caller consumes this node's initialized value once.
-        unsafe { (&mut *self.value.get()).assume_init_drop() };
-        self.next.set(index);
-    }
 }
 
 /// A slot count whose exact allocation layout has been validated.
@@ -259,10 +231,9 @@ pub(crate) struct Capacity<T> {
 }
 
 impl<T> Capacity<T> {
-    pub(crate) fn new<N: capacity::Extent>(capacity: N) -> Result<Self, alloc::Overflow> {
-        let raw =
-            bounded::U32::from_usize(capacity::Extent::get(capacity)).ok_or(alloc::Overflow)?;
-        alloc::raw::Layout::<Node<T>>::try_check(raw.into_usize())?;
+    pub(crate) fn new(capacity: usize) -> Result<Self, alloc::Overflow> {
+        let raw = bounded::U32::from_usize(capacity).ok_or(alloc::Overflow)?;
+        alloc::raw::Layout::<Node<T>>::try_layout(raw.into_usize())?;
         Ok(Self {
             raw,
             value: marker::PhantomData,

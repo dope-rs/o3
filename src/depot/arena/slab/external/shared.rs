@@ -10,11 +10,7 @@ use crate::depot::{
     index::Initialized,
 };
 
-pub struct Cursor<G>(cell::Cell<Option<G>>);
-
-impl<'a, T, G: external::Generation, Tag, const PHYSICAL_MAX: u32>
-    Borrowed<'a, T, G, Tag, PHYSICAL_MAX>
-{
+impl<'a, T, G: external::Generation, Tag> Borrowed<'a, T, G, Tag> {
     pub fn key(&self) -> external::Key<G, Tag> {
         external::Key::new(self.entry.index(), self.entry.value().generation)
     }
@@ -41,47 +37,21 @@ impl<'a, T, G: external::Generation, Tag, const PHYSICAL_MAX: u32>
     }
 }
 
-impl<G: external::Generation> Cursor<G> {
-    pub(super) fn new() -> Self {
-        Self(cell::Cell::new(Some(G::INITIAL)))
-    }
-
-    pub(super) fn vacancy<'a, T, Tag, const PHYSICAL_MAX: u32>(
-        &self,
-        inner: Option<slab::Vacant<Pending<'a, T, G, PHYSICAL_MAX>, Tag>>,
-    ) -> Result<Vacancy<'a, T, G, Tag, PHYSICAL_MAX>, slab::Vacancy> {
-        let Some(epoch) = self.0.get() else {
-            return Err(slab::Vacancy::IdentityExhausted);
-        };
-        let Some(inner) = inner else {
-            return Err(slab::Vacancy::Full);
-        };
-        self.0.set(epoch.next());
-        Ok(inner.with_state(epoch))
-    }
-}
-
-impl<'a, T, G: external::Generation, Tag, const MAX: u32>
-    crate::depot::raw::Proof<
-        (&'a shared::Storage<T, G, Tag, MAX>, u32),
-        Initialized<entries::Allocated>,
-    >
+impl<'a, T, G: external::Generation, Tag>
+    crate::depot::raw::Proof<(&'a shared::Storage<T, G, Tag>, u32), Initialized<entries::Allocated>>
 {
-    pub fn vacancy(self) -> Result<Vacancy<'a, T, G, Tag, MAX>, slab::Vacancy> {
-        let cursor = &self.source().next;
-        cursor.vacancy(slab::Slots::reserve(self.into_native()))
+    pub fn vacancy(self) -> Result<Vacancy<'a, T, G, Tag>, slab::Vacancy> {
+        let owner = *self.source();
+        owner.issue(|| slab::Cell::reserve(self.into_native()))
     }
 
     pub fn try_entry(
         self,
-    ) -> Result<Borrowed<'a, T, G, Tag, MAX>, lookup::Error<(), convert::Infallible>> {
-        Ok(slab::Slots::current(self.into_native())?.into_external())
+    ) -> Result<Borrowed<'a, T, G, Tag>, lookup::Error<(), convert::Infallible>> {
+        Ok(slab::Cell::current(self.into_native())?.into_external())
     }
 
-    pub fn try_key(
-        self,
-        epoch: G,
-    ) -> Result<Borrowed<'a, T, G, Tag, MAX>, errors::Lookup<G, Tag, ()>> {
+    pub fn try_key(self, epoch: G) -> Result<Borrowed<'a, T, G, Tag>, errors::Lookup<G, Tag, ()>> {
         let key = external::Key::new(*self.key(), epoch);
         let current = self
             .try_entry()
@@ -89,49 +59,55 @@ impl<'a, T, G: external::Generation, Tag, const MAX: u32>
         current.try_epoch(epoch)
     }
 
-    fn into_native(self) -> Allocated<'a, T, G, Tag, MAX> {
+    fn into_native(self) -> Allocated<'a, T, G, Tag> {
         // SAFETY: this projection retains the same admitted backing allocation.
         unsafe { self.map(|(owner, index)| (&owner.inner, index)) }
     }
 }
 
 /// Shared interior-mutable storage with independent non-wrapping logical identities.
-pub struct Storage<T, G: external::Generation, Tag = (), const PHYSICAL_MAX: u32 = { u32::MAX }> {
+pub struct Storage<T, G: external::Generation, Tag = ()> {
     pub(in crate::depot::arena::slab::external::shared) inner:
-        slab::Cell<external::Stamped<T, G>, Tag, PHYSICAL_MAX, true>,
-    pub(in crate::depot::arena::slab::external::shared) next: shared::Cursor<G>,
+        slab::Cell<external::Stamped<T, G>, Tag, 1, true>,
+    pub(in crate::depot::arena::slab::external::shared) next: cell::Cell<Option<G>>,
 }
 
-impl<T, G: external::Generation, Tag, const PHYSICAL_MAX: u32> Storage<T, G, Tag, PHYSICAL_MAX> {
+impl<T, G: external::Generation, Tag> Storage<T, G, Tag> {
     pub fn try_new(cap: capacity::Count) -> Result<Self, crate::alloc::Error> {
-        let inner = slab::Cell::<external::Stamped<T, G>, Tag, PHYSICAL_MAX, true>::try_new(cap)?;
+        let inner = slab::Cell::<external::Stamped<T, G>, Tag, 1, true>::try_new(cap)?;
         Ok(Self {
             inner,
-            next: shared::Cursor::new(),
+            next: cell::Cell::new(Some(G::INITIAL)),
         })
+    }
+
+    fn issue<'a>(
+        &'a self,
+        acquire: impl FnOnce() -> Option<slab::Vacant<Pending<'a, T, G>, Tag>>,
+    ) -> Result<Vacancy<'a, T, G, Tag>, slab::Vacancy> {
+        let epoch = self.next.get().ok_or(slab::Vacancy::IdentityExhausted)?;
+        let inner = acquire().ok_or(slab::Vacancy::Full)?;
+        self.next.set(epoch.next());
+        Ok(inner.with_state(epoch))
     }
 
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 
-    pub fn vacancy_at(
-        &self,
-        index: u32,
-    ) -> Result<Vacancy<'_, T, G, Tag, PHYSICAL_MAX>, slab::Vacancy> {
-        self.next
-            .vacancy(slab::Slots::new(&self.inner).vacancy_at(index))
+    pub fn vacancy_at(&self, index: u32) -> Result<Vacancy<'_, T, G, Tag>, slab::Vacancy> {
+        self.issue(|| self.inner.vacancy_at(index))
     }
 
-    pub fn vacancy(&self) -> Result<Vacancy<'_, T, G, Tag, PHYSICAL_MAX>, slab::Vacancy> {
-        self.next.vacancy(self.inner.vacancy())
+    pub fn vacancy(&self) -> Result<Vacancy<'_, T, G, Tag>, slab::Vacancy> {
+        self.issue(|| self.inner.vacancy())
     }
 
     /// Acquires one exact logical identity and retains its physical borrow.
     pub fn try_entry(
         &self,
         key: external::Key<G, Tag>,
-    ) -> Result<Borrowed<'_, T, G, Tag, PHYSICAL_MAX>, errors::Lookup<G, Tag, ()>> {
+    ) -> Result<Borrowed<'_, T, G, Tag>, errors::Lookup<G, Tag, ()>> {
         self.try_entry_at(key.index())
             .map_err(|cause| errors::Lookup::Physical { key, cause })?
             .try_epoch(key.generation())
@@ -141,24 +117,19 @@ impl<T, G: external::Generation, Tag, const PHYSICAL_MAX: u32> Storage<T, G, Tag
     pub fn try_entry_at(
         &self,
         index: u32,
-    ) -> Result<Borrowed<'_, T, G, Tag, PHYSICAL_MAX>, lookup::Error<(), convert::Infallible>> {
-        Ok(slab::Slots::new(&self.inner)
-            .try_entry_at(index)?
-            .into_external())
+    ) -> Result<Borrowed<'_, T, G, Tag>, lookup::Error<(), convert::Infallible>> {
+        Ok(self.inner.try_entry_at(index)?.into_external())
     }
 }
 
 /// Shared slot phases preserve the same physical allocation and logical epoch owner.
-type Pending<'a, T, G, const MAX: u32> =
-    entries::Pending<'a, external::Stamped<T, G>, MAX, entries::Interior<true>>;
-type Busy<'a, T, G, const MAX: u32> =
-    entries::Busy<'a, external::Stamped<T, G>, MAX, entries::Interior<true>>;
-type Vacancy<'a, T, G, Tag, const MAX: u32> =
-    external::Vacant<Pending<'a, T, G, MAX>, Tag, true, G>;
-type Borrowed<'a, T, G, Tag, const MAX: u32> = external::Borrowed<Busy<'a, T, G, MAX>, Tag, true>;
+type Pending<'a, T, G> = entries::Pending<'a, external::Stamped<T, G>, 1, entries::Interior<true>>;
+type Busy<'a, T, G> = entries::Busy<'a, external::Stamped<T, G>, 1, entries::Interior<true>>;
+pub type Vacancy<'a, T, G, Tag = ()> = external::Vacant<Pending<'a, T, G>, Tag, true, G>;
+pub type Borrowed<'a, T, G, Tag = ()> = external::Borrowed<Busy<'a, T, G>, Tag, true>;
 
 /// Physical allocation proof is retained before checking logical generation.
-type Allocated<'a, T, G, Tag, const MAX: u32> = crate::depot::raw::Proof<
-    (&'a slab::Cell<external::Stamped<T, G>, Tag, MAX, true>, u32),
+type Allocated<'a, T, G, Tag> = crate::depot::raw::Proof<
+    (&'a slab::Cell<external::Stamped<T, G>, Tag, 1, true>, u32),
     Initialized<entries::Allocated>,
 >;

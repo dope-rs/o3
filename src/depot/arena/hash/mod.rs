@@ -11,7 +11,7 @@ pub mod errors;
 pub mod runtime;
 
 pub(in crate::depot) use cores::Core;
-pub(in crate::depot) use entries::{Bucket, Entry, Meta};
+pub(in crate::depot) use entries::{Bucket, Meta};
 pub(in crate::depot) use slot::Slot;
 
 mod borrows;

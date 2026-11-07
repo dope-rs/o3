@@ -20,26 +20,18 @@ pub(in crate::depot) struct Occupied<
     M: entries::Mode,
     const PARTITIONS: usize,
     S = storage::Heap,
-    I = storage::Eager,
 > where
     S: storage::Storage,
-    I: storage::Init,
 {
-    pub(in crate::depot) core: &'a entries::Core<T, MAX, M, PARTITIONS, S, I>,
-    pub(in crate::depot) slot: &'a crate::depot::raw::SlabSlot<
-        T,
-        key::Generation<MAX>,
-        M::Busy,
-        <M::Cycle as Policy>::Retired,
-    >,
+    pub(in crate::depot) core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
+    pub(in crate::depot) slot: &'a storage::Slot<T, MAX, M>,
 }
 
-impl<'a, T, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S, I>
-    Occupied<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, S, I>
+impl<'a, T, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S>
+    Occupied<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, S>
 where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot) fn read(self) -> &'a T {
         // SAFETY: the admitted slot retains its exclusive owner's shared loan.
@@ -57,26 +49,29 @@ where
         index: u32,
     ) -> lookup::Result<Self, M> {
         let slots = &core.slots;
-        if index as usize >= slots.capacity() {
-            return Err(lookup::Error::Index {
-                index,
-                capacity: slots.count(),
+        if index >= slots.built() {
+            return Err(if index as usize >= slots.capacity() {
+                lookup::Error::Index {
+                    index,
+                    capacity: slots.count(),
+                }
+            } else {
+                lookup::Error::Free { index }
             });
         }
-        // SAFETY: eager storage initialized every slot of this admitted extent.
+        // SAFETY: this index is within the owner's initialized backing prefix.
         let live = unsafe { crate::depot::raw::Proof::new((core, index)) };
         entries::Core::try_occupied(live)
     }
 }
 
-impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, S, I>
-    Occupied<'a, T, MAX, M, PARTITIONS, S, I>
+impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, S>
+    Occupied<'a, T, MAX, M, PARTITIONS, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot) fn at(
-        core: &'a entries::Core<T, MAX, M, PARTITIONS, S, I>,
+        core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
         index: u32,
     ) -> Option<Self> {
         let slot = core.slots.get(index)?;
@@ -87,15 +82,15 @@ where
     }
 
     pub(in crate::depot) fn key(
-        core: &'a entries::Core<T, MAX, M, PARTITIONS, S, I>,
+        core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
         index: u32,
         epoch: key::Generation<MAX>,
     ) -> Option<Self> {
         let entry = Self::at(core, index)?;
-        (entry.slot.generation.get() == epoch).then_some(entry)
+        (entry.generation() == epoch).then_some(entry)
     }
 
-    pub(in crate::depot) fn take(self) -> entries::Busy<'a, T, MAX, M, PARTITIONS, (), S, I> {
+    pub(in crate::depot) fn take(self) -> entries::Busy<'a, T, MAX, M, PARTITIONS, (), S> {
         if M::REENTRANT {
             self.slot.state.set(M::TAKEN);
         }
@@ -107,14 +102,13 @@ where
     }
 }
 
-impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, S, I>
-    Occupied<'a, T, MAX, M, PARTITIONS, S, I>
+impl<'a, T, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, S>
+    Occupied<'a, T, MAX, M, PARTITIONS, S>
 where
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot) fn try_key<Tag>(
-        core: &'a entries::Core<T, MAX, M, PARTITIONS, S, I>,
+        core: &'a entries::Core<T, MAX, M, PARTITIONS, S>,
         key: key::Handle<Tag, MAX>,
     ) -> Lookup<Self, Tag, MAX, M> {
         let slots = &core.slots;
@@ -122,43 +116,33 @@ where
             key,
             capacity: slots.count(),
         })?;
-        let actual = slot.generation.get();
-        match slot.state.get().classify(actual, key.generation()) {
-            slab::Admitted::Exact => Ok(Self { core, slot }),
-            slab::Admitted::Refused(refusal) => Err(key::Error::refused(key, actual, refusal)),
-            slab::Admitted::Borrowed(borrow) => Err(key::Error::Busy {
-                key,
-                actual,
-                borrow,
-            }),
-        }
+        let actual = <M::Cycle as Policy>::generation(slot.generation.get());
+        slot.state
+            .get()
+            .classify(actual, key.generation())
+            .map_err(|refusal| key::Error::refused(key, actual, refusal))?;
+        Ok(Self { core, slot })
     }
 
     pub(in crate::depot) fn generation(&self) -> key::Generation<MAX> {
-        self.slot.generation.get()
+        <M::Cycle as Policy>::generation(self.slot.generation.get())
     }
 }
 
-impl<'a, T, const MAX: u32, S> Occupied<'a, T, MAX, entries::Exclusive<false>, 1, S>
-where
-    S: storage::Storage,
-{
+impl<'a, T, const MAX: u32> Occupied<'a, T, MAX, entries::Exclusive<false>, 1> {
     pub(in crate::depot) fn try_bound<'h, Tag>(
-        proof: PhysicalSlot<'a, 'h, T, Tag, MAX, S>,
+        proof: PhysicalSlot<'a, 'h, T, Tag, MAX>,
     ) -> Result<Self, key::Stale<'h, Tag, MAX>> {
         let (core, key) = proof.into_inner();
         let slots = core.slots.as_ref();
         // SAFETY: the retained bound selects this eager owner's initialized extent.
         let slot = unsafe { slots.get_unchecked(key.as_inner().index() as usize) };
         let actual = slot.generation.get();
-        match slot
-            .state
+        slot.state
             .get()
             .classify(actual, key.as_inner().generation())
-        {
-            slab::Admitted::Exact => Ok(Self { core, slot }),
-            slab::Admitted::Refused(refusal) => Err(key::Stale::refused(key, actual, refusal)),
-        }
+            .map_err(|refusal| key::Stale::refused(key, actual, refusal))?;
+        Ok(Self { core, slot })
     }
 }
 
@@ -172,9 +156,9 @@ type Lookup<S, T, const MAX: u32, M> = Result<
     >,
 >;
 
-type PhysicalSlot<'a, 'h, T, Tag, const MAX: u32, S> = crate::depot::raw::Proof<
+type PhysicalSlot<'a, 'h, T, Tag, const MAX: u32> = crate::depot::raw::Proof<
     (
-        &'a entries::Core<T, MAX, entries::Exclusive<false>, 1, S>,
+        &'a entries::Core<T, MAX, entries::Exclusive<false>, 1>,
         capacity::Key<'h, key::Handle<Tag, MAX>>,
     ),
     Physical,

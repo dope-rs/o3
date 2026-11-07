@@ -132,7 +132,9 @@ fn retains_ranges() {
                             <staging::Buf<'_> as hold::raw::Retain<'_>>::try_retain(&tail, &budget)
                         });
                         assert_eq!(activity, [0; 4]);
-                        let retained = retained.expect("retain checked backing without copying");
+                        let retained = retained
+                            .expect("retain checked backing without copying")
+                            .into_shared();
                         let (head, tail) =
                             (source.view().try_split::<4>()).expect("split through the source end");
                         assert_eq!(head, b"abcd");
@@ -145,7 +147,7 @@ fn retains_ranges() {
                             <staging::Buf<'_> as hold::raw::Retain<'_>>::try_retain(&tail, &budget)
                         });
                         assert_eq!(activity, [0; 4]);
-                        assert!(matches!(result, Ok(ref bytes) if bytes.is_empty()));
+                        assert!(matches!(result, Ok(ref bytes) if bytes.as_slice().is_empty()));
                         let ((), activity) = Tracker::measure(|| {
                             Input::consume::<_, 1>(&mut source, &budget, |input| {
                                 let (prefix, end) = (input.try_prefix(NonZero::<usize>::MIN))
@@ -241,7 +243,8 @@ fn empty<'d>(source: &mut staging::Buf<'d>, budget: &resident::Budget<'d>) {
         assert!(
             <staging::Buf<'_> as hold::raw::Retain<'_>>::charge(&tail) == hold::Charge::default()
         );
-        let result = <staging::Buf<'_> as hold::raw::Retain<'_>>::try_retain(&tail, budget);
+        let result = <staging::Buf<'_> as hold::raw::Retain<'_>>::try_retain(&tail, budget)
+            .map(hold::Retained::into_shared);
         assert!(matches!(result, Ok(ref bytes) if bytes.is_empty() && bytes.resident() == 0));
         scope::Input::consume::<_, 1>(source, |input| {
             let result = input.try_prefix::<1>(NonZero::<usize>::MIN);

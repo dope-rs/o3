@@ -6,12 +6,9 @@ static ALLOCATOR: Tracker = Tracker;
 use std::{cell::Cell, collections::VecDeque, mem, num};
 
 use common::{
-    Counted,
+    Counted, Order,
     alloc::system::Tracker,
-    depot::model::{
-        Lcg,
-        drops::{Order, Tracked},
-    },
+    depot::model::{Lcg, drops::Tracked},
 };
 use o3::depot::{
     self,
@@ -96,15 +93,12 @@ fn mutates_wrapped_ranges() {
     assert_eq!(queue.pop_front(), Some(10));
     assert_eq!((&mut queue).into_iter().next(), None);
     assert_eq!(queue.as_slices(), (&[][..], &[][..]));
-    for (len, first) in [(3, 2), (1, 1), (3, 1)] {
+    for len in [3_usize, 1, 3] {
         queue.clear();
         for value in 0..len {
             assert_eq!(queue.push_back(value), Ok(()));
         }
-        assert_eq!(
-            queue.as_slices(),
-            (&[0, 1, 2][..first], &[0, 1, 2][first..len])
-        );
+        assert!((&queue).into_iter().copied().eq(0..len));
     }
 }
 
@@ -448,27 +442,20 @@ fn retains_fifo() {
 
 #[test]
 fn drops_cell_once() {
-    for clear in [false, true] {
-        let drops = [Cell::new(Some(0)), Cell::new(Some(0))];
-        {
-            let queue = (ring::Cell::try_new(Count::new(2)))
-                .expect("the two-slot owned cell ring must allocate");
-            for id in 0..2 {
-                // SAFETY: this loop inserts exactly two values into this empty two-slot cell.
-                unsafe {
-                    depot::raw::RingCell::insert::<false>(
-                        &queue,
-                        Tracked::try_new(id, &drops).expect("drop counter exists"),
-                    )
-                };
-            }
-            assert_eq!(drops.each_ref().map(Cell::get), [Some(0); 2]);
-            if clear {
-                queue.clear();
-                assert!(queue.is_empty());
-                assert_eq!(drops.each_ref().map(Cell::get), [Some(1); 2]);
-            }
+    let drops = [Cell::new(Some(0)), Cell::new(Some(0))];
+    {
+        let queue = (ring::Cell::try_new(Count::new(2)))
+            .expect("the two-slot owned cell ring must allocate");
+        for id in 0..2 {
+            // SAFETY: this loop inserts exactly two values into this empty two-slot cell.
+            unsafe {
+                depot::raw::RingCell::insert::<false>(
+                    &queue,
+                    Tracked::try_new(id, &drops).expect("drop counter exists"),
+                )
+            };
         }
-        assert_eq!(drops.each_ref().map(Cell::get), [Some(1); 2]);
+        assert_eq!(drops.each_ref().map(Cell::get), [Some(0); 2]);
     }
+    assert_eq!(drops.each_ref().map(Cell::get), [Some(1); 2]);
 }

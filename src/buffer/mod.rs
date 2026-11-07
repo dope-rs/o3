@@ -28,22 +28,15 @@ pub struct View<'source, S: ?Sized> {
     bytes: &'source [u8],
 }
 
-impl Copy for View<'_, storage::Shared> {}
+impl<S: ?Sized> Copy for View<'_, S> {}
 
-impl Clone for View<'_, storage::Shared> {
+impl<S: ?Sized> Clone for View<'_, S> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
 impl<'source, S: ?Sized> View<'source, S> {
-    pub const fn reborrow(&self) -> View<'source, S> {
-        View {
-            source: self.source,
-            bytes: self.bytes,
-        }
-    }
-
     pub fn as_slice(&self) -> &'source [u8] {
         self.bytes
     }
@@ -92,10 +85,6 @@ impl<'source, S: ?Sized> View<'source, S> {
             bytes: source.as_ref(),
         }
     }
-
-    const fn source(&self) -> &'source S {
-        self.source
-    }
 }
 
 impl<S: segments::Seal> View<'_, S> {
@@ -119,7 +108,7 @@ impl View<'_, resident::Shared<'_>> {
         if self.is_empty() {
             return Ok(Some(storage::Shared::new()));
         }
-        let owner = match self.source().region.owner() {
+        let owner = match self.source.region.owner() {
             resident::State::Owned(owner) => owner.try_retain()?,
             resident::State::Borrowed(owner) => Some(owner.try_clone()?.into_owned()),
             resident::State::Slice
@@ -202,6 +191,12 @@ impl Residency for Vec<u8> {
     }
 }
 
+impl<const CAP: usize, L> Residency for storage::inline::Bytes<CAP, L> {
+    fn resident(&self) -> usize {
+        CAP
+    }
+}
+
 impl Residency for &[u8] {
     /// A borrowed slice retains no complete backing allocation of its own.
     fn resident(&self) -> usize {
@@ -275,6 +270,7 @@ impl Source for [u8] {
 }
 
 impl Cursor for [u8] {
+    #[inline]
     fn try_get<'input>(
         &'input self,
         range: ops::Range<usize>,
@@ -294,7 +290,7 @@ impl<O: Unpin> Source for storage::Shared<O> {
     where
         Self: 'input;
     fn remaining(&self) -> usize {
-        self.region.len()
+        self.len()
     }
 }
 impl<O: Unpin> Cursor for storage::Shared<O> {

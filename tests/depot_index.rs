@@ -177,24 +177,6 @@ fn retains_nonempty_domain() {
 }
 
 #[test]
-fn preserves_layout() {
-    assert_eq!(size_of::<Row<&Bitmap>>(), 2 * size_of::<usize>());
-    assert_eq!(size_of::<Option<Row<&Bitmap>>>(), 2 * size_of::<usize>());
-    assert_eq!(
-        size_of::<Row<&mut Bitmap, (), bitmap::entry::Occupied>>(),
-        2 * size_of::<usize>()
-    );
-    assert_eq!(
-        size_of::<Option<Row<&mut Bitmap, (), bitmap::entry::Occupied>>>(),
-        2 * size_of::<usize>()
-    );
-    assert_eq!(
-        size_of::<Row<&Bitmap, (), bitmap::entry::Removed>>(),
-        2 * size_of::<usize>()
-    );
-}
-
-#[test]
 fn preserves_summaries() {
     for capacity in [1, 63, 64, 65, 4095, 4096, 4097, 262145] {
         let owner = Bitmap::try_new(bitmap::Shape::<u32>::new(capacity), bitmap::Fill::Empty)

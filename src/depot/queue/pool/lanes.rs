@@ -2,10 +2,7 @@ use std::mem;
 
 use pool::Missing;
 
-use crate::depot::{
-    capacity,
-    queue::{links, pool},
-};
+use crate::depot::queue::{links, pool};
 
 /// Owns a fixed index domain of persistent FIFO lanes.
 pub struct Lanes<T, S = (), const TRACK: bool = true> {
@@ -26,11 +23,7 @@ impl<T, S, const TRACK: bool> Lanes<T, S, TRACK> {
         init: impl FnMut(links::Index) -> S,
     ) -> Result<Self, crate::alloc::Error> {
         Ok(Self {
-            block: crate::depot::raw::QueueBlock::try_with(
-                capacity::Count::new(plan.slots),
-                capacity::Count::new(plan.lanes),
-                init,
-            )?,
+            block: crate::depot::raw::QueueBlock::try_with(plan.slots, plan.lanes, init)?,
         })
     }
 
@@ -40,6 +33,10 @@ impl<T, S, const TRACK: bool> Lanes<T, S, TRACK> {
 
     pub const fn len(&self) -> usize {
         self.block.count().get()
+    }
+
+    pub const fn capacity(&self) -> usize {
+        self.block.store.capacity().len()
     }
 
     pub fn get(&self, index: usize) -> Option<pool::View<'_, T, S, TRACK>> {

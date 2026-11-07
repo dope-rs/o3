@@ -4,9 +4,9 @@ use o3::{
     base::cell::region,
     buffer::{
         hold,
-        raw::Scatter as _,
+        raw::{Chunks as _, Scatter as _},
         resident,
-        segments::{self, queue, scatter::Source as _},
+        segments::{self, queue},
         storage::{self, Shared},
         write::consume::Consume as _,
     },
@@ -192,7 +192,9 @@ fn restores_projection() {
             .copy(&mut bytes);
         assert_eq!(&bytes, b"abcdefghijkk");
 
-        let shared = slice.try_retain(&pool).expect("all metadata was returned");
+        let shared = slice
+            .try_bound(&pool, &retain, hold::Policy::share())
+            .expect("all metadata was returned");
         assert_eq!(shared.count().into_raw(), 3);
         assert_eq!(pool.available().segments, 0);
         assert_eq!(pool.available().chains, 0);
@@ -327,15 +329,14 @@ fn advances_cursor() {
         .expect("third cursor segment");
 
     let mut cursor = queue.cursor();
-    assert_eq!(cursor.contiguous(4..7), None);
-    assert_eq!(cursor.contiguous(1..3), Some(b"bc".as_slice()));
+    cursor.seek(1).expect("first segment");
     let mut copied = [0; 4];
     queue::Array::try_new(&cursor, 2)
         .expect("required fixture outcome")
         .copy(&mut copied);
     assert_eq!(&copied, b"cdef");
 
-    assert_eq!(cursor.contiguous(3..3), Some(b"".as_slice()));
+    cursor.seek(3).expect("second segment");
     let rejected = queue::Array::<_, 1>::try_new(&cursor, 2);
     let bounds = rejected.err().expect("assertion failed: rejected.is_err()");
     assert_eq!(bounds.offset, 2);
@@ -343,60 +344,9 @@ fn advances_cursor() {
     assert_eq!(bounds.floor, 3);
     assert_eq!(bounds.ceiling, 9);
 
-    assert_eq!(cursor.contiguous(9..9), Some(b"".as_slice()));
+    cursor.seek(9).expect("queue end");
     queue::Array::<_, 0>::try_new(&cursor, 9)
         .expect("required fixture outcome")
         .copy(&mut []);
     assert!(cursor.seek(5).is_err());
-}
-
-#[test]
-fn restores_failed_slots() {
-    let first = (storage::Shared::try_copy(b"a")).expect("the first rollback owner must allocate");
-    let base = first.as_slice().as_ptr();
-    let cap = queue::Capacity::new(Count::new(2), Count::new(2));
-    let mut queue = (queue::Fifo::try_with(cap)).expect("the rollback queue must allocate");
-    queue
-        .try_push(first)
-        .as_ref()
-        .expect("required fixture outcome");
-    let second =
-        (storage::Shared::try_copy(b"b")).expect("the second rollback owner must allocate");
-    queue
-        .try_push(second)
-        .as_ref()
-        .expect("required fixture outcome");
-
-    let pool = (segments::Pool::try_new(segments::Plan {
-        segments: 1,
-        chains: 0,
-    }))
-    .expect("the one-segment rollback pool must allocate");
-    assert!(matches!(
-        queue
-            .get(0..2)
-            .expect("range spans both queued segments")
-            .try_retain(&pool),
-        Err(segments::Error::SegmentCapacity(
-            o3::depot::capacity::Shortage {
-                requested,
-                available: 1,
-            }
-        )) if requested.get() == 2
-    ));
-    assert_eq!(pool.available().segments, 1);
-
-    let held = queue
-        .get(0..1)
-        .expect("range lies within the first segment")
-        .try_retain(&pool);
-    let held = (held).expect("segment transition accepted");
-
-    assert_eq!(held.contiguous(), Some(b"a".as_slice()));
-    assert_eq!(
-        held.contiguous()
-            .expect("retained range has one owner")
-            .as_ptr(),
-        base
-    );
 }

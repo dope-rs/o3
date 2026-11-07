@@ -53,12 +53,7 @@ impl<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count> Cursor<'a, T, Tag,
         };
         // SAFETY: Cursor owns its initialized parent in the same allocation;
         // the newly reserved slot is distinct and retained until insertion.
-        let splice = match parent {
-            Some(parent) => {
-                slot::Splice::Parent(unsafe { crate::depot::raw::Proof::new((slot, parent)) })
-            }
-            None => slot::Splice::Root(slot),
-        };
+        let splice = unsafe { slot::Splice::new(slot, parent) };
         Ok(Self {
             entry: splice.insert(build),
             parent,
@@ -69,12 +64,7 @@ impl<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count> Cursor<'a, T, Tag,
         let (value, slot) = self.entry.detach().into_spare();
         // SAFETY: suspension retains the exact allocation and reserved slot;
         // Cursor's distinct initialized parent remains live until unlink commits.
-        let splice = match self.parent {
-            Some(parent) => {
-                slot::Splice::Parent(unsafe { crate::depot::raw::Proof::new((slot, parent)) })
-            }
-            None => slot::Splice::Root(slot),
-        };
+        let splice = unsafe { slot::Splice::new(slot, self.parent) };
         splice.remove(value, unlink)
     }
 }

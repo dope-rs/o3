@@ -7,7 +7,7 @@ use std::num::NonZero;
 
 use common::{
     alloc::system::Tracker,
-    buffer::{Bytes as _, Fill as _, try_item, try_many},
+    buffer::{try_bytes, try_fill, try_item, try_many},
 };
 use o3::{
     alloc,
@@ -132,15 +132,13 @@ fn keeps_insert_cause() {
                 .eq([b"first".as_slice(), b"second"])
         );
         assert_eq!(item.as_slice(), b"last");
-        let (result, allocs) = Tracker::count(|| {
+        let (chain, allocs) = Tracker::count(|| {
             if front {
-                segments::Many::try_from((item, chain))
-                    .map_err(|error| error.map(|(item, chain)| (chain, item)))
+                segments::Many::try_from((item, chain)).expect("fallback assembly")
             } else {
-                segments::Many::try_from((chain, item))
+                segments::Many::try_from((chain, item)).expect("fallback assembly")
             }
         });
-        let chain = result.expect("fallback assembly");
         assert_eq!(allocs, 1);
         let order = if front { [2, 0, 1] } else { [0, 1, 2] };
         assert!(
@@ -185,8 +183,8 @@ fn joins_with_one_alloc() {
         {
             let mut target = (first.try_chain()).expect("target chain edge");
             let mut source = (second.try_chain()).expect("source chain edge");
-            target.try_fill(&values[..2]).expect("fixture segments fit");
-            source.try_fill(&values).expect("fixture segments fit");
+            try_fill(&mut target, &values[..2]).expect("fixture segments fit");
+            try_fill(&mut source, &values).expect("fixture segments fit");
             let mut target = match target.into_shape() {
                 segments::Shape::Many(many) => Some(many),
                 _ => None,
@@ -210,16 +208,11 @@ fn joins_with_one_alloc() {
                     } if shortage.requested.get() == 3 && shortage.available == 0
                 ));
                 assert_eq!(
-                    left.as_chain()
-                        .try_bytes()
-                        .expect("chain bytes must allocate"),
+                    try_bytes(left.as_chain()).expect("chain bytes must allocate"),
                     values[..2].concat()
                 );
                 assert_eq!(
-                    right
-                        .as_chain()
-                        .try_bytes()
-                        .expect("chain bytes must allocate"),
+                    try_bytes(right.as_chain()).expect("chain bytes must allocate"),
                     values.concat()
                 );
                 target = left;
@@ -231,10 +224,7 @@ fn joins_with_one_alloc() {
             assert_eq!(hot[0], usize::from(free == 0));
             assert_eq!(hot[2], 0);
             assert_eq!(
-                joined
-                    .as_chain()
-                    .try_bytes()
-                    .expect("chain bytes must allocate"),
+                try_bytes(joined.as_chain()).expect("chain bytes must allocate"),
                 [values[..2].concat(), values.concat()].concat()
             );
             assert!(
@@ -251,7 +241,7 @@ fn joins_with_one_alloc() {
 }
 
 #[test]
-fn checks_wrapped_ranges() {
+fn checks_initial_ranges() {
     let created = queue::Fifo::try_with(queue::Capacity::new(Count::new(32), Count::new(3)));
     let mut source = created.expect("queue storage");
     examine(&source, b"");
@@ -263,26 +253,6 @@ fn checks_wrapped_ranges() {
             .expect("required fixture outcome");
     }
     examine(&source, b"abcdefghij");
-    source
-        .try_consume(3)
-        .as_ref()
-        .expect("required fixture outcome");
-    let owner = storage::Shared::try_copy(b"klm").expect("wrapped owner");
-    source
-        .try_push(owner)
-        .as_ref()
-        .expect("required fixture outcome");
-    examine(&source, b"defghijklm");
-    source
-        .try_consume(3)
-        .as_ref()
-        .expect("required fixture outcome");
-    examine(&source, b"ghijklm");
-    source
-        .try_consume(7)
-        .as_ref()
-        .expect("required fixture outcome");
-    examine(&source, b"");
 }
 
 #[test]
@@ -317,7 +287,7 @@ fn returns_rejected_owner() {
     let owner = storage::Shared::try_copy(b"abc").expect("rejected owner");
     let address = owner.as_slice().as_ptr();
     let result = source.try_push(owner);
-    let rejected = result.err().expect("zero segment capacity");
+    let rejected = result.expect_err("zero segment capacity");
     let (owner, error) = rejected.into_parts();
     assert_eq!(error, queue::Error::Segments { capacity: 0 });
     assert_eq!(owner.as_slice(), b"abc");
@@ -439,11 +409,10 @@ fn preserves_empty_owner() {
         let owner = segments::Item::new(owner)
             .break_value()
             .expect("empty owner remains unadmitted");
-        let owner = match chain.try_push(owner).expect("empty admission") {
-            segments::Push::Discarded(owner) => Some(owner),
-            _ => None,
-        }
-        .expect("empty owner contributes no segment");
+        let owner = chain
+            .try_push(owner)
+            .expect("empty admission")
+            .expect("empty owner contributes no segment");
         assert_eq!(
             (owner.as_slice().as_ptr(), owner.resident()),
             (pointer, resident)

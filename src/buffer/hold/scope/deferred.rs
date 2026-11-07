@@ -1,9 +1,8 @@
 use buffer::Read as _;
-use hold::scope::Bound;
 
 use crate::{
     buffer,
-    buffer::{hold, resident, write::consume},
+    buffer::{resident, write::consume},
 };
 
 #[must_use]
@@ -26,13 +25,6 @@ impl<'input, 'd, R: buffer::Source + 'input> Deferred<'input, 'd, R> {
 
     pub fn is_empty(&self) -> bool {
         self.as_slice().is_empty()
-    }
-
-    pub fn bind(self, policy: hold::Policy) -> Bound<'input, 'd, R>
-    where
-        R: hold::raw::Retain<'d>,
-    {
-        Bound::new(self, policy)
     }
 
     pub fn try_split<const N: usize>(self) -> Result<(&'input [u8; N], Self), consume::Error> {

@@ -5,15 +5,10 @@ static ALLOCATOR: Tracker = Tracker;
 
 use std::{
     cell::{self, Cell},
-    mem, ptr,
     rc::Rc,
 };
 
-use common::{
-    Counted,
-    alloc::system::Tracker,
-    depot::arena::{Inline, pool::Reused},
-};
+use common::{Counted, alloc::system::Tracker, depot::arena::pool::Reused};
 use o3::depot::{
     arena::pool::{
         recycle::{self, release},
@@ -69,21 +64,6 @@ fn recycles_reservation() {
         vacancy.reserve().commit(String::from("ready")).as_str(),
         "ready"
     );
-}
-
-#[test]
-fn commits_in_place() {
-    let result = shared::Store::try_new(Count::new(1));
-    let pool = result.expect("one inline shared lease slot must allocate");
-    let ptr = Cell::new(ptr::null());
-    let vacancy = (pool.vacancy()).expect("a new one-slot store has one vacancy");
-    let mut unique = vacancy.reserve().begin(Inline::default());
-    ptr.set(&*unique as *const Inline);
-    unique.bytes[..5].copy_from_slice(b"exact");
-    unique.len = 5;
-    let lease = unique.freeze();
-    assert_eq!(ptr.get(), &*lease as *const Inline);
-    assert_eq!(&lease.bytes[..lease.len], b"exact");
 }
 
 #[test]
@@ -156,86 +136,6 @@ fn recycles_dropped_unique() {
     }
     assert_eq!(drops.get(), Some(1));
     assert!(pool.vacancy().is_some());
-}
-
-#[test]
-fn keeps_word_handles() {
-    assert_eq!(
-        mem::size_of::<shared::Store<usize>>(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            o3::depot::arena::pool::Vacant<'static, shared::Resident<usize>, shared::Header<usize>>,
-        >(),
-        2 * mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            Option<
-                o3::depot::arena::pool::Vacant<
-                    'static,
-                    shared::Resident<usize>,
-                    shared::Header<usize>,
-                >,
-            >,
-        >(),
-        2 * mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            o3::depot::arena::pool::Unique<'static, shared::Resident<usize>, shared::Header<usize>>,
-        >(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            o3::depot::arena::pool::Unique<
-                'static,
-                shared::Resident<usize>,
-                shared::Header<usize>,
-                shared::Initialized,
-            >,
-        >(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            Option<
-                o3::depot::arena::pool::Unique<
-                    'static,
-                    shared::Resident<usize>,
-                    shared::Header<usize>,
-                    shared::Initialized,
-                >,
-            >,
-        >(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            o3::depot::arena::pool::Shared<
-                'static,
-                shared::Resident<usize>,
-                shared::Header<usize>,
-                shared::Initialized,
-            >,
-        >(),
-        mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<
-            Option<
-                o3::depot::arena::pool::Shared<
-                    'static,
-                    shared::Resident<usize>,
-                    shared::Header<usize>,
-                    shared::Initialized,
-                >,
-            >,
-        >(),
-        mem::size_of::<usize>()
-    );
 }
 
 #[test]

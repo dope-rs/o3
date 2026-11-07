@@ -72,6 +72,6 @@ impl<Tag, Raw, const N: usize> Extent<Tag, Raw, N> {
         }
         // SAFETY: the empty extent has no elements; otherwise the N cursors and
         // each plane's exact shape fill initialize every element once.
-        Ok(unsafe { alloc::raw::AssumeInit::assume_init(block) })
+        Ok(unsafe { block.assume_init() })
     }
 }

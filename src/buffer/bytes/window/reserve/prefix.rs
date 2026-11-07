@@ -26,8 +26,7 @@ impl<'a, const N: usize> Prefix<'a, N> {
     }
 
     pub fn as_slices(&self) -> (&[u8], &[u8]) {
-        let core = &self.ring.ring;
-        core.as_slices(self.len)
+        self.ring.prefix(self.len)
     }
 
     pub fn truncate(&mut self, max: usize) {
@@ -35,8 +34,7 @@ impl<'a, const N: usize> Prefix<'a, N> {
     }
 
     pub fn commit(self) -> &'a mut reserve::Ring<N> {
-        let core = &mut self.ring.ring;
-        core.consume(self.len);
+        self.ring.consume(self.len);
         self.ring
     }
 }

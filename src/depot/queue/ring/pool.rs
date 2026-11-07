@@ -5,11 +5,31 @@ use crate::{
     depot::{capacity, queue::ring},
 };
 
+/// A thread-confined exact FIFO whose operations use a shared borrow.
+pub type Cell<T> = Shared<T, ()>;
+
 /// Exact slots partitioned between available capacity, leases, and queued values.
-pub struct Pool<T> {
-    pub(in crate::depot) block: array::Block<mem::MaybeUninit<T>, capacity::Count, cell::Cell<u32>>,
+pub type Pool<T> = Shared<T, cell::Cell<u32>>;
+
+pub struct Shared<T, S> {
+    pub(in crate::depot) block: array::Block<mem::MaybeUninit<T>, capacity::Count, S>,
     pub(in crate::depot) state: cell::Cell<ring::State<u32>>,
     invariant: marker::PhantomData<cell::Cell<T>>,
+}
+
+impl<T> Cell<T> {
+    /// Allocates exactly `capacity` entries.
+    pub fn try_new(capacity: capacity::Count) -> Result<Self, alloc::Error> {
+        Ok(Self {
+            block: array::Block::try_new(capacity, ())?,
+            state: cell::Cell::new(ring::State::EMPTY),
+            invariant: marker::PhantomData,
+        })
+    }
+
+    pub fn pop_front(&self) -> Option<T> {
+        crate::depot::raw::RingCell::take_front(self)
+    }
 }
 
 impl<T> Pool<T> {
@@ -25,8 +45,7 @@ impl<T> Pool<T> {
         let free = self.block.state().get();
         if free == 0 {
             return Err(ring::Full {
-                used: self.capacity(),
-                capacity: self.capacity(),
+                capacity: *self.block.extent(),
             });
         }
         self.block.state().set(free - 1);
@@ -46,7 +65,9 @@ impl<T> Pool<T> {
     pub fn count(&self) -> capacity::Count {
         self.state.get().count()
     }
+}
 
+impl<T, S> Shared<T, S> {
     pub fn is_empty(&self) -> bool {
         self.state.get().is_empty()
     }
@@ -56,7 +77,7 @@ impl<T> Pool<T> {
     }
 }
 
-impl<T> Drop for Pool<T> {
+impl<T, S> Drop for Shared<T, S> {
     fn drop(&mut self) {
         // SAFETY: no lease or shared operation survives terminal exclusive ownership.
         unsafe { crate::depot::raw::drop_ring(self) };

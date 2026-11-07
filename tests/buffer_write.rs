@@ -5,35 +5,12 @@ static ALLOCATOR: Tracker = Tracker;
 
 use std::cell::Cell;
 
-use common::{
-    alloc::system::{Activity, Tracker},
-    buffer::scatter::{Slices, Source},
-};
+use common::{alloc::system::Tracker, buffer::scatter::Source};
 use o3::buffer::{
     pool,
-    raw::Scatter as _,
-    segments::scatter::Source as _,
     storage::{self, Owned},
-    write::{self, Sink as _, SpareExt as _, consume, edit, spans},
+    write::{self, Sink as _, SpareExt as _, consume, edit},
 };
-
-#[test]
-fn keeps_exact_group() {
-    let mut owner = (Owned::try_with(7)).expect("the seven-byte staged owner must allocate");
-    let mut writer = owner.spare();
-    write::Sink::write_slice(&mut writer, b"ab")
-        .as_ref()
-        .expect("required fixture outcome");
-    let mut exact = writer.exact();
-    append(&mut exact);
-    assert_eq!(exact.as_mut(), b"cdefg");
-    exact
-        .try_commit()
-        .as_ref()
-        .expect("required fixture outcome");
-    writer.commit();
-    assert_eq!(owner.as_slice(), b"abcdefg");
-}
 
 #[test]
 fn keeps_bounded_group() {
@@ -172,33 +149,6 @@ fn rejects_vector_growth() {
     assert_eq!(bytes.as_ptr(), pointer);
 }
 
-#[test]
-fn writes_without_alloc() {
-    let mut owner = storage::Owned::try_with(15).expect("the two frames fit their destination");
-    let parts: [&[u8]; 3] = [b"cd", b"", b"ef"];
-    let source = (Slices::try_new(&parts)).expect("the source length must fit");
-    let mut cursor = source.chunks();
-    let (result, activity) = Tracker::activity(|| -> Result<(), write::Error> {
-        let mut writer = owner.spare();
-        let mut first = spans::Tail::<2, 2>::try_new(&mut writer, b"h:", [b"ab"])?;
-        let (header, body) = first.split();
-        assert_eq!(header, b"h:");
-        assert_eq!(body, b"ab");
-        body.make_ascii_uppercase();
-        first.commit(b"#!");
-        let mut second =
-            spans::Tail::<2, 2>::try_scatter(&mut writer, b"h:", cursor.take_bytes(4), b"|")?;
-        second.split().1.make_ascii_uppercase();
-        second.commit(b"#!");
-        writer.commit();
-        Ok(())
-    });
-    assert!(activity == Activity::default());
-    result.as_ref().expect("required fixture outcome");
-    assert_eq!(cursor.remaining(), 0);
-    assert_eq!(owner.as_slice(), b"h:AB#!h:CDEF|#!");
-}
-
 fn append(out: &mut impl write::Sink<Error = consume::Error>) {
     out.write_slice(b"c")
         .as_ref()
@@ -227,15 +177,16 @@ fn admission_then_init() {
     let mut spare = owner.spare();
     spare.write_slice(b"hi").expect("admitted");
     {
-        let mut short = spare.try_exact(3).expect("admitted");
+        let mut short = spare.bounded();
+        short.write_byte(0).expect("staged prefix");
         let error = short.try_init(&source).expect_err("shortfall").into_parts();
         assert_eq!((error.0.get(), error.1), (4, 3));
         assert_eq!(calls.get(), Some(0));
     }
-    let mut exact = spare.exact();
-    exact.try_init(&source).expect("admitted");
-    exact.try_commit().expect("admitted");
-    spare.commit();
+    let mut writer = spare.bounded();
+    writer.try_init(&source).expect("admitted");
+    writer.commit();
+    spare.try_complete().expect("admitted");
     assert_eq!(calls.get(), Some(1));
     assert_eq!(owner.as_slice(), b"hibody");
 }

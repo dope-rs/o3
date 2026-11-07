@@ -11,7 +11,7 @@ use o3::{
 
 #[test]
 fn wraps_physical_epoch() {
-    let slab = Storage::<u32, Generation, (), 1>::try_new(Count::new(1))
+    let slab = Storage::<u32, Generation>::try_new(Count::new(1))
         .expect("one physical generation remains recyclable");
     let mut key = slab.vacancy().expect("initial vacancy").insert(1);
     for epoch in 2..=3 {
@@ -41,7 +41,7 @@ fn wraps_physical_epoch() {
 
 #[test]
 fn exhausts_numeric_keys() {
-    let mut slab = Exclusive::<u32, num::Generation<1>, (), 1>::try_new(Count::new(1))
+    let mut slab = Exclusive::<u32, num::Generation<1>>::try_new(Count::new(1))
         .expect("one slot must allocate");
     let first = slab
         .try_grant()
@@ -73,7 +73,7 @@ fn exhausts_numeric_keys() {
 fn retains_epoch_floor() {
     let (aborted, floor) = {
         let mut slab =
-            Exclusive::<u32, num::Epoch, (), 1>::try_new(Count::new(1)).expect("one physical slot");
+            Exclusive::<u32, num::Epoch>::try_new(Count::new(1)).expect("one physical slot");
         let aborted = {
             let vacant = slab.try_grant().expect("initial grant").reserve();
             vacant.key()
@@ -82,8 +82,8 @@ fn retains_epoch_floor() {
     };
     assert_eq!(floor, aborted.generation().checked_add(1));
 
-    let mut slab = Exclusive::<u32, num::Epoch, (), 1>::try_new(Count::new(1))
-        .expect("replacement physical slot");
+    let mut slab =
+        Exclusive::<u32, num::Epoch>::try_new(Count::new(1)).expect("replacement physical slot");
     slab.advance_to(floor);
     slab.advance_to(Some(num::Epoch::INITIAL));
     assert_eq!(slab.next_generation(), floor);
@@ -117,8 +117,8 @@ fn retains_epoch_floor() {
         Err(o3::depot::arena::slab::Vacancy::IdentityExhausted)
     ));
 
-    let mut replacement = Exclusive::<u32, num::Epoch, (), 1>::try_new(Count::new(1))
-        .expect("exhausted replacement slot");
+    let mut replacement =
+        Exclusive::<u32, num::Epoch>::try_new(Count::new(1)).expect("exhausted replacement slot");
     replacement.advance_to(slab.next_generation());
     assert!(matches!(
         replacement.try_grant(),

@@ -15,7 +15,7 @@ fn leases_keep_their_pool() {
                 .try_append(b"right")
                 .expect("right bytes fit")
                 .commit();
-            mem::swap(&mut *left, &mut *right);
+            mem::swap(&mut left, &mut right);
             assert_eq!((left.as_slice(), left.capacity().get()), (&b"right"[..], 8));
             assert_eq!(
                 (right.as_slice(), right.capacity().get()),
@@ -32,7 +32,7 @@ fn keeps_initialized_bytes() {
     let mut left = storage::Owned::try_filled(3, b'a').expect("first owner");
     let mut right = storage::Owned::try_with(8).expect("second owner");
     right.try_extend(b"bc").expect("initialized prefix");
-    mem::swap(&mut *left, &mut *right);
+    mem::swap(&mut left, &mut right);
     assert_eq!((left.as_slice(), left.capacity()), (&b"bc"[..], 8));
     assert_eq!((right.as_slice(), right.capacity()), (&b"aaa"[..], 3));
     let mut spare = left.spare();
@@ -50,7 +50,7 @@ fn keeps_retained_backing() {
         let retained = left.try_clone().expect("retained region");
         let first = left.as_slice().as_ptr();
         let second = right.as_slice().as_ptr();
-        mem::swap(&mut *left, &mut *right);
+        mem::swap(&mut left, &mut right);
         assert_eq!(left.as_slice().as_ptr(), second);
         assert_eq!(right.as_slice().as_ptr(), first);
         retained
@@ -82,7 +82,7 @@ fn keeps_metadata_store() {
         right
             .try_push(resident::Shared::from(&b"def"[..]))
             .expect("second node");
-        mem::swap(&mut *left, &mut *right);
+        mem::swap(&mut left, &mut right);
         assert_eq!((left.len(), right.len()), (5, 1));
         left.clear();
         assert!(second.is_idle());

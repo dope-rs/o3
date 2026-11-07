@@ -17,10 +17,8 @@ use crate::{
 mod entry;
 mod extent;
 mod id;
-mod storage;
 mod views;
 pub(in crate::depot::index::set) use extent::Extent;
-pub(in crate::depot::index::set) use storage::Storage;
 pub(in crate::depot::index::set) use views::NonEmpty;
 pub(in crate::depot) use views::View;
 pub mod view;
@@ -109,9 +107,7 @@ impl<Tag, Raw: crate::depot::raw::Word, const N: usize> set::State<Tag, Raw, N, 
     }
 
     pub fn take(&self, id: set::Id<N>) -> Option<set::Entry<&Self, Tag, Raw, N, set::Id<N>>> {
-        let start = set::NonEmpty::new(self)?.cursor(id).get();
-        let removed = bitmap::pop_from(set::View::new(self), id, start)?;
-        Some(set::Entry::new(removed))
+        set::Entry::take_front(self, id)
     }
 
     pub fn take_from(
@@ -129,10 +125,12 @@ const _: () = assert!(
 );
 
 // SAFETY: a shared borrow retains one immutable allocation and extent.
-unsafe impl<Tag, Raw, const N: usize> crate::depot::raw::SetSource<Tag, Raw, N>
-    for &set::State<Tag, Raw, N>
+unsafe impl<Tag, Raw, const N: usize, M> crate::depot::raw::SetSource<Tag, Raw, N>
+    for &set::State<Tag, Raw, N, M>
 {
-    fn planes(&self) -> &set::State<Tag, Raw, N> {
+    type Mode = M;
+
+    fn planes(&self) -> &set::State<Tag, Raw, N, M> {
         self
     }
 }
@@ -141,6 +139,8 @@ unsafe impl<Tag, Raw, const N: usize> crate::depot::raw::SetSource<Tag, Raw, N>
 unsafe impl<Tag, Raw, const N: usize> crate::depot::raw::SetSource<Tag, Raw, N>
     for &mut set::State<Tag, Raw, N>
 {
+    type Mode = set::Planar;
+
     fn planes(&self) -> &set::State<Tag, Raw, N> {
         self
     }

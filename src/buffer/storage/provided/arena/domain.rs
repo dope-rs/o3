@@ -13,12 +13,9 @@ pub(in crate::buffer::storage::provided) struct Domain<'d, T, L> {
 }
 
 impl<'d, T, L> Domain<'d, T, L> {
-    pub(super) fn new(capacity: num::NonZero<u32>, limit: u32, setting: L::Setting) -> Self
-    where
-        L: arena::Layout,
-    {
+    pub(super) fn new(capacity: num::NonZero<u32>, limit: u32) -> Self {
         Self {
-            state: State::new(capacity, limit.min(capacity.get()), L::mode(setting)),
+            state: State::new(capacity, limit.min(capacity.get())),
             slots: marker::PhantomData,
         }
     }
@@ -37,9 +34,11 @@ impl<'d, T, L> Domain<'d, T, L> {
     pub(in crate::buffer::storage::provided) fn pop_returned(
         &self,
     ) -> Option<arena::Returned<'d, T, L>> {
-        let (queue, node) = self.state.returned.replace(Queue::Empty).pop();
-        self.state.returned.set(queue);
-        node.map(|node| arena::Returned {
+        let (mut node, tail) = self.state.returned.take()?;
+        self.state
+            .returned
+            .set(node.take_next().map(|head| (head, tail)));
+        Some(arena::Returned {
             node,
             domain: marker::PhantomData,
         })
@@ -55,28 +54,23 @@ pub(in crate::buffer::storage::provided) struct State<'d> {
     returned: cell::Cell<Queue<'d>>,
     pub(super) accounted: Counter,
     capacity: num::NonZero<u32>,
-    mode: provided::Mode,
     pub(super) limit: u32,
     brand: marker::PhantomData<fn(&'d ()) -> &'d ()>,
 }
 
 impl<'d> State<'d> {
-    const fn new(capacity: num::NonZero<u32>, limit: u32, mode: provided::Mode) -> Self {
+    const fn new(capacity: num::NonZero<u32>, limit: u32) -> Self {
         Self {
             free: cell::Cell::new(None),
-            returned: cell::Cell::new(Queue::Empty),
+            returned: cell::Cell::new(None),
             accounted: Counter::new(),
             capacity,
-            mode,
             limit,
             brand: marker::PhantomData,
         }
     }
     pub(in crate::buffer::storage::provided) const fn capacity(&self) -> num::NonZero<u32> {
         self.capacity
-    }
-    pub(super) const fn mode(&self) -> provided::Mode {
-        self.mode
     }
     pub(super) fn push_free(&self, node: arena::Empty<'d>) {
         let next = self.free.take();
@@ -85,51 +79,28 @@ impl<'d> State<'d> {
         self.free.set(Some(node));
     }
     pub(in crate::buffer::storage::provided) fn has_returned(&self) -> bool {
-        let queue = self.returned.replace(Queue::Empty);
-        let ready = !matches!(queue, Queue::Empty);
+        let queue = self.returned.take();
+        let ready = queue.is_some();
         self.returned.set(queue);
         ready
     }
     pub(super) fn finish(&self, node: arena::Ready<'d>) {
-        let queue = self.returned.replace(Queue::Empty).push(node);
-        self.returned.set(queue);
+        // SAFETY: the node retains its stable slot for the complete scope.
+        let tail = &unsafe { node.entry.as_ref() }.returned;
+        let head = match self.returned.take() {
+            Some((head, last)) => {
+                last.set(Some(node));
+                head
+            }
+            None => node,
+        };
+        self.returned.set(Some((head, tail)));
     }
 }
 
 const _: () = assert!(size_of::<State<'_>>() == 5 * size_of::<usize>());
 
-enum Queue<'d> {
-    Empty,
-    Live {
-        head: arena::Ready<'d>,
-        tail: &'d cell::Cell<Option<arena::Ready<'d>>>,
-    },
-}
-
-impl<'d> Queue<'d> {
-    fn pop(self) -> (Self, Option<arena::Ready<'d>>) {
-        let Self::Live { mut head, tail } = self else {
-            return (Self::Empty, None);
-        };
-        let queue = match head.take_next() {
-            Some(next) => Self::Live { head: next, tail },
-            None => Self::Empty,
-        };
-        (queue, Some(head))
-    }
-
-    fn push(self, node: arena::Ready<'d>) -> Self {
-        // SAFETY: the node retains its stable slot for the complete scope.
-        let tail = &unsafe { node.entry.as_ref() }.returned;
-        match self {
-            Self::Empty => Self::Live { head: node, tail },
-            Self::Live { head, tail: last } => {
-                last.set(Some(node));
-                Self::Live { head, tail }
-            }
-        }
-    }
-}
+type Queue<'d> = Option<(arena::Ready<'d>, &'d cell::Cell<Option<arena::Ready<'d>>>)>;
 
 const _: () = assert!(size_of::<Queue<'_>>() == 2 * size_of::<usize>());
 

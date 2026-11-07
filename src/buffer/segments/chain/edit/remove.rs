@@ -4,9 +4,10 @@ use crate::{
     buffer,
     buffer::{
         hold, segments,
-        segments::{Chain, Handle, Key, Plural, handles},
+        segments::{Chain, Handle, Key, Nonempty, Plural, Shape, handles},
     },
     depot::arena::linked::slots,
+    mem::rc,
 };
 
 pub(in crate::buffer::segments) enum Remaining {
@@ -28,66 +29,20 @@ struct Removed<'a, T, H: Handle<T>> {
     index: slots::Index,
 }
 
-// SAFETY: Multi retains its initialized descriptor and exact nonempty node partition.
-unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::Linked<'a> for &'a mut Multi<'_, T, H> {
-    type Item = segments::Item<T>;
-    type Metadata = handles::Descriptor;
-
-    fn parts(
-        self,
-    ) -> (
-        &'a slots::Store<Self::Item>,
-        &'a slots::Store<Self::Metadata>,
-        slots::Index,
-    ) {
-        let handle = &self.sequence.handle;
-        (
-            handles::nodes(handle),
-            handles::descriptors(handle),
-            self.index,
-        )
-    }
-
-    fn head(metadata: &Self::Metadata) -> slots::Index {
-        metadata.links.head_raw()
-    }
-}
-
-// SAFETY: this Multi exclusively borrows the original sequence and both stores are disjoint.
-unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::LinkedMut<'a> for &'a mut Multi<'_, T, H> {}
-
-// SAFETY: detached-front metadata retains the descriptor and remaining live node partition.
-unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::Linked<'a> for &'a mut Removed<'_, T, H> {
-    type Item = segments::Item<T>;
-    type Metadata = handles::Descriptor;
-
-    fn parts(
-        self,
-    ) -> (
-        &'a slots::Store<Self::Item>,
-        &'a slots::Store<Self::Metadata>,
-        slots::Index,
-    ) {
-        (
-            handles::nodes(self.handle),
-            handles::descriptors(self.handle),
-            self.index,
-        )
-    }
-
-    fn head(metadata: &Self::Metadata) -> slots::Index {
-        metadata.links.head_raw()
-    }
-}
-
-// SAFETY: Removed retains the exclusive sequence-key loan through finalization.
-unsafe impl<'a, T: 'a, H: Handle<T>> buffer::raw::LinkedMut<'a> for &'a mut Removed<'_, T, H> {}
-
 impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
     pub(in crate::buffer::segments) fn front(
         &mut self,
     ) -> (&mut handles::Descriptor, &mut segments::Item<T>) {
-        buffer::raw::LinkedMut::front_mut(self)
+        let handle = &self.sequence.handle;
+        let nodes = handles::nodes(handle);
+        let descs = handles::descriptors(handle);
+        // SAFETY: Multi exclusively retains this live descriptor and its head
+        // in distinct stores belonging to the same sequence.
+        unsafe {
+            let desc = &mut *descs.value_ptr(self.index);
+            let owner = &mut *nodes.value_ptr(desc.links.head_raw());
+            (desc, owner)
+        }
     }
 
     pub(in crate::buffer::segments::chain::edit) fn consume(
@@ -100,16 +55,16 @@ impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
             desc.len -= amount.get();
             return None;
         }
-        let owner = self.take();
+        let owner = self.take_front().0;
         NonZero::new(amount.get() - owner.len().get())
     }
 
-    pub(in crate::buffer::segments) fn take(self) -> segments::Item<T> {
-        self.take_front().0
-    }
-
+    #[inline(always)]
     pub(in crate::buffer::segments) fn take_front(self) -> (segments::Item<T>, Remaining) {
-        self.detach().take()
+        let mut removed = self.detach();
+        let rest = removed.finish().1;
+        let owner = removed.owner.take().0;
+        (owner, rest)
     }
 
     pub(in crate::buffer::segments) fn discard(self) -> (hold::Charge, Remaining) {
@@ -117,34 +72,30 @@ impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
     }
 
     fn detach(self) -> Removed<'a, T, H> {
-        let nodes = handles::nodes(&self.sequence.sequence.handle);
-        let descs = handles::descriptors(&self.sequence.sequence.handle);
+        let nodes = handles::nodes(&self.sequence.handle);
+        let descs = handles::descriptors(&self.sequence.handle);
         // SAFETY: this head exclusively borrows the sequence owning this descriptor.
         let desc = unsafe { &mut *descs.value_ptr(self.index) };
         let head = desc.links.head_raw();
         let owner = unsafe { crate::depot::raw::SlotOwner::detach(&mut desc.links, nodes, head) };
         Removed {
             owner,
-            handle: &self.sequence.sequence.handle,
-            key: &mut self.sequence.sequence.key,
+            handle: &self.sequence.handle,
+            key: &mut self.sequence.key,
             index: self.index,
         }
     }
 }
 
 impl<T: buffer::raw::Segment, H: Handle<T>> Removed<'_, T, H> {
-    fn take(mut self) -> (segments::Item<T>, Remaining) {
-        let rest = self.finish().1;
-        let owner = self.owner.take().0;
-        (owner, rest)
-    }
-
+    #[inline(always)]
     fn finish(&mut self) -> (hold::Charge, Remaining) {
         let len = self.owner.get().len().get();
         let resident = buffer::Residency::resident(self.owner.get());
         let charge = hold::Charge::from_owner(len, resident);
         let descs = handles::descriptors(self.handle);
-        let desc = buffer::raw::LinkedMut::metadata_mut(&mut *self);
+        // SAFETY: Removed retains the exclusive sequence-key loan and this live descriptor.
+        let desc = unsafe { &mut *descs.value_ptr(self.index) };
         let count = Plural(desc.count);
         let rest = if count.raw() == 2 {
             let entry = unsafe { descs.detached(self.index) };
@@ -157,5 +108,27 @@ impl<T: buffer::raw::Segment, H: Handle<T>> Removed<'_, T, H> {
             Remaining::Multi
         };
         (charge, rest)
+    }
+}
+
+impl<T: buffer::raw::Segment> Nonempty<T> {
+    pub fn try_pop(self, limit: usize) -> Result<(T, Shape<T>), (rc::Error, Self)> {
+        match self {
+            Self::One(mut owner) => {
+                let Some(tail) = owner.tail(limit) else {
+                    return Ok((owner.into_inner(), Shape::Empty));
+                };
+                match tail.try_commit() {
+                    Ok(head) => Ok((head, Shape::One(owner))),
+                    Err(error) => Err((error, Self::One(owner))),
+                }
+            }
+            Self::Many(owners) => {
+                let (head, rest) = owners
+                    .try_pop(limit)
+                    .map_err(|(error, owners)| (error, Self::Many(owners)))?;
+                Ok((head, rest.into_shape()))
+            }
+        }
     }
 }

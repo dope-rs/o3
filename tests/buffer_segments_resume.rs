@@ -1,19 +1,16 @@
 pub mod common;
 
-use std::{hint, mem::size_of};
+use std::hint;
 
 use common::{
     alloc::system::Tracker,
-    buffer::{Fill as _, scatter::Slices},
+    buffer::{scatter::Slices, try_fill},
 };
 use o3::{
     buffer::{
         self,
-        raw::Scatter as _,
-        segments::{
-            self, queue,
-            scatter::{self, Source as _},
-        },
+        raw::{Chunks as _, Scatter as _},
+        segments::{self, queue, scatter},
         storage,
     },
     depot::capacity::Count,
@@ -32,7 +29,7 @@ fn resume_partial_moves() {
         })
         .expect("pool");
         let mut chain = pool.try_chain().expect("chain");
-        chain.try_fill(parts).expect("owners");
+        try_fill(&mut chain, parts).expect("owners");
         let expected = b"abcdefghi";
         let mut position = scatter::raw::Position::new();
         let mut chain = Some(chain);
@@ -56,15 +53,6 @@ fn resume_partial_moves() {
         });
         assert_eq!(activity, [0; 4]);
     }
-}
-
-#[test]
-fn keeps_borrowed_layout() {
-    type Cursor = <Slices<'static> as buffer::raw::Chunks>::Cursor<'static>;
-    assert_eq!(
-        size_of::<scatter::Take<'static, 'static, Cursor>>(),
-        2 * size_of::<usize>()
-    );
 }
 
 #[test]
@@ -216,7 +204,7 @@ fn preserves_native_ranges() {
     compare(&scoped, b"def");
 }
 
-fn compare(source: &impl scatter::Source, expected: &[u8]) {
+fn compare(source: &impl buffer::raw::Chunks, expected: &[u8]) {
     let (_, activity) = Tracker::activity(|| {
         assert_eq!(buffer::raw::Chunks::len(source), expected.len());
         assert_eq!(source.suffix::<0>(), Some([]));

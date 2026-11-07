@@ -16,23 +16,20 @@ pub struct Anchored<
     const RECYCLE: bool = false,
     const PARTITIONS: usize = 1,
     S = storage::Heap,
-    I = storage::Eager,
 > where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
     pub(in crate::depot) entry:
-        entries::Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, (), S, I>,
+        entries::Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, (), S>,
     pub(in crate::depot) tag: marker::PhantomData<fn() -> Tag>,
 }
 
-impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S, I>
-    Anchored<'a, T, Tag, MAX, RECYCLE, PARTITIONS, S, I>
+impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S>
+    Anchored<'a, T, Tag, MAX, RECYCLE, PARTITIONS, S>
 where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
     pub fn get(&self) -> &T {
         self.entry.value()

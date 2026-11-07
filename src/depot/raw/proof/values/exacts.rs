@@ -32,7 +32,7 @@ unsafe impl<T, const N: usize> crate::depot::raw::Exact for &mut array::IntoIter
 }
 
 unsafe impl<'a, T: Copy + Eq, I: crate::depot::raw::Compact> crate::depot::raw::Project<I>
-    for &'a mut fifo::List<T, I, exact::Policy>
+    for &'a mut fifo::List<T, I>
 {
     type Output = exact::Entry<'a, T, I>;
 

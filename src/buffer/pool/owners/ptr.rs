@@ -2,12 +2,7 @@ use std::{marker, num, ptr};
 
 use crate::{
     alloc,
-    buffer::{
-        pool,
-        pool::{owners, state},
-        resident,
-        storage::regions,
-    },
+    buffer::{pool, pool::state, resident, storage::regions},
 };
 
 /// Physical layout of an accounted block before its resident domain is bound.
@@ -203,12 +198,6 @@ impl<K, S> Ptr<K, S> {
 }
 
 impl<'d, S> Ptr<super::Resident<'d>, S> {
-    /// # Safety
-    /// The consumed core is the terminal edge of this exact resident allocation.
-    pub(in crate::buffer) unsafe fn uncharge(self) {
-        unsafe { owners::Accounts::release(self) };
-    }
-
     pub(super) const fn base(self) -> Base<super::Resident<'d>> {
         Base(self.raw)
     }

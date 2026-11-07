@@ -100,22 +100,6 @@ impl<'source, 'ranges, S: buffer::raw::Source + ?Sized, N: buffer::raw::Length>
         Iter::new(self)
     }
 
-    pub(in crate::buffer::hold::ranges) fn advance(
-        iter: &mut Iter<'_, 'source, 'ranges, S, N>,
-        left: NonZero<u32>,
-    ) -> buffer::View<'source, S> {
-        let left = left.get();
-        let plan = iter.plan;
-        let total = plan.count().into_raw();
-        let index = (total - left) as usize;
-        // SAFETY: `Iter::new` binds this private cursor to `plan` and its exact
-        // validated count. Every yielded item decrements it once, so nonzero
-        // `left` proves both the range index and the successor count.
-        let (start, end) = unsafe { *plan.ranges.as_ptr().add(index) };
-        iter.remaining = segments::Count::new(left - 1);
-        plan.view(start, end)
-    }
-
     pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -140,14 +124,23 @@ impl<'source, 'ranges, S: buffer::raw::Source + ?Sized, N: buffer::raw::Length>
 
 impl<N: buffer::raw::Length> Set<'_, '_, storage::Shared, N> {
     /// Retains every validated range while preserving this plan for retry.
-    pub fn try_retain<'d>(&self) -> Result<segments::Chain<resident::Shared<'d>>, retain::Error> {
+    pub fn try_retain<'d>(&self) -> Result<segments::Shape<resident::Shared<'d>>, retain::Error> {
+        if !self.count().is_many() {
+            return self
+                .iter()
+                .next()
+                .map_or(Ok(segments::Shape::Empty), |view| {
+                    share((0, view)).map(segments::Shape::One)
+                });
+        }
         let actual = self.ranges.len();
         let added = crate::buffer::Residency::resident(self.source);
         let Some(resident) = actual.checked_mul(added) else {
-            let added = NonZero::new(added).unwrap_or(NonZero::<usize>::MIN);
+            // SAFETY: multiplication by zero cannot overflow.
+            let added = unsafe { NonZero::new_unchecked(added) };
             let index = usize::MAX / added;
             return Err(retain::Error::Resident {
-                index,
+                index: index as u32,
                 current: index * added.get(),
                 added: added.get(),
             });
@@ -156,8 +149,21 @@ impl<N: buffer::raw::Length> Set<'_, '_, storage::Shared, N> {
             source: self,
             resident,
         };
-        segments::Exact::try_new(&source)?.try_collect()
+        segments::Exact::try_new(&source)?
+            .try_collect()
+            .map(segments::Shape::Many)
     }
+}
+
+#[inline]
+fn share<'d>(
+    (index, view): (usize, buffer::View<'_, storage::Shared>),
+) -> Result<segments::Item<resident::Shared<'d>>, retain::Error> {
+    // SAFETY: callers select validated, nonempty views from the same Set.
+    let view = unsafe { regions::NonEmpty::assume(&view) };
+    <storage::Shared as segments::Seal>::try_share(view)
+        .map(segments::Item::from)
+        .map_err(|error| retain::Error::Retain { index, error })
 }
 
 struct Retain<'a, 'b, 'c, N = u32> {
@@ -165,26 +171,15 @@ struct Retain<'a, 'b, 'c, N = u32> {
     resident: usize,
 }
 
-// SAFETY: the borrowed Set retains its validated ranges and exact count;
-// the same Retain borrow carries their checked accounting through collection.
+// SAFETY: this private input is constructed only for at least two validated
+// nonempty ranges; its borrow preserves their checked totals through collection.
 unsafe impl<'d, N: buffer::raw::Length> buffer::raw::Sequence<resident::Shared<'d>>
     for &Retain<'_, '_, '_, N>
 {
-    type Output = segments::Chain<resident::Shared<'d>>;
     type Item = Result<segments::Item<resident::Shared<'d>>, retain::Error>;
     type Error = retain::Error;
-    fn owners(self) -> impl Iterator<Item = Self::Item> + buffer::raw::Total {
-        let owners = self.source.iter().enumerate().map(move |(index, view)| {
-            // SAFETY: Set owns this validated, strictly nonempty source range.
-            let view = unsafe { regions::NonEmpty::assume(&view) };
-            <storage::Shared as segments::Seal>::try_share(view)
-                .map(segments::Item::from)
-                .map_err(|error| retain::Error::Retain { index, error })
-        });
-        buffer::raw::Batch {
-            owners,
-            total: self,
-        }
+    fn owners(self) -> (impl Iterator<Item = Self::Item>, impl buffer::raw::Total) {
+        (self.source.iter().enumerate().map(share), self)
     }
 
     fn reject(self, error: crate::alloc::Error) -> Self::Error {

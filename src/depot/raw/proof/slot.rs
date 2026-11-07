@@ -47,24 +47,4 @@ impl<K: crate::depot::raw::Key> Slot<K> {
     }
 }
 
-/// Consuming proof that one external link decoded to a live item.
-#[repr(transparent)]
-pub(crate) struct Present<L: crate::depot::raw::Link>(L::Item);
-
-impl<L: crate::depot::raw::Link> Present<L> {
-    pub(crate) fn new(link: L) -> Option<Self> {
-        link.item().map(Self)
-    }
-
-    pub(crate) fn item(&self) -> L::Item {
-        self.0
-    }
-}
-
-const _: () = {
-    assert!(std::mem::size_of::<Present<u16>>() == std::mem::size_of::<u16>());
-    assert!(std::mem::size_of::<Present<u32>>() == std::mem::size_of::<u32>());
-    assert!(std::mem::size_of::<Present<Option<u32>>>() == std::mem::size_of::<u32>());
-};
-
 type Identity<K> = marker::PhantomData<(K, fn(K) -> K)>;

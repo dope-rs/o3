@@ -18,14 +18,6 @@ pub struct Node {
     pub value: u64,
 }
 
-// SAFETY: every native resident binds its admitted key to its own initialized link.
-unsafe impl<'a> depot::raw::KeyBorrow<'a> for &'a Node {
-    type Key = key::Handle;
-    fn parts(self) -> (Self::Key, &'a keyed::Link<key::Handle>) {
-        (self.key, &self.link)
-    }
-}
-
 pub struct Lanes {
     heads: lanes::Fifo<key::Handle, 2>,
     slots: Box<[Node]>,
@@ -166,15 +158,15 @@ unsafe impl depot::raw::KeyOwner for Entry<'_> {
     }
     fn parts(&self) -> (Self::Key, &keyed::Link<Self::Key>) {
         let node = unsafe { self.owner.slots.get_unchecked(self.index) };
-        depot::raw::KeyBorrow::parts(node)
+        (node.key, &node.link)
     }
-    fn entry<'a>(
-        live: depot::raw::Proof<(&'a Self, links::Index), Initialized<()>>,
-    ) -> keyed::Entry<'a, Self::Key> {
+    fn link(
+        live: depot::raw::Proof<(&Self, links::Index), Initialized<()>>,
+    ) -> &keyed::Link<Self::Key> {
         let owner = *live.source();
         let index = live.key();
         let node = unsafe { owner.owner.slots.get_unchecked(index.get()) };
-        keyed::Entry::from_source(node)
+        &node.link
     }
 }
 

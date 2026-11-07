@@ -1,4 +1,4 @@
-use std::{num::NonZero, ops, ptr, slice};
+use std::{num::NonZero, ops, ptr};
 
 pub(in crate::buffer) use nonempty::NonEmpty;
 pub(in crate::buffer) use prefix::Prefix;
@@ -9,7 +9,7 @@ pub(in crate::buffer) use value::{Complete, Init};
 use crate::{
     buffer,
     buffer::{
-        is_within, pool,
+        pool,
         pool::owners,
         resident,
         storage::{alloc, provided, range, regions},
@@ -23,9 +23,10 @@ use crate::{
 pub(in crate::buffer) unsafe trait Initialize: Sized {
     fn parts(&self) -> (NonZero<u32>, impl crate::buffer::raw::SliceExt);
 
+    #[inline(always)]
     fn try_init<P: crate::buffer::raw::Policy>(
         self,
-        seed: P::Seed,
+        seed: P,
     ) -> Result<regions::Init<P>, alloc::Error<P::Failure>> {
         use crate::buffer::raw::SliceExt as _;
 
@@ -34,7 +35,7 @@ pub(in crate::buffer) unsafe trait Initialize: Sized {
         // SAFETY: the retained sources exactly fill this fresh disjoint allocation.
         unsafe { sources.copy_to(heap.as_mut_ptr().cast()) };
         // SAFETY: copying every retained source initialized the complete allocation.
-        Ok(unsafe { regions::Init::new(heap.into_shared()) })
+        Ok(unsafe { regions::Init::new(heap) })
     }
 }
 
@@ -50,6 +51,75 @@ mod prefix;
 mod tag;
 mod value;
 
+pub(in crate::buffer) mod retained {
+    use super::{Extent, Shared, resident};
+    use crate::buffer::{self, raw, storage};
+
+    #[derive(Debug)]
+    enum Owner<'d> {
+        Unique(raw::Heap<resident::Budget<'d>>),
+        Shared(resident::State<'d>),
+    }
+
+    #[derive(Debug)]
+    #[repr(transparent)]
+    pub struct Retained<'d>(Shared<Owner<'d>>);
+
+    impl<'d> From<storage::Owned<resident::Budget<'d>>> for Retained<'d> {
+        #[inline]
+        fn from(value: storage::Owned<resident::Budget<'d>>) -> Self {
+            let bytes = Extent::from_bytes(value.as_slice());
+            let owner = match value.allocation {
+                Some(heap) => Owner::Unique(heap),
+                None => Owner::Shared(resident::State::Slice),
+            };
+            Self(Shared { owner, bytes })
+        }
+    }
+
+    impl<'d> From<resident::Shared<'d>> for Retained<'d> {
+        fn from(value: resident::Shared<'d>) -> Self {
+            let Shared { owner, bytes } = value.region;
+            Self(Shared {
+                owner: Owner::Shared(owner),
+                bytes,
+            })
+        }
+    }
+
+    impl<'d> Retained<'d> {
+        pub fn as_slice(&self) -> &[u8] {
+            self.0.as_slice()
+        }
+
+        pub fn into_shared(self) -> resident::Shared<'d> {
+            let Shared { owner, bytes } = self.0;
+            let owner = match owner {
+                Owner::Unique(heap) => resident::State::Resident(heap.into_shared()),
+                Owner::Shared(owner) => owner,
+            };
+            resident::Shared {
+                region: Shared { owner, bytes },
+            }
+        }
+    }
+
+    impl buffer::Residency for Retained<'_> {
+        #[inline]
+        fn resident(&self) -> usize {
+            match &self.0.owner {
+                Owner::Unique(heap) => heap.capacity().get() as usize,
+                Owner::Shared(owner) => owner.resident(),
+            }
+        }
+    }
+
+    const _: () = {
+        assert!(size_of::<Retained<'static>>() == size_of::<resident::Shared<'static>>());
+        assert!(size_of::<Option<Retained<'static>>>() == size_of::<Retained<'static>>());
+    };
+}
+
 /// Opaque byte coordinates, usable only under an exact backing-owner proof.
 /// Public raw contracts may borrow this representation; it exposes no safe views.
 #[derive(Debug)]
@@ -59,16 +129,9 @@ pub struct Extent(ptr::NonNull<[u8]>);
 /// Immutable initialized bytes inseparably paired with their retaining owner.
 #[derive(Debug)]
 #[repr(C)]
-pub struct Value<O> {
+pub struct Shared<O = Option<regions::Tag>> {
     owner: O,
-    bytes: Bytes,
-}
-
-/// An immutable view borrowed from the owner retaining its initialized extent.
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct Bytes {
-    extent: regions::Extent,
+    bytes: Extent,
 }
 
 /// Completes consumption according to the actual backing's empty-owner policy.
@@ -97,39 +160,11 @@ impl regions::Extent {
         self.0.len()
     }
 
-    pub(in crate::buffer) const fn as_ptr(&self) -> *const u8 {
-        self.0.as_ptr().cast::<u8>()
-    }
-
-    pub(in crate::buffer) fn duplicate(&self) -> Self {
-        Self(self.0)
-    }
-
     fn offset(&self, amount: usize) -> ptr::NonNull<u8> {
         let pointer = self.0.cast::<u8>().as_ptr().wrapping_add(amount);
         // SAFETY: constructors establish nonwrapping addresses; callers keep amount
         // within the stored extent, so the resulting address remains nonzero.
         unsafe { ptr::NonNull::new_unchecked(pointer) }
-    }
-
-    pub(in crate::buffer) fn get(&self, range: impl ops::RangeBounds<usize>) -> Option<Self> {
-        use ops::Bound;
-
-        let start = match range.start_bound() {
-            Bound::Included(&value) => value,
-            Bound::Excluded(&value) => value.checked_add(1)?,
-            Bound::Unbounded => 0,
-        };
-        let end = match range.end_bound() {
-            Bound::Included(&value) => value.checked_add(1)?,
-            Bound::Excluded(&value) => value,
-            Bound::Unbounded => self.len(),
-        };
-        let range = start..end;
-        is_within(&range, self.len()).then(|| {
-            // SAFETY: this checked subrange preserves the original nonwrapping addresses.
-            unsafe { Self::new(self.offset(range.start), range.len()) }
-        })
     }
 
     /// # Safety
@@ -145,55 +180,65 @@ impl regions::Extent {
 const _: () = assert!(size_of::<regions::Extent>() == 2 * size_of::<usize>());
 
 const _: () = {
-    assert!(size_of::<regions::Bytes>() == 2 * size_of::<usize>());
-    assert!(size_of::<regions::Value<Option<regions::Tag>>>() == 3 * size_of::<usize>());
-    assert!(size_of::<Option<regions::Value<Option<regions::Tag>>>>() == 3 * size_of::<usize>());
+    assert!(size_of::<regions::Shared<Option<regions::Tag>>>() == 3 * size_of::<usize>());
+    assert!(size_of::<Option<regions::Shared<Option<regions::Tag>>>>() == 3 * size_of::<usize>());
+    assert!(
+        size_of::<regions::Shared<owners::Edge<owners::Plain, pool::Borrowed<'static>>>>()
+            == 3 * size_of::<usize>()
+    );
+    assert!(
+        size_of::<Result<regions::Shared<Option<regions::Tag>>, rc::Error>>()
+            == size_of::<regions::Shared<Option<regions::Tag>>>()
+    );
 };
 
 const _: () = assert!(usize::BITS >= 64);
 
-impl<O> regions::Value<O> {
+impl<O> regions::Shared<O> {
     pub(in crate::buffer) const fn empty(owner: O) -> Self {
         Self {
             owner,
-            bytes: regions::Bytes {
-                extent: regions::Extent::EMPTY,
-            },
+            bytes: regions::Extent::EMPTY,
         }
     }
     /// # Safety
     /// The extent must form one valid initialized immutable slice retained by
     /// the transferred owner for every region borrow, including after owner moves.
-    pub(in crate::buffer) const unsafe fn new(owner: O, extent: regions::Extent) -> Self {
+    pub(in crate::buffer) const unsafe fn from_extent(owner: O, extent: regions::Extent) -> Self {
         Self {
             owner,
-            bytes: regions::Bytes { extent },
+            bytes: extent,
         }
     }
     pub(in crate::buffer) const fn owner(&self) -> &O {
         &self.owner
     }
 
+    pub fn as_slice(&self) -> &[u8] {
+        // SAFETY: this owner borrow retains the unchanged initialized extent.
+        unsafe { self.bytes.0.as_ref() }
+    }
+
     /// # Safety
     /// Every replacement must remain an initialized subrange of this exact
     /// owner's backing; the owner and its lifetime must remain unchanged.
     pub(in crate::buffer) unsafe fn extent_mut(&mut self) -> &mut regions::Extent {
-        &mut self.bytes.extent
+        &mut self.bytes
     }
     /// # Safety
     /// The bounds must select a subrange of the unchanged current extent.
     pub(in crate::buffer) unsafe fn restrict(&mut self, bounds: ops::Range<usize>) {
         // SAFETY: the caller proves the range; the paired owner remains unchanged.
-        self.bytes.extent = unsafe { self.bytes.extent.restrict(bounds) };
+        self.bytes = unsafe { self.bytes.restrict(bounds) };
     }
     pub fn try_restrict(&mut self, visible: ops::Range<usize>) -> Result<(), range::Error>
     where
         O: regions::End,
     {
-        self.bytes.extent = self
-            .bytes
-            .extent
+        self.bytes = self
+            .as_slice()
             .get(visible.clone())
+            .map(regions::Extent::from_bytes)
             .ok_or_else(|| range::Error::new(visible, self.len()))?;
         if self.is_empty()
             && let Some(owner) = O::EMPTY
@@ -204,12 +249,12 @@ impl<O> regions::Value<O> {
     }
 }
 
-impl<O: buffer::raw::Retain> regions::Value<O> {
-    pub(in crate::buffer) fn try_clone(&self) -> Result<Self, rc::Error> {
-        let extent = self.bytes.extent.duplicate();
+impl<O: buffer::raw::Retain> regions::Shared<O> {
+    pub fn try_clone(&self) -> Result<Self, rc::Error> {
+        let extent = regions::Extent(self.bytes.0);
         Ok(Self {
             owner: self.owner.try_retain()?,
-            bytes: regions::Bytes { extent },
+            bytes: extent,
         })
     }
     /// # Safety
@@ -218,41 +263,39 @@ impl<O: buffer::raw::Retain> regions::Value<O> {
     pub(in crate::buffer) unsafe fn try_view(&self, bytes: &[u8]) -> Result<Self, rc::Error> {
         Ok(Self {
             owner: self.owner.try_retain()?,
-            bytes: regions::Bytes {
-                extent: regions::Extent::from_bytes(bytes),
-            },
+            bytes: regions::Extent::from_bytes(bytes),
         })
     }
 }
 
-impl regions::Value<Option<regions::Tag>> {
-    pub(in crate::buffer) fn try_get(
-        &self,
-        range: impl ops::RangeBounds<usize>,
-    ) -> Result<Option<Self>, rc::Error> {
-        use buffer::raw::Retain as _;
-        let Some(extent) = self.bytes.extent.get(range) else {
+impl regions::Shared<Option<regions::Tag>> {
+    pub fn try_get(&self, range: impl ops::RangeBounds<usize>) -> Result<Option<Self>, rc::Error> {
+        let start = range.start_bound().cloned();
+        if let ops::Bound::Excluded(usize::MAX) = start {
+            return Ok(None);
+        }
+        let bytes = self.as_slice().get((start, range.end_bound().cloned()));
+        drop(range);
+        let Some(bytes) = bytes else {
             return Ok(None);
         };
-        if extent.len() == 0 {
+        if bytes.is_empty() {
             return Ok(Some(Self::empty(None)));
         }
-        Ok(Some(Self {
-            owner: self.owner.try_retain()?,
-            bytes: regions::Bytes { extent },
-        }))
+        // SAFETY: checked slicing keeps these bytes within this exact source.
+        unsafe { self.try_view(bytes) }.map(Some)
     }
 }
 
-impl<O> ops::Deref for regions::Value<O> {
-    type Target = regions::Bytes;
+impl<O> ops::Deref for regions::Shared<O> {
+    type Target = [u8];
     fn deref(&self) -> &Self::Target {
-        &self.bytes
+        self.as_slice()
     }
 }
 
-impl From<regions::Value<crate::buffer::raw::Rc>> for regions::Value<Option<regions::Tag>> {
-    fn from(region: regions::Value<crate::buffer::raw::Rc>) -> Self {
+impl From<regions::Shared<crate::buffer::raw::Rc>> for regions::Shared<Option<regions::Tag>> {
+    fn from(region: regions::Shared<crate::buffer::raw::Rc>) -> Self {
         Self {
             owner: Some(regions::Tag::allocation(region.owner)),
             bytes: region.bytes,
@@ -260,10 +303,10 @@ impl From<regions::Value<crate::buffer::raw::Rc>> for regions::Value<Option<regi
     }
 }
 
-impl<L> From<regions::Value<owners::Edge<owners::Plain<L>>>>
-    for regions::Value<Option<regions::Tag>>
+impl<L> From<regions::Shared<owners::Edge<owners::Plain<L>>>>
+    for regions::Shared<Option<regions::Tag>>
 {
-    fn from(region: regions::Value<owners::Edge<owners::Plain<L>>>) -> Self {
+    fn from(region: regions::Shared<owners::Edge<owners::Plain<L>>>) -> Self {
         Self {
             owner: regions::Tag::pool(region.owner),
             bytes: region.bytes,
@@ -271,10 +314,10 @@ impl<L> From<regions::Value<owners::Edge<owners::Plain<L>>>>
     }
 }
 
-impl<'d, L> From<regions::Value<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>>
-    for regions::Value<owners::Edge<owners::Plain<L>>>
+impl<'d, L> From<regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>>
+    for regions::Shared<owners::Edge<owners::Plain<L>>>
 {
-    fn from(region: regions::Value<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>) -> Self {
+    fn from(region: regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>) -> Self {
         Self {
             owner: region.owner.into_owned(),
             bytes: region.bytes,
@@ -282,69 +325,75 @@ impl<'d, L> From<regions::Value<owners::Edge<owners::Plain<L>, pool::Borrowed<'d
     }
 }
 
-impl<'a: 'd, 'd> From<&'a [u8]> for regions::Value<resident::State<'d>> {
+impl<'a: 'd, 'd> From<&'a [u8]> for resident::Shared<'d> {
     fn from(bytes: &'a [u8]) -> Self {
         Self {
-            owner: resident::State::Slice,
-            bytes: regions::Bytes {
-                extent: regions::Extent::from_bytes(bytes),
+            region: regions::Shared {
+                owner: resident::State::Slice,
+                bytes: regions::Extent::from_bytes(bytes),
             },
         }
     }
 }
 
-impl<'d> From<regions::Value<Option<regions::Tag>>> for regions::Value<resident::State<'d>> {
-    fn from(region: regions::Value<Option<regions::Tag>>) -> Self {
+impl<'d> From<regions::Shared<Option<regions::Tag>>> for resident::Shared<'d> {
+    fn from(region: regions::Shared<Option<regions::Tag>>) -> Self {
         Self {
-            owner: resident::State::Owned(region.owner),
-            bytes: region.bytes,
+            region: regions::Shared {
+                owner: resident::State::Owned(region.owner),
+                bytes: region.bytes,
+            },
         }
     }
 }
 
-impl<'d> From<regions::Value<crate::buffer::raw::Rc<resident::Lease<'d>>>>
-    for regions::Value<resident::State<'d>>
+impl<'d> From<regions::Shared<crate::buffer::raw::Rc<resident::Budget<'d>>>>
+    for resident::Shared<'d>
 {
-    fn from(region: regions::Value<crate::buffer::raw::Rc<resident::Lease<'d>>>) -> Self {
+    fn from(region: regions::Shared<crate::buffer::raw::Rc<resident::Budget<'d>>>) -> Self {
         Self {
-            owner: resident::State::Resident(region.owner),
-            bytes: region.bytes,
+            region: regions::Shared {
+                owner: resident::State::Resident(region.owner),
+                bytes: region.bytes,
+            },
         }
     }
 }
 
-impl<'d, L> From<regions::Value<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>>
-    for regions::Value<resident::State<'d>>
+impl<'d, L> From<regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>>
+    for resident::Shared<'d>
 {
-    fn from(region: regions::Value<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>) -> Self {
+    fn from(region: regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>) -> Self {
         match regions::Tag::pool(region.owner) {
             Some(owner) => Self {
-                owner: resident::State::Borrowed(owner),
-                bytes: region.bytes,
+                region: regions::Shared {
+                    owner: resident::State::Borrowed(owner),
+                    bytes: region.bytes,
+                },
             },
-            None => Self::empty(resident::State::Slice),
+            None => Self::new(),
         }
     }
 }
 
-impl<'d> From<regions::Value<Option<provided::Account<'d>>>>
-    for regions::Value<resident::State<'d>>
-{
-    fn from(region: regions::Value<Option<provided::Account<'d>>>) -> Self {
+impl<'d> From<regions::Shared<Option<provided::Account<'d>>>> for resident::Shared<'d> {
+    fn from(region: regions::Shared<Option<provided::Account<'d>>>) -> Self {
         match region.owner {
             Some(owner) => Self {
-                owner: resident::State::Provided(owner),
-                bytes: region.bytes,
+                region: regions::Shared {
+                    owner: resident::State::Provided(owner),
+                    bytes: region.bytes,
+                },
             },
-            None => Self::empty(resident::State::Slice),
+            None => Self::new(),
         }
     }
 }
 
-impl<'d> regions::Value<resident::State<'d>> {
+impl<'d> regions::Shared<resident::State<'d>> {
     pub(in crate::buffer) fn try_own(
         mut self,
-    ) -> Result<regions::Value<Option<regions::Tag>>, Self> {
+    ) -> Result<regions::Shared<Option<regions::Tag>>, Self> {
         if let resident::State::Resident(owner) = self.owner {
             self.owner = match owner.try_own() {
                 Ok(owner) => resident::State::Owned(Some(regions::Tag::allocation(owner))),
@@ -356,10 +405,10 @@ impl<'d> regions::Value<resident::State<'d>> {
 
     pub(in crate::buffer) fn try_detach(
         self,
-    ) -> Result<regions::Value<Option<regions::Tag>>, Self> {
+    ) -> Result<regions::Shared<Option<regions::Tag>>, Self> {
         let empty = self.is_empty();
         match self.owner.try_own(empty) {
-            Ok(owner) => Ok(regions::Value {
+            Ok(owner) => Ok(regions::Shared {
                 owner,
                 bytes: self.bytes,
             }),
@@ -368,25 +417,5 @@ impl<'d> regions::Value<resident::State<'d>> {
                 bytes: self.bytes,
             }),
         }
-    }
-}
-
-impl regions::Bytes {
-    pub const fn len(&self) -> usize {
-        self.extent.len()
-    }
-    pub const fn is_empty(&self) -> bool {
-        self.extent.len() == 0
-    }
-    pub fn as_slice(&self) -> &[u8] {
-        // SAFETY: regions::Bytes can only be borrowed from its paired retaining regions::Value.
-        unsafe { slice::from_raw_parts(self.extent.as_ptr(), self.extent.len()) }
-    }
-}
-
-impl ops::Deref for regions::Bytes {
-    type Target = [u8];
-    fn deref(&self) -> &Self::Target {
-        self.as_slice()
     }
 }

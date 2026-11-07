@@ -1,9 +1,6 @@
 use std::{marker, mem, num, ptr, slice};
 
-use regions::Initialize as _;
-
 use crate::{
-    buffer,
     buffer::{resident, storage, storage::regions},
     mem::rc,
 };
@@ -12,7 +9,7 @@ use crate::{
 #[derive(Debug)]
 #[repr(transparent)]
 pub(in crate::buffer) struct Init<P: crate::buffer::raw::Policy = ()> {
-    allocation: crate::buffer::raw::Rc<P>,
+    allocation: crate::buffer::raw::Heap<P>,
 }
 
 /// One complete allocation, with its plain or resident policy encoded in bit zero.
@@ -20,14 +17,14 @@ pub(in crate::buffer) struct Init<P: crate::buffer::raw::Policy = ()> {
 #[repr(transparent)]
 pub(in crate::buffer) struct Complete<'d> {
     pointer: ptr::NonNull<regions::Prefix<num::NonZero<u32>>>,
-    ownership: marker::PhantomData<Init<resident::Lease<'d>>>,
+    ownership: marker::PhantomData<Init<resident::Budget<'d>>>,
 }
 
 impl<P: crate::buffer::raw::Policy> Init<P> {
     /// # Safety
     /// Every byte through `allocation.capacity()` must be initialized.
-    pub(in crate::buffer) unsafe fn new(rc: crate::buffer::raw::Rc<P>) -> Self {
-        Self { allocation: rc }
+    pub(in crate::buffer) unsafe fn new(heap: crate::buffer::raw::Heap<P>) -> Self {
+        Self { allocation: heap }
     }
 
     pub(in crate::buffer) fn capacity(&self) -> num::NonZero<u32> {
@@ -37,48 +34,48 @@ impl<P: crate::buffer::raw::Policy> Init<P> {
     pub(in crate::buffer) fn as_slice(&self) -> &[u8] {
         // SAFETY: construction proves the complete allocation is initialized,
         // and this owner keeps the header and data live for the borrow.
-        unsafe { slice::from_raw_parts(self.allocation.data(), self.capacity().get() as usize) }
+        unsafe {
+            slice::from_raw_parts(
+                self.allocation.as_ptr().cast(),
+                self.capacity().get() as usize,
+            )
+        }
+    }
+
+    pub(in crate::buffer) fn into_owned(self) -> storage::Owned<P> {
+        storage::Owned {
+            len: self.capacity().get(),
+            allocation: Some(self.allocation),
+        }
     }
 
     pub(in crate::buffer) fn into_buf(self) -> storage::Shared<crate::buffer::raw::Rc<P>> {
         let len = self.capacity();
         // SAFETY: Init transfers its fully initialized extent with its original owner.
-        unsafe { self.allocation.into_range(0, len.get()) }
+        unsafe { self.allocation.into_shared().into_range(0, len.get()) }
     }
 }
 
 impl Init<()> {
     pub(in crate::buffer) fn bind<'d>(self) -> regions::Complete<'d> {
         Complete {
-            pointer: self.allocation.into_raw().cast(),
+            pointer: self.allocation.into_shared().into_raw().cast(),
             ownership: marker::PhantomData,
         }
     }
 }
 
-impl<'d> Init<resident::Lease<'d>> {
+impl<'d> Init<resident::Budget<'d>> {
     pub(in crate::buffer) fn bind(self) -> regions::Complete<'d> {
         Complete {
             pointer: self
                 .allocation
+                .into_shared()
                 .into_raw()
                 .cast()
                 .map_addr(|address| address | 1),
             ownership: marker::PhantomData,
         }
-    }
-
-    pub(in crate::buffer) fn try_copy<const N: usize>(
-        budget: &resident::Budget<'d>,
-        slices: [&[u8]; N],
-    ) -> Result<Option<Self>, resident::AllocError> {
-        use resident::AllocError;
-        let Some(slices) = buffer::raw::Slices::try_new(slices).map_err(AllocError::Capacity)?
-        else {
-            return Ok(None);
-        };
-        let init = slices.try_init(*budget)?;
-        Ok(Some(init))
     }
 }
 
@@ -92,7 +89,7 @@ impl<'d> Complete<'d> {
             unsafe { crate::buffer::raw::Header::<()>::slice(pointer.cast()) }
         } else {
             // SAFETY: bit zero encodes the transferred resident Init and its exact lifetime.
-            unsafe { crate::buffer::raw::Header::<resident::Lease<'d>>::slice(pointer.cast()) }
+            unsafe { crate::buffer::raw::Header::<resident::Budget<'d>>::slice(pointer.cast()) }
         };
         // SAFETY: this owner borrow keeps the complete initialized region live.
         unsafe { bytes.as_ref() }
@@ -101,16 +98,21 @@ impl<'d> Complete<'d> {
     pub(in crate::buffer) fn into_buf(self) -> resident::Shared<'d> {
         let this = mem::ManuallyDrop::new(self);
         let pointer = this.pointer();
+        let len = this.prefix().word().get();
         if this.pointer.addr().get() & 1 == 0 {
-            // SAFETY: the consumed plain Init's edge and initialization proof move together.
-            let allocation = unsafe { crate::buffer::raw::Rc::<()>::from_raw(pointer.cast()) };
-            let bytes: storage::Shared = Init { allocation }.into_buf().into();
+            // SAFETY: this Complete transfers one plain counted edge and its initialized extent.
+            let bytes: storage::Shared = unsafe {
+                crate::buffer::raw::Rc::<()>::from_raw(pointer.cast()).into_range(0, len)
+            }
+            .into();
             bytes.into()
         } else {
-            // SAFETY: the consumed resident Init retains its complete extent and policy lifetime.
-            let allocation =
-                unsafe { crate::buffer::raw::Rc::<resident::Lease<'d>>::from_raw(pointer.cast()) };
-            Init { allocation }.into_buf().into()
+            // SAFETY: this Complete transfers one resident edge, its extent and policy lifetime.
+            unsafe {
+                crate::buffer::raw::Rc::<resident::Budget<'d>>::from_raw(pointer.cast())
+                    .into_range(0, len)
+            }
+            .into()
         }
     }
 
@@ -157,14 +159,14 @@ impl<'d> Drop for Complete<'d> {
             unsafe { crate::buffer::raw::Header::<()>::destroy(pointer.cast()) };
         } else {
             // SAFETY: the last resident allocation edge retains its exact policy lifetime.
-            unsafe { crate::buffer::raw::Header::<resident::Lease<'d>>::destroy(pointer.cast()) };
+            unsafe { crate::buffer::raw::Header::<resident::Budget<'d>>::destroy(pointer.cast()) };
         }
     }
 }
 
 const _: () = {
     assert!(align_of::<crate::buffer::raw::Header<()>>() > 1);
-    assert!(align_of::<crate::buffer::raw::Header<resident::Lease<'static>>>() > 1);
+    assert!(align_of::<crate::buffer::raw::Header<resident::Budget<'static>>>() > 1);
     assert!(size_of::<Complete<'static>>() == size_of::<ptr::NonNull<()>>());
     assert!(size_of::<Option<Complete<'static>>>() == size_of::<ptr::NonNull<()>>());
 };

@@ -3,9 +3,11 @@ use std::marker;
 use crate::depot::{
     index::Initialized,
     queue::{indexed::keyed, links},
+    raw,
 };
 
 /// One FIFO member retaining its exclusive slot owner.
+#[repr(transparent)]
 pub struct Slot<O: crate::depot::raw::KeyOwner<P>, P = (), const LINKED: bool = true> {
     owner: O,
     plane: marker::PhantomData<fn(P) -> P>,
@@ -20,8 +22,8 @@ impl<
 > Slot<O, P>
 {
     pub fn try_new(owner: O) -> Result<Self, Slot<O, P, false>> {
-        let entry = owner.slot();
-        if entry.link().raw.previous.get() == entry.index().raw() {
+        let (index, link) = keyed::selected::<_, P>(&owner);
+        if link.raw.previous.get() == index.raw() {
             // SAFETY: the owner admits only canonical vacancy or membership in its FIFO.
             return Err(Slot::from_source(unsafe {
                 crate::depot::raw::Proof::new(owner)
@@ -42,13 +44,13 @@ impl<
     }
 
     pub fn key(&self) -> O::Key {
-        self.owner.slot().key()
+        self.owner.parts().0
     }
 
     pub fn successor(
         &self,
     ) -> Option<crate::depot::raw::Proof<(&O, links::Index), Initialized<P>>> {
-        let index = self.owner.slot().successor()?;
+        let index = self.owner.parts().1.raw.next_index()?;
         // SAFETY: membership retains this neighbor's initialization in the same owner and plane.
         Some(unsafe { crate::depot::raw::Proof::new((&self.owner, index)) })
     }
@@ -57,7 +59,7 @@ impl<
     pub fn advance(
         self,
     ) -> Result<crate::depot::raw::Proof<(O, links::Index), Initialized<P>>, Self> {
-        let Some(index) = self.owner.slot().successor() else {
+        let Some(index) = self.owner.parts().1.raw.next_index() else {
             return Err(self);
         };
         // SAFETY: the exclusive owner retains both linked slots in the same plane.
@@ -65,41 +67,40 @@ impl<
     }
 
     pub fn move_to_back(self) -> Self {
-        if self.owner.fifo().raw.last() == Some(self.owner.slot().index()) {
+        if links::Index::encode(self.owner.fifo().raw.last())
+            == keyed::selected::<_, P>(&self.owner).0.raw()
+        {
             return self;
         }
         self.remove().push::<false>()
     }
 
     pub fn remove(self) -> Slot<O, P, false> {
-        let entry = self.owner.slot();
-        let before = entry.predecessor();
-        let after = entry.successor();
-        let previous = before.map(|index| {
-            // SAFETY: this member retains its live predecessor in this owner.
-            O::entry(unsafe { crate::depot::raw::Proof::new((&self.owner, index)) })
-        });
-        let next = after.map(|index| {
-            // SAFETY: this member retains its live successor in this owner.
-            O::entry(unsafe { crate::depot::raw::Proof::new((&self.owner, index)) })
-        });
-        let edge = links::Edge::new(
-            entry.index(),
-            links::Index::encode(before),
-            links::Index::encode(after),
-        );
-        // SAFETY: the retained owner supplies this exact plane and membership phase.
-        let change = unsafe {
-            crate::depot::raw::Detach::resolved(
-                &self.owner.fifo().raw,
-                edge,
-                &entry.link().raw,
-                previous.map(|entry| &entry.link().raw),
-                next.map(|entry| &entry.link().raw),
+        let (index, link) = keyed::selected::<_, P>(&self.owner);
+        let before = link.raw.prev_index();
+        let after = link.raw.next_index();
+        let resolve = |index: Option<links::Index>| {
+            index.map(|index| {
+                // SAFETY: this member retains its live neighbor in the same owner and plane.
+                let link = O::link(unsafe { raw::Proof::new((&self.owner, index)) });
+                raw::EndpointHook::from(&link.raw)
+            })
+        };
+        let previous = resolve(before);
+        let next = resolve(after);
+        let fifo = &self.owner.fifo().raw;
+        let neighbor = |index, hook| match hook {
+            Some(hook) => raw::Neighbor::node(links::Index::encode(index), hook),
+            None => raw::Neighbor::head(links::Index::END, fifo),
+        };
+        // SAFETY: both neighbors retain this exact member until reciprocal repair and vacancy.
+        unsafe {
+            raw::EndpointHook::from(&link.raw).detach(
+                index,
+                neighbor(before, previous),
+                neighbor(after, next),
             )
         };
-
-        crate::depot::raw::Removal::commit(change).idle();
         // SAFETY: the consuming detach committed vacancy in this exact owner.
         Slot::from_source(unsafe { crate::depot::raw::Proof::new(self.owner) })
     }
@@ -150,31 +151,23 @@ impl<
     }
 
     pub fn push<const FRONT: bool>(self) -> Slot<O, P> {
-        let entry = self.owner.slot();
+        let (index, link) = keyed::selected::<_, P>(&self.owner);
         let fifo = &self.owner.fifo().raw;
         let end = if FRONT { fifo.first() } else { fifo.last() };
         let adjacent = end.map(|index| {
             // SAFETY: the owner's FIFO retains this initialized endpoint.
-            O::entry(unsafe { crate::depot::raw::Proof::new((&self.owner, index)) })
+            let link = O::link(unsafe { raw::Proof::new((&self.owner, index)) });
+            (index, raw::EndpointHook::from(&link.raw))
         });
-        let index = links::Index::encode(end);
-        let key = entry.index();
-        let edge = if FRONT {
-            links::Edge::new(key, u32::MAX, index)
-        } else {
-            links::Edge::new(key, index, u32::MAX)
-        };
         // SAFETY: the retained owner supplies this exact plane and membership phase.
-        let change = unsafe {
-            crate::depot::raw::Insert::<(), FRONT>::resolved(
+        unsafe {
+            raw::EndpointHook::from(&link.raw).push::<FRONT, _>(
                 fifo,
-                edge,
-                &entry.link().raw,
-                adjacent.map(|entry| &entry.link().raw),
+                index,
+                links::Index::END,
+                adjacent,
             )
         };
-
-        crate::depot::raw::Insert::commit(change);
         // SAFETY: the consuming insertion established membership in this FIFO.
         Slot::from_source(unsafe { crate::depot::raw::Proof::new(self.owner) })
     }

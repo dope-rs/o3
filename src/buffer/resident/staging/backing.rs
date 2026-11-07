@@ -10,7 +10,7 @@ use crate::buffer::{
 
 pub(super) enum Backing<'d> {
     Warm(pool::Span<owners::Resident<'d>>),
-    Local(window::State<resident::Lease<'d>, { u32::MAX as usize }>),
+    Local(window::State<resident::Budget<'d>, { u32::MAX as usize }>),
     Accounted(pool::Span<owners::Resident<'d>>),
 }
 
@@ -21,7 +21,7 @@ impl<'d> Backing<'d> {
         match reserve.buf.mode() {
             Mode::Local => {
                 let (pool, target, source) = reserve.into_parts();
-                let state = window::Fresh::try_staged(Reserve {
+                let state = window::try_staged(Reserve {
                     buf: pool.budget(),
                     target,
                     source,

@@ -13,13 +13,6 @@ pub struct Front<'a, T, H: Handle<T> = Pool<T>> {
 }
 
 impl<'a, T: buffer::raw::Segment, H: Handle<T>> Front<'a, T, H> {
-    pub(in crate::buffer::segments::chain) fn new(sequence: &'a mut Chain<T, H>) -> Option<Self> {
-        if sequence.key.is_empty() {
-            return None;
-        }
-        Some(Self { sequence })
-    }
-
     pub fn get(&self) -> &T {
         // SAFETY: Front retains the original exclusive nonempty sequence loan.
         match unsafe { self.sequence.occupied() } {
@@ -42,6 +35,7 @@ impl<'a, T: buffer::raw::Segment, H: Handle<T>> Front<'a, T, H> {
     }
 
     /// Removes and returns the admitted nonempty front owner.
+    #[inline(always)]
     pub fn take(self) -> segments::Item<T> {
         match self.position() {
             handles::Occupied::Single(index) => edit::Single {
@@ -49,11 +43,14 @@ impl<'a, T: buffer::raw::Segment, H: Handle<T>> Front<'a, T, H> {
                 index,
             }
             .take(),
-            handles::Occupied::Multi(index) => edit::Multi {
-                sequence: self.sequence,
-                index,
+            handles::Occupied::Multi(index) => {
+                edit::Multi {
+                    sequence: self.sequence,
+                    index,
+                }
+                .take_front()
+                .0
             }
-            .take(),
         }
     }
 }

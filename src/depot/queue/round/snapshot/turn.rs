@@ -8,7 +8,7 @@ pub struct Turn;
 
 impl<'a, T, const G: usize, const N: usize> round::Snapshot<&'a round::Lanes<T, G, N>, Turn> {
     pub fn get(&self) -> Option<&'a T> {
-        Some(self.turn()?.get())
+        Some(self.resolve::<true>()?.get())
     }
 
     /// Commits only while this remains the fair turn after the predicate.

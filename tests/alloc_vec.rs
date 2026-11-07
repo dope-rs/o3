@@ -3,7 +3,7 @@ pub mod common;
 use std::{cell, mem, ptr};
 
 use common::alloc::{AlignedZst, owner::Owner, system::Tracker};
-use o3::alloc::{self, BoxExt, Error, Gap, StrExt, Vacant, VecExt};
+use o3::alloc::{self, BoxExt, Error, Gap, StrExt, VecExt};
 
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
@@ -251,11 +251,9 @@ fn vacancy_keeps_owner() {
         values.push(common::Counted(&drops));
         let pointer = values.as_ptr();
         let ((), activity) = Tracker::measure(|| {
-            assert!(Vacant::try_new(&mut values).is_ok());
+            assert!(alloc::try_vacant(&mut values).is_ok());
             assert_eq!(values.len(), 1);
-            Vacant::try_new(&mut values)
-                .expect("existing slot")
-                .insert(common::Counted(&drops));
+            alloc::try_vacant(&mut values).expect("existing slot")(common::Counted(&drops));
         });
         assert_eq!(activity, [0; 4]);
         assert_eq!(values.as_ptr(), pointer);
@@ -276,15 +274,15 @@ fn vacancy_keeps_failures() {
         });
         let pointer = values.as_ptr();
         let (error, activity) =
-            Tracker::measure(|| Tracker::fail_after(0, || Vacant::try_new(&mut values).err()));
+            Tracker::measure(|| Tracker::fail_after(0, || alloc::try_vacant(&mut values).err()));
         assert_eq!(error, Some(Error::Exhausted));
         assert_eq!(activity, [0; 4]);
         assert_eq!(values.as_ptr(), pointer);
         assert_eq!(values.capacity(), 1);
         let failed: Result<(), alloc::Error> = Tracker::fail_after(1, || {
-            let vacant = Vacant::try_new(&mut values)?;
+            let vacant = alloc::try_vacant(&mut values)?;
             let value = BoxExt::try_new(2)?;
-            vacant.insert(Owner {
+            vacant(Owner {
                 drops: &drops,
                 value,
             });
@@ -303,10 +301,8 @@ fn vacancy_keeps_failures() {
 fn vacancy_zero_sized() {
     let mut values = vec![(); usize::MAX - 1];
     let (error, activity) = Tracker::measure(|| {
-        Vacant::try_new(&mut values)
-            .expect("last zero-sized slot")
-            .insert(());
-        Vacant::try_new(&mut values).err()
+        alloc::try_vacant(&mut values).expect("last zero-sized slot")(());
+        alloc::try_vacant(&mut values).err()
     });
     assert_eq!(values.len(), usize::MAX);
     assert_eq!(error, Some(Error::Overflow));

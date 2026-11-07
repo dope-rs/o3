@@ -13,44 +13,6 @@ use crate::{
     mem::rc,
 };
 
-#[repr(transparent)]
-#[derive(Debug)]
-struct Prefix(regions::Prefix);
-
-impl Prefix {
-    const fn vacant(next: Option<Key<true>>) -> Self {
-        Self(regions::Prefix::empty(Key::<true>::encode(next)))
-    }
-
-    /// # Safety
-    /// This prefix must be one vacant account cell exclusively owned by the
-    /// caller, and `slot` the exact pool slot key linked to it.
-    unsafe fn activate(&self, slot: super::Key) {
-        use crate::mem::raw::Edge;
-
-        // SAFETY: the caller owns this vacant cell, so its prefix word is
-        // exclusively writable and holds no live edge yet.
-        unsafe { self.0.write(slot.get()) };
-        // SAFETY: the linked slot key is complete, so the first external
-        // account edge may now be published.
-        unsafe { self.0.activate() };
-    }
-
-    unsafe fn slot(&self) -> super::Key {
-        // SAFETY: an active or retired Account stores the exact linked slot key.
-        unsafe { super::Key::new(self.0.word()) }
-    }
-
-    /// # Safety
-    /// This prefix must be one terminally retired account cell exclusively
-    /// owned by the caller, with no live edge.
-    unsafe fn recycle(&self, next: Option<Key<true>>) {
-        // SAFETY: terminal account ownership leaves this cell without edges and
-        // exclusively writable before its vacant successor is published.
-        unsafe { self.0.write(Key::<true>::encode(next)) };
-    }
-}
-
 #[repr(C, align(8))]
 pub(in crate::buffer) struct Accounts<'d> {
     root: mem::ManuallyDrop<resident::Charge<'d>>,
@@ -66,9 +28,6 @@ struct Claim<'a, 'd> {
 
 #[repr(transparent)]
 struct Active<'a, 'd>(&'a Account<'d>);
-
-#[repr(transparent)]
-struct Retired<'d>(ptr::NonNull<Account<'d>>);
 
 impl<'a, 'd> Claim<'a, 'd> {
     fn new(entry: super::Entry<'a, super::Resident<'d>>) -> Option<Self> {
@@ -89,20 +48,25 @@ impl<'a, 'd> Claim<'a, 'd> {
         slot: super::Active<super::Resident<'d>, state::Uninit>,
         charge: resident::Charge<'d>,
     ) -> Registered<'d> {
+        use crate::mem::raw::Edge;
+
         let account = self.account;
         let ptr = ptr::NonNull::from(account);
         // SAFETY: Claim proves this vacant prefix contains only its exact
         // Accounts free-list successor.
-        unsafe { self.table.free.pop(account.prefix.0.word()) };
+        unsafe { self.table.free.pop(account.prefix.word()) };
         // SAFETY: the claimed Account's resident cell is uninitialized and
         // exclusively owned by this unpublished transition.
         unsafe { *account.resident.get() = mem::MaybeUninit::new(charge) };
-        // SAFETY: Claim owns the vacant Account configuration, and both the
-        // exact slot identity and resident domain are initialized here.
         let slot = mem::ManuallyDrop::new(slot);
-        unsafe { account.prefix.activate(slot.key) };
+        // SAFETY: Claim owns the vacant Account and its initialized charge;
+        // the retained slot key is written before publishing the first edge.
+        unsafe {
+            account.prefix.write(slot.key.get());
+            account.prefix.activate();
+        }
         // SAFETY: activation created the first external account edge.
-        unsafe { Registered::new(ptr) }
+        unsafe { Registered::from_raw(ptr) }
     }
 }
 
@@ -120,44 +84,11 @@ impl<'a, 'd> Active<'a, 'd> {
             return Ok(None);
         }
         // SAFETY: this active account can issue one additional external edge.
-        unsafe { self.0.prefix.0.try_retain() }.map_err(resident::AllocError::Retain)?;
+        unsafe { self.0.prefix.try_retain() }.map_err(resident::AllocError::Retain)?;
         // SAFETY: the retained edge is branded by the checked budget domain.
-        Ok(Some(unsafe { Registered::new(ptr::NonNull::from(self.0)) }))
-    }
-}
-
-impl<'d> Retired<'d> {
-    unsafe fn new(ptr: ptr::NonNull<Account<'d>>) -> Self {
-        Self(ptr)
-    }
-
-    fn account(&self) -> &Account<'d> {
-        // SAFETY: Retired owns the terminal Account until finish completes.
-        unsafe { self.0.as_ref() }
-    }
-
-    fn finish(self) {
-        let account = self.account();
-        // SAFETY: Retired preserves the active Account's exact linked slot.
-        let slot = unsafe { account.prefix.slot() };
-        let core = account.core();
-        let table = Accounts::ptr(core);
-        // SAFETY: this terminal account is one published table cell.
-        let first = unsafe { Accounts::cells(table.as_ptr()) };
-        // SAFETY: this terminal account belongs to the same bounded u32 array.
-        let index = unsafe { self.0.as_ptr().offset_from_unsigned(first) };
-        let key = unsafe { Key::<true>::new(index as u32) };
-        // SAFETY: terminal Account ownership keeps its accounted table live.
-        let table = unsafe { table.as_ref() };
-        // SAFETY: activation initialized the resident domain and terminal
-        // ownership consumes it exactly once before publishing this vacant account.
-        unsafe { (*account.resident.get()).assume_init_drop() };
-        let slots = core;
-        // SAFETY: this terminal Account is the exact link published in `slot`.
-        unsafe { slots.ptr(slot).as_ref().unlink() };
-        table.recycle(key, self);
-        // SAFETY: this retired Account transfers the slot edge retained at activation.
-        unsafe { super::Active::release(slots, slot) };
+        Ok(Some(unsafe {
+            Registered::from_raw(ptr::NonNull::from(self.0))
+        }))
     }
 }
 
@@ -203,11 +134,8 @@ impl<'d> Accounts<'d> {
         let seed = unsafe { super::Seed::from_ptr(next) };
         // SAFETY: Slot retains this span's initialized suffix and admitted target.
         let bytes = unsafe { span.as_slice().get_unchecked(*head as usize..) };
-        let next = buffer::raw::Copy::copy(pool::CopyIn {
-            span: pool::Span::from_seed(seed),
-            sources: (bytes, input.input()),
-            len: bytes.len() + input.len(),
-        });
+        let next =
+            pool::Span::from_seed(seed).copy_in((bytes, input.input()), bytes.len() + input.len());
         // SAFETY: the copy ended every payload borrow. The sole old edge and
         // its transferred root must not run Drop after deallocation.
         unsafe {
@@ -280,19 +208,14 @@ impl<'d> Accounts<'d> {
         // and the original entry borrow retains the allocation for 'a.
         unsafe { &*Self::cells(table.as_ptr()).add(key.get() as usize) }
     }
+}
 
-    fn recycle(&self, key: Key<true>, retired: Retired<'d>) {
-        // SAFETY: Retired owns this exact account and writes its vacant link
-        // before the common head publishes the returned key.
-        unsafe {
-            self.free
-                .push(key, |next| retired.account().prefix.recycle(next))
-        };
-    }
-
-    pub(super) unsafe fn release<S>(core: super::Ptr<super::Resident<'d>, S>) {
+impl<'d, S> super::Ptr<super::Resident<'d>, S> {
+    /// # Safety
+    /// The consumed core is the terminal edge of this exact resident allocation.
+    pub(in crate::buffer) unsafe fn uncharge(self) {
         // SAFETY: the accounted header owns one initialized Accounts table.
-        let table = unsafe { Self::ptr(core).as_mut() };
+        let table = unsafe { Accounts::ptr(self).as_mut() };
         // SAFETY: terminal allocation ownership returns its retained charge once.
         unsafe { mem::ManuallyDrop::drop(&mut table.root) };
     }
@@ -301,7 +224,7 @@ impl<'d> Accounts<'d> {
 #[repr(C, align(8))]
 #[derive(Debug)]
 pub(in crate::buffer) struct Account<'d> {
-    prefix: Prefix,
+    prefix: regions::Prefix,
     core: super::Base<super::Resident<'d>>,
     resident: cell::UnsafeCell<mem::MaybeUninit<resident::Charge<'d>>>,
 }
@@ -309,7 +232,7 @@ pub(in crate::buffer) struct Account<'d> {
 impl<'d> Account<'d> {
     const fn new(core: super::Base<super::Resident<'d>>, next: Option<Key<true>>) -> Self {
         Self {
-            prefix: Prefix::vacant(next),
+            prefix: regions::Prefix::empty(Key::<true>::encode(next)),
             core,
             resident: cell::UnsafeCell::new(mem::MaybeUninit::uninit()),
         }
@@ -358,42 +281,53 @@ impl<'d> Account<'d> {
 // SAFETY: every published account edge retains this exact embedded count.
 unsafe impl crate::mem::raw::Edge for Account<'_> {
     fn count(&self) -> &crate::mem::raw::Count {
-        crate::mem::raw::Edge::count(&self.prefix.0)
+        crate::mem::raw::Edge::count(&self.prefix)
     }
 }
 
 // SAFETY: live edges retain the initialized registration and its pool-slot root.
 unsafe impl crate::mem::raw::Target for Account<'_> {
     unsafe fn destroy(pointer: ptr::NonNull<Self>) {
-        // SAFETY: Last transfers this exact terminal account before any reuse.
-        unsafe { Retired::new(pointer) }.finish();
+        let (core, slot) = {
+            // SAFETY: Last transfers this exact terminal account before any reuse.
+            let account = unsafe { pointer.as_ref() };
+            // SAFETY: the terminal account retains its exact linked slot.
+            let slot = unsafe { Key::new(account.prefix.word()) };
+            let core = account.core();
+            let table = Accounts::ptr(core);
+            // SAFETY: this terminal account is one published table cell.
+            let first = unsafe { Accounts::cells(table.as_ptr()) };
+            // SAFETY: this terminal account belongs to the same bounded u32 array.
+            let index = unsafe { pointer.as_ptr().offset_from_unsigned(first) };
+            let key = unsafe { Key::<true>::new(index as u32) };
+            // SAFETY: terminal Account ownership keeps its accounted table live.
+            let table = unsafe { table.as_ref() };
+            // SAFETY: activation initialized the resident domain and terminal
+            // ownership consumes it once before publishing this vacant account.
+            unsafe { (*account.resident.get()).assume_init_drop() };
+            // SAFETY: this terminal Account is the exact link published in `slot`.
+            unsafe { core.ptr(slot).as_ref().unlink() };
+            // SAFETY: terminal ownership writes this account's vacant successor
+            // before the common head publishes its exact key.
+            unsafe {
+                table
+                    .free
+                    .push(key, |next| account.prefix.write(Key::encode(next)))
+            };
+            (core, slot)
+        };
+        // SAFETY: all allocation borrows ended; transfer the slot edge retained at activation.
+        unsafe { super::Active::release(core, slot) };
     }
 }
 
 /// One registered pool edge carrying its resident-domain lifetime.
-#[derive(Debug)]
-#[repr(transparent)]
-pub(in crate::buffer) struct Registered<'d> {
-    owner: crate::mem::raw::Owner<Account<'d>>,
-}
-
-impl<'d> Registered<'d> {
-    /// # Safety
-    /// `ptr` transfers one live edge charged to the domain branded by `'d`.
-    pub(in crate::buffer) unsafe fn new(ptr: ptr::NonNull<Account<'d>>) -> Self {
-        Self {
-            // SAFETY: the caller transfers one live edge from this exact account.
-            owner: unsafe { crate::mem::raw::Owner::from_raw(ptr) },
-        }
-    }
-}
+pub(in crate::buffer) type Registered<'d> = crate::mem::raw::Owner<Account<'d>>;
 
 // SAFETY: the concrete edge retains its original allocation, ownership, and lifetime.
 unsafe impl<'d> buffer::raw::Retain for Registered<'d> {
     fn try_retain(&self) -> Result<Self, rc::Error> {
-        Ok(Self {
-            owner: self.owner.try_clone()?,
-        })
+        self.try_clone()
     }
 }
 
@@ -402,16 +336,14 @@ impl<'d> backing::Owner<'d> for Registered<'d> {
     where
         'd: 'a,
     {
-        Some(backing::Root::Accounted(self.owner.get()))
+        Some(backing::Root::Accounted(self.get()))
     }
 }
 
 const _: () = {
-    assert!(size_of::<Prefix>() == size_of::<regions::Prefix>());
     assert!(size_of::<Accounts<'static>>() == 24);
     assert!(size_of::<Account<'static>>() == 32);
     assert!(size_of::<Active<'static, 'static>>() == size_of::<usize>());
-    assert!(size_of::<Retired>() == size_of::<usize>());
     assert!(size_of::<Registered<'static>>() == size_of::<usize>());
     assert!(size_of::<Option<Registered<'static>>>() == size_of::<usize>());
 };

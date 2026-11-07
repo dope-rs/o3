@@ -33,14 +33,8 @@ pub(super) enum Link {
 }
 
 pub(super) enum Error<const LANES: usize> {
-    Owners {
-        capacity: capacity::Count<LANES>,
-        key: u64,
-    },
-    Branches {
-        capacity: capacity::Count<LANES>,
-        key: u64,
-    },
+    Owners(capacity::Count<LANES>),
+    Branches(capacity::Count<LANES>),
 }
 
 pub(super) struct Entry<const LANES: usize> {
@@ -116,7 +110,6 @@ pub(super) struct Bound<'a, const LANES: usize> {
     owner: slab::Slot<'a, Entry<LANES>, Tag, { u32::MAX }, links::Hook, 0, capacity::Count<LANES>>,
     branches: &'a mut Branches<LANES>,
     root: Root<'a>,
-    lane: Index<LANES>,
 }
 
 enum Position<'a, 'p, const LANES: usize> {
@@ -128,17 +121,9 @@ pub(super) struct Rollback<'a, const LANES: usize> {
     added: Option<Added<'a, LANES>>,
 }
 
-struct Added<'a, const LANES: usize> {
+pub(super) struct Added<'a, const LANES: usize> {
     branch: Option<slab::Cursor<'a, Branch, BranchTag, { u32::MAX }, capacity::Count<LANES>>>,
     root: Root<'a>,
-}
-
-pub(super) struct Found<'a, const LANES: usize> {
-    pub(in crate::depot::queue::group) owner:
-        slab::Slot<'a, Entry<LANES>, Tag, { u32::MAX }, links::Hook, 0, capacity::Count<LANES>>,
-    pub(in crate::depot::queue::group) branch:
-        Option<slab::Cursor<'a, Branch, BranchTag, { u32::MAX }, capacity::Count<LANES>>>,
-    pub(in crate::depot::queue::group) root: Root<'a>,
 }
 
 impl<const LANES: usize> Tree<LANES> {
@@ -200,7 +185,7 @@ impl<const LANES: usize> Tree<LANES> {
         &mut self,
         key: u64,
         lane: Index<LANES>,
-    ) -> Option<Found<'_, LANES>> {
+    ) -> Option<Lease<Added<'_, LANES>, lease::Open>> {
         let (map, branches, Start::Occupied(root)) = self.parts_mut() else {
             return None;
         };
@@ -215,25 +200,16 @@ impl<const LANES: usize> Tree<LANES> {
         if owner.as_ref().key != key || lane.get(&owner.as_ref().heads).is_none() {
             return None;
         }
-        Some(Found {
-            owner,
-            branch,
-            root,
-        })
+        Some(Lease::open(Added { branch, root }, owner))
     }
 
-    pub(in crate::depot::queue::group) fn entry(
-        &mut self,
-        owner: &Node<Tag>,
-        lane: Index<LANES>,
-    ) -> Bound<'_, LANES> {
+    pub(in crate::depot::queue::group) fn entry(&mut self, owner: &Node<Tag>) -> Bound<'_, LANES> {
         Bound {
             owner: owner.bind(&mut self.map).into(),
             branches: &mut self.branches,
             // SAFETY: the affine Node and occupied Slot retain an owner
             // in this exact tree, so its root stays initialized until removal.
             root: Root(unsafe { self.root.assume_init_mut() }),
-            lane,
         }
     }
 
@@ -246,10 +222,7 @@ impl<const LANES: usize> Tree<LANES> {
         let empty = Entry::new(key);
         let root = match start {
             Start::Empty(root) => {
-                let owner = map
-                    .vacant()
-                    .ok_or(Error::Owners { capacity, key })?
-                    .insert(empty);
+                let owner = map.vacant().ok_or(Error::Owners(capacity))?.insert(empty);
                 let root = Root(root.write(Link::Owner(Node::inserted(owner.key()))));
                 return Ok(Lease::open(
                     Rollback {
@@ -276,7 +249,7 @@ impl<const LANES: usize> Tree<LANES> {
             .into_owner()
             .0
             .vacant()
-            .ok_or(Error::Owners { capacity, key })?
+            .ok_or(Error::Owners(capacity))?
             .insert(empty);
         let mut build = |parent: Option<&mut Branch>, branch| {
             Branch::insert(
@@ -312,7 +285,7 @@ impl<const LANES: usize> Tree<LANES> {
             Ok(branch) => branch,
             Err(capacity) => {
                 owner.detach().discard();
-                return Err(Error::Branches { capacity, key });
+                return Err(Error::Branches(capacity));
             }
         };
         Ok(Lease::open(
@@ -349,36 +322,49 @@ impl<'a, const LANES: usize> Return for Rollback<'a, LANES> {
     }
 }
 
+impl<'a, const LANES: usize> Return for Added<'a, LANES> {
+    type Item =
+        slab::Slot<'a, Entry<LANES>, Tag, { u32::MAX }, links::Hook, 0, capacity::Count<LANES>>;
+
+    fn return_item(self, owner: Self::Item) {
+        if owner.as_ref().heads.iter().all(Option::is_none) {
+            self.root.remove(owner, self.branch);
+        }
+    }
+}
+
 impl<'a, const LANES: usize> Bound<'a, LANES> {
     pub(in crate::depot::queue::group) fn key(&self) -> u64 {
         self.owner.as_ref().key
     }
 
-    pub(in crate::depot::queue::group) fn lane(&self) -> Index<LANES> {
-        self.lane
-    }
-
-    pub(in crate::depot::queue::group) fn detach(&mut self, next: Option<Node<group::EntryTag>>) {
-        self.owner.as_mut().detach(self.lane, next);
+    pub(in crate::depot::queue::group) fn detach(
+        &mut self,
+        lane: Index<LANES>,
+        next: Option<Node<group::EntryTag>>,
+    ) {
+        self.owner.as_mut().detach(lane, next);
     }
 
     pub(in crate::depot::queue::group) fn restore(
         &mut self,
+        lane: Index<LANES>,
         key: slab::Handle<group::EntryTag>,
-    ) -> Option<Node<group::EntryTag>> {
+    ) -> (Node<Tag>, Option<Node<group::EntryTag>>) {
+        let owner_key = Node::inserted(self.owner.key());
         let owner = self.owner.as_mut();
-        let next = self
-            .lane
-            .get_mut(&mut owner.heads)
-            .replace(Node::inserted(key));
+        let next = lane.get_mut(&mut owner.heads).replace(Node::inserted(key));
         if next.is_none() {
-            *self.lane.get_mut(&mut owner.tails) = Some(Node::inserted(key));
+            *lane.get_mut(&mut owner.tails) = Some(Node::inserted(key));
         }
-        next
+        (owner_key, next)
     }
 
-    pub(in crate::depot::queue::group) fn remove(mut self, next: Option<Node<group::EntryTag>>) {
-        let lane = self.lane;
+    pub(in crate::depot::queue::group) fn remove(
+        mut self,
+        lane: Index<LANES>,
+        next: Option<Node<group::EntryTag>>,
+    ) {
         let entry = self.owner.as_ref();
         if next.is_some()
             || entry
@@ -404,7 +390,7 @@ impl<'a, const LANES: usize> Bound<'a, LANES> {
 }
 
 impl<'a, const LANES: usize> Return for Bound<'a, LANES> {
-    type Item = (&'a mut u32, Node<Tag>);
+    type Item = &'a mut u32;
 
     fn return_item(self, _: Self::Item) {
         if self.owner.as_ref().heads.iter().all(Option::is_none) {

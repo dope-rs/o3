@@ -1,4 +1,4 @@
-use std::{mem, ops, ptr};
+use std::{mem, ptr};
 
 use crate::alloc::{self, tail};
 
@@ -58,12 +58,5 @@ impl<H, T, N: alloc::raw::TailExtent> Drop for Uninit<H, T, N> {
     fn drop(&mut self) {
         // SAFETY: this state owns the exact allocation and has initialized no value.
         unsafe { alloc::raw::LayoutExt::deallocate(self.layout.layout(), self.memory) };
-    }
-}
-
-impl<H, T> Uninit<H, T> {
-    /// Initializes the immovable header and lends each tail write in order.
-    pub fn start(self, header: H) -> ops::ControlFlow<tail::Block<H, T>, tail::Entry<H, T>> {
-        tail::Entry::new(self.init(header))
     }
 }

@@ -15,7 +15,7 @@ pub enum AllocError {
 impl From<alloc::Error<credit::Error>> for AllocError {
     fn from(error: alloc::Error<credit::Error>) -> Self {
         match error {
-            alloc::Error::Policy(error) => Self::Budget(error),
+            alloc::Error::Budget(error) => Self::Budget(error),
             alloc::Error::Allocation(error) => Self::Exhausted(error),
         }
     }

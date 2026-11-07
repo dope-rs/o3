@@ -6,7 +6,7 @@ use crate::depot::{
     },
 };
 
-/// N actual slots reserved before any value is accepted.
+/// N slots admitted before any value is accepted.
 pub struct Batch<'a, V, const LANES: usize, const N: usize> {
     slots: slab::Batch<
         'a,
@@ -59,6 +59,7 @@ impl<'a, V, const LANES: usize, const N: usize> Batch<'a, V, LANES, N> {
 }
 
 impl<'a, V, const LANES: usize> Batch<'a, V, LANES, 1> {
+    #[inline]
     pub fn bind(
         self,
         lane: Index<LANES>,

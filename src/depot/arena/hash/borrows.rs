@@ -106,8 +106,8 @@ impl<'a, T, Tag> Present<&'a hash::Core<T, Tag>> {
 }
 
 impl<'a, T, Tag> Present<&'a mut hash::Core<T, Tag>> {
-    pub(in crate::depot) fn into_entry(self) -> hash::Entry<'a, T, Tag> {
+    pub(in crate::depot) fn into_entry(self) -> runtime::entry::Live<'a, T, Tag> {
         // SAFETY: the consumed capability retains the exact exclusive owner and live slot.
-        unsafe { hash::Entry::new(self.0.source, self.0.index) }
+        unsafe { runtime::entry::Live::new(self.0.source, self.0.index) }
     }
 }

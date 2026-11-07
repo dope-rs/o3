@@ -5,7 +5,6 @@ use std::{mem, num::NonZero, ops};
 
 pub(in crate::buffer) use arena::charge::Charge;
 pub use arena::{Arena, account::Account, owner::Owner, root::Root, vacant::Vacant};
-use mode::Mode;
 
 use crate::{
     buffer,
@@ -20,7 +19,6 @@ use crate::{
 pub mod account;
 mod arena;
 pub mod fixed;
-mod mode;
 pub mod view;
 
 /// Mutable provided storage preserving its owner through splitting and freezing.
@@ -49,16 +47,6 @@ pub struct Unique<'d> {
 }
 
 impl<'d> Unique<'d> {
-    pub(in crate::buffer) fn inner(&self) -> &&'d mut [u8] {
-        &self.view
-    }
-
-    /// # Safety
-    /// The caller preserves the projection's exact owner and initialized range.
-    pub(in crate::buffer) unsafe fn inner_mut(&mut self) -> &mut &'d mut [u8] {
-        &mut self.view
-    }
-
     pub(in crate::buffer::storage::provided) const fn new(
         view: buffer::raw::Projection<'d, '_>,
         owner: provided::Owner<'d>,
@@ -112,6 +100,31 @@ impl<'d> Unique<'d> {
         // paired by its branded admission, retaining the source lifetime.
 
         unsafe { storage::Shared::assume(view, owner) }
+    }
+}
+
+// SAFETY: Unique retains the view's exact exclusive extent and its provided owner.
+unsafe impl<'d> buffer::raw::Project<&'d mut [u8]> for Unique<'d> {
+    fn as_inner(&self) -> &&'d mut [u8] {
+        &self.view
+    }
+
+    unsafe fn as_inner_mut(&mut self) -> &mut &'d mut [u8] {
+        &mut self.view
+    }
+}
+
+// SAFETY: Unique retains its provided owner while the paired slice restricts its extent.
+unsafe impl buffer::raw::Store for Unique<'_> {
+    fn empty() -> Option<Self> {
+        None
+    }
+
+    fn restrict(slice: buffer::raw::Slice<'_, '_, Self>) {
+        // SAFETY: Unique exposes the same exclusive extent and retains its owner;
+        // inner projection preserves the slice's canonical empty-storage policy.
+        let slice = unsafe { slice.map(|source| &mut source.view) };
+        <&mut [u8] as buffer::raw::Store>::project(slice);
     }
 }
 

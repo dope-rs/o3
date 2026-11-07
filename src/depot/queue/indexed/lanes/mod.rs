@@ -1,7 +1,6 @@
 //! Fixed-capacity indexed FIFO lanes.
 
 pub use fifo::{Fifo, position::Position, value::Value};
-pub(in crate::depot) use table::Hooks;
 pub use table::{Table, node::Node};
 
 pub mod entry;
@@ -13,4 +12,7 @@ mod raw;
 mod table;
 
 /// Abandoned initialized insertions are unlinked and their value is dropped.
-pub struct Rollback;
+pub type Rollback<'a, T, const N: usize, const L: usize, C> = crate::mem::Lease<
+    crate::depot::raw::LaneUndo<Position<'a, T, N, L, C, true>>,
+    crate::mem::lease::Open,
+>;

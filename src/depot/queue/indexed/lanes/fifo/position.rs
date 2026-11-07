@@ -29,6 +29,25 @@ impl<'a, T, const N: usize, const L: usize, C: crate::depot::raw::Count>
         const { assert!(L < N) };
         unsafe { tagged::Vacant::new(Position { store, index }) }
     }
+
+    pub fn insert<const FRONT: bool>(self, value: T) -> lanes::Rollback<'a, T, N, L, C> {
+        crate::mem::Lease::open(
+            crate::depot::raw::LaneUndo(std::marker::PhantomData),
+            self.insert_linked::<FRONT>(value),
+        )
+    }
+}
+
+impl<'a, T, const N: usize, const L: usize, C: crate::depot::raw::Count>
+    lanes::Rollback<'a, T, N, L, C>
+{
+    pub fn commit(self) {
+        self.into_parts();
+    }
+
+    pub fn remove(self) -> T {
+        self.into_parts().1.remove()
+    }
 }
 
 const _: () = {
@@ -37,16 +56,12 @@ const _: () = {
             == 2 * mem::size_of::<usize>()
     );
     assert!(
-        mem::size_of::<
-            tagged::Linked<Position<'static, (), 1, 0, capacity::Count, true>, lanes::Rollback>,
-        >() == 2 * mem::size_of::<usize>()
+        mem::size_of::<lanes::Rollback<'static, (), 1, 0, capacity::Count>>()
+            == 2 * mem::size_of::<usize>()
     );
     assert!(
-        mem::size_of::<
-            Option<
-                tagged::Linked<Position<'static, (), 1, 0, capacity::Count, true>, lanes::Rollback>,
-            >,
-        >() == 2 * mem::size_of::<usize>()
+        mem::size_of::<Option<lanes::Rollback<'static, (), 1, 0, capacity::Count>>>()
+            == 2 * mem::size_of::<usize>()
     );
 };
 

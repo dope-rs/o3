@@ -14,45 +14,33 @@ use crate::depot::{
     index::Initialized,
 };
 
-/// Physical slot access retaining the exact source borrow.
-#[repr(transparent)]
-pub struct Slots<B> {
-    source: B,
-}
-
-impl<B> Slots<B> {
-    pub fn new(source: B) -> Self {
-        Self { source }
-    }
-}
-
 impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize>
-    Slots<&'a slab::Store<T, Tag, MAX, RECYCLE, PARTITIONS>>
+    slab::Store<T, Tag, MAX, RECYCLE, PARTITIONS>
 where
     cycle::Mode<RECYCLE>: Policy,
 {
     /// Recovers the exact current generation-bearing key for one occupied
     /// direct-address slot.
-    pub fn key_at(self, index: usize) -> Option<key::Handle<Tag, MAX>> {
+    pub fn key_at(&'a self, index: usize) -> Option<key::Handle<Tag, MAX>> {
         if index > u32::MAX as usize {
             return None;
         }
         let index = index as u32;
-        let entry = entries::Occupied::at(&self.source.core, index)?;
+        let entry = entries::Occupied::at(&self.core, index)?;
         Some(key::Handle::new(index, entry.generation()))
     }
 
     /// Borrows the current value at a physical slot through the owner's shared loan.
     /// Checks occupancy without matching a generation.
-    pub fn value_at(self, index: u32) -> Option<&'a T> {
-        Some(entries::Occupied::at(&self.source.core, index)?.read())
+    pub fn value_at(&'a self, index: u32) -> Option<&'a T> {
+        Some(entries::Occupied::at(&self.core, index)?.read())
     }
 }
 
-impl<'a, T, Tag, const MAX: u32> Slots<&'a mut slab::Store<T, Tag, MAX>> {
+impl<'a, T, Tag, const MAX: u32> slab::Store<T, Tag, MAX> {
     /// Borrows each usable physical slot once, retaining disjoint entry proofs.
-    pub fn entries(self) -> impl Iterator<Item = slab::Entry<'a, T, Tag, MAX>> {
-        let core = &self.source.core;
+    pub fn entries(&'a mut self) -> impl Iterator<Item = slab::Entry<'a, T, Tag, MAX>> {
+        let core = &self.core;
         core.slots
             .as_ref()
             .iter()
@@ -69,10 +57,8 @@ impl<'a, T, Tag, const MAX: u32> Slots<&'a mut slab::Store<T, Tag, MAX>> {
                     })),
                     slab::State::Free => {
                         // SAFETY: this unique visit proved the original slot's free membership.
-                        let free = unsafe {
-                            entries::Free::new(core, slot, entries::SlotIndex(index as u32))
-                        };
-                        Some(slab::Entry::Vacant(slab::Vacant::from_pending(free.take())))
+                        let free = unsafe { entries::Free::new(core, slot, index as u32) };
+                        Some(slab::Entry::Vacant(slab::Vacant::new(free.take())))
                     }
                     slab::State::Reserved | slab::State::Retired(()) => None,
                 }
@@ -81,49 +67,52 @@ impl<'a, T, Tag, const MAX: u32> Slots<&'a mut slab::Store<T, Tag, MAX>> {
 }
 
 impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize>
-    Slots<&'a mut slab::Store<T, Tag, MAX, RECYCLE, PARTITIONS>>
+    slab::Store<T, Tag, MAX, RECYCLE, PARTITIONS>
 where
     cycle::Mode<RECYCLE>: Policy,
 {
     pub fn vacant_at(
-        self,
+        &'a mut self,
         index: u32,
     ) -> Option<
         slab::Vacant<entries::Pending<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>, Tag>,
     > {
-        let pending = self.source.core.at(index)?;
-        Some(slab::Vacant::from_pending(pending))
+        let pending = self.core.at(index)?;
+        Some(slab::Vacant::new(pending))
     }
 
     /// Reserves the first reusable slot in `range` without leaving it.
     /// Retired, occupied, and reserved slots are skipped.
     pub fn vacant_in(
-        self,
+        &'a mut self,
         range: ops::Range<u32>,
     ) -> Option<
         slab::Vacant<entries::Pending<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>, Tag>,
     > {
-        let pending = self.source.core.in_range(range)?;
-        Some(slab::Vacant::from_pending(pending))
+        let pending = self.core.in_range(range)?;
+        Some(slab::Vacant::new(pending))
     }
 
     pub fn entry_at(
-        self,
+        &'a mut self,
         index: u32,
     ) -> Option<
         slab::Occupied<entries::Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>, Tag>,
     > {
-        let entry = entries::Occupied::at(&self.source.core, index)?;
+        let entry = entries::Occupied::at(&self.core, index)?;
         Some(slab::Occupied::new(entry))
     }
 
-    pub fn try_entry_at(self, index: u32) -> Occupied<'a, T, Tag, MAX, RECYCLE, PARTITIONS> {
-        let entry = entries::Occupied::try_at(&self.source.core, index)?;
+    pub fn try_entry_at(
+        &'a mut self,
+        index: u32,
+    ) -> Occupied<'a, T, Tag, MAX, RECYCLE, PARTITIONS> {
+        let entry = entries::Occupied::try_at(&self.core, index)?;
         Ok(slab::Occupied::new(entry))
     }
 }
 
-impl<'a, T, Tag, const MAX: u32> Slots<&'a slab::Store<T, Tag, MAX>> {
+impl<'a, T, Tag, const MAX: u32> slab::Store<T, Tag, MAX> {
     pub(in crate::depot) fn contains<'h>(proof: PhysicalSlot<'a, 'h, T, Tag, MAX>) -> bool {
         let (source, key) = proof.into_inner();
         let slots = source.core.slots.as_ref();
@@ -134,19 +123,16 @@ impl<'a, T, Tag, const MAX: u32> Slots<&'a slab::Store<T, Tag, MAX>> {
     }
 }
 
-impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool> Slots<&'a slab::Cell<T, Tag, MAX, RECYCLE>>
+impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool> slab::Cell<T, Tag, MAX, RECYCLE>
 where
     cycle::Mode<RECYCLE>: Policy,
 {
     pub(in crate::depot::arena::slab) fn vacancy_at(
-        self,
+        &'a self,
         index: u32,
     ) -> Option<slab::Vacant<entries::Pending<'a, T, MAX, entries::Interior<RECYCLE>>, Tag>> {
-        let pending = self.source.core.at(index)?;
-        Some(slab::Vacant {
-            entry: pending,
-            tag: marker::PhantomData,
-        })
+        let pending = self.core.at(index)?;
+        Some(slab::Vacant::new(pending))
     }
 
     pub(in crate::depot::arena::slab) fn reserve(
@@ -158,10 +144,7 @@ where
         // SAFETY: this maps the retained Cell directly to its original core.
         let live = unsafe { live.map(|(owner, index)| (&owner.core, index)) };
         let pending = entries::Core::allocated(live)?;
-        Some(slab::Vacant {
-            entry: pending,
-            tag: marker::PhantomData,
-        })
+        Some(slab::Vacant::new(pending))
     }
 
     pub(in crate::depot::arena::slab) fn current(
@@ -176,20 +159,19 @@ where
     }
 
     pub fn entry_at(
-        self,
+        &'a self,
         index: u32,
     ) -> Option<slab::Borrowed<entries::Busy<'a, T, MAX, entries::Interior<RECYCLE>>, Tag>> {
-        let entry = entries::Occupied::at(&self.source.core, index)?;
+        let entry = entries::Occupied::at(&self.core, index)?;
         Some(slab::Borrowed::new(entry))
     }
 
     pub(in crate::depot::arena::slab) fn try_entry_at(
-        self,
+        &'a self,
         index: u32,
     ) -> Borrowed<'a, T, Tag, MAX, RECYCLE> {
         Ok(slab::Borrowed::new(entries::Occupied::try_at(
-            &self.source.core,
-            index,
+            &self.core, index,
         )?))
     }
 }

@@ -2,7 +2,6 @@
 
 pub mod raw;
 
-pub use overflow::Overflow;
 pub use rejected::Rejected;
 pub(in crate::buffer) use source::Source;
 pub use value::Value;
@@ -10,7 +9,11 @@ pub use value::Value;
 /// Largest admitted byte extent.
 pub const MAX: usize = i32::MAX as usize;
 
-mod overflow;
+/// Byte extent beyond the signed 32-bit domain.
+pub type Overflow = crate::base::num::bounded::Overflow<{ MAX as u32 }>;
+
+const _: () = assert!(size_of::<Overflow>() == size_of::<usize>());
+
 mod rejected;
 
 mod value;

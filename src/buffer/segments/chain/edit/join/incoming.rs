@@ -21,7 +21,6 @@ pub(in crate::buffer::segments::chain::edit::join) struct Incoming<'a, T> {
 
 struct Drain<'a, T> {
     store: &'a slots::Store<segments::Item<T>>,
-    key: &'a mut Key,
     links: ends::Exclusive<slots::Index>,
     remaining: capacity::Count,
 }
@@ -53,25 +52,25 @@ unsafe impl<T> depot::raw::Start<segments::Item<T>> for Incoming<'_, T> {
         impl depot::raw::Exact<Item = segments::Item<T>, Output = ()>,
         (),
     ) {
-        let store = handles::nodes(&self.source.sequence.handle);
+        let store = handles::nodes(&self.source.handle);
         let (links, count) = match self.input {
             join::Input::Single(index) => {
                 let mut links = ends::Exclusive::empty();
-                unsafe { links.append_store(store, index) };
+                unsafe { links.append_end(store, index) };
                 (links, 1)
             }
             join::Input::Multi { index, count } => (
-                unsafe { handles::descriptors(&self.source.sequence.handle).detached(index) }
+                unsafe { handles::descriptors(&self.source.handle).detached(index) }
                     .take()
                     .0
                     .links,
                 count.get(),
             ),
         };
+        self.source.key = Key::EMPTY;
         (
             Drain {
                 store,
-                key: &mut self.source.sequence.key,
                 links,
                 remaining: capacity::Count::new(count),
             },
@@ -97,7 +96,5 @@ unsafe impl<T> depot::raw::Exact for Drain<'_, T> {
     fn remaining(&self) -> capacity::Count {
         self.remaining
     }
-    unsafe fn finish(self) {
-        *self.key = Key::EMPTY;
-    }
+    unsafe fn finish(self) {}
 }

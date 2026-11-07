@@ -7,10 +7,7 @@ use crate::{
     depot::{
         array::Index,
         queue::{
-            indexed::lanes::{
-                entry::{Error, State},
-                runtime,
-            },
+            indexed::lanes::{entry::Error, runtime},
             links, tagged,
             tagged::entry,
         },
@@ -187,7 +184,14 @@ where
     }
 }
 
-const _: () = assert!(mem::size_of::<NonZero<u32>>() == mem::size_of::<u32>());
+const _: () = {
+    assert!(mem::size_of::<NonZero<u32>>() == mem::size_of::<u32>());
+    type Slot = Vacancy<'static, u64, NonZero<u32>, NonZero<u32>, links::Chain>;
+    assert!(
+        mem::size_of::<Result<Option<Slot>, Error<NonZero<u32>>>>()
+            <= mem::size_of::<Result<Slot, entry::Error<NonZero<u32>>>>()
+    );
+};
 
 impl<S: crate::depot::raw::LaneStore> Endpoint<&mut S> {
     pub fn pop_front(&mut self) -> Option<S::Item> {
@@ -208,25 +212,20 @@ impl<S: crate::depot::raw::LaneStore> Endpoint<&mut S> {
 impl<T, C: crate::depot::raw::Count, L: crate::depot::raw::Count, H: tagged::raw::Head>
     tagged::Endpoint<&mut runtime::Fifo<T, C, L, H>>
 {
-    pub fn entry(&mut self, index: usize) -> Result<Entry<'_, T, C, L, H>, Error<C>> {
+    pub fn entry(&mut self, index: usize) -> Entry<'_, T, C, L, H> {
         let capacity = self.as_ref().capacity();
         if index >= capacity.count().get() {
             return Err(Error { index, capacity });
         }
         // SAFETY: the retained lane owner proved this initialized hook's bound.
         let index = unsafe { links::Index::new_usize(index) };
-        if unsafe { depot::raw::LaneStore::nodes(self.as_ref()).get_unchecked(index.get()) }
-            .hook
-            .is_linked(index)
-        {
-            let node =
-                unsafe { depot::raw::LaneStore::nodes(self.as_ref()).get_unchecked(index.get()) };
-            return Ok(State::Occupied(unsafe {
-                (*node.value.get()).assume_init_ref()
-            }));
+        let node =
+            unsafe { depot::raw::LaneStore::nodes(self.as_ref()).get_unchecked(index.get()) };
+        if node.hook.is_linked(index) {
+            return Ok(None);
         }
         let entry = unsafe { self.reborrow_mut().at::<false>(index) };
-        Ok(State::Vacant(unsafe { tagged::Vacant::new(entry) }))
+        Ok(Some(unsafe { tagged::Vacant::new(entry) }))
     }
 
     pub fn vacant(&mut self, index: usize) -> Result<Vacancy<'_, T, C, L, H>, entry::Error<C>> {
@@ -259,8 +258,17 @@ impl<S: crate::depot::raw::TagStore, const INITIALIZED: bool>
 }
 
 /// A vacant lane slot keeps its unique runtime FIFO loan until publication.
-type Vacancy<'a, T, C, L, H> =
-    tagged::Vacant<tagged::Endpoint<&'a mut runtime::Fifo<T, C, L, H>, links::Index, false>>;
+type Vacancy<'a, T, C, L, H> = tagged::Vacant<Position<'a, T, C, L, H, false>>;
 
-/// A lane observation keeps either the initialized value or its vacant publication capability.
-type Entry<'a, T, C, L, H> = State<&'a T, Vacancy<'a, T, C, L, H>>;
+type Position<'a, T, C, L, H, const INITIALIZED: bool = true> =
+    Endpoint<&'a mut runtime::Fifo<T, C, L, H>, links::Index, INITIALIZED>;
+
+impl<'a, T, C: crate::depot::raw::Count, L: crate::depot::raw::Count, H: tagged::raw::Head>
+    Vacancy<'a, T, C, L, H>
+{
+    pub fn insert<const FRONT: bool>(self, value: T) -> tagged::Linked<Position<'a, T, C, L, H>> {
+        self.insert_linked::<FRONT>(value)
+    }
+}
+
+type Entry<'a, T, C, L, H> = Result<Option<Vacancy<'a, T, C, L, H>>, Error<C>>;

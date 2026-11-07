@@ -14,28 +14,15 @@ use crate::{
     mem::rc,
 };
 
-/// One shared initialized byte extent inseparably paired with its owner.
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct Shared<O = Option<regions::Tag>> {
-    pub(in crate::buffer) region: regions::Value<O>,
-}
+pub use regions::Shared;
 
 impl<O> Shared<O> {
-    pub(in crate::buffer) const fn empty(owner: O) -> Self {
-        Self {
-            region: regions::Value::empty(owner),
-        }
-    }
-
     /// Pairs a raw initialized extent with its transferred owner.
     /// # Safety
     /// `owner` must keep `ptr..ptr + len` initialized, live, and immutable.
     pub(in crate::buffer) unsafe fn from_raw(ptr: ptr::NonNull<u8>, len: usize, owner: O) -> Self {
-        Self {
-            // SAFETY: the caller transfers the owner of this initialized extent.
-            region: unsafe { regions::Value::new(owner, regions::Extent::new(ptr, len)) },
-        }
+        // SAFETY: the caller transfers the owner of this initialized extent.
+        unsafe { Self::from_extent(owner, regions::Extent::new(ptr, len)) }
     }
 
     /// Pairs a proven initialized slice with its transferred owner.
@@ -57,45 +44,11 @@ impl<O> Shared<O> {
     }
 }
 
-impl From<Shared<crate::buffer::raw::Rc>> for Shared<Option<regions::Tag>> {
-    fn from(buf: Shared<crate::buffer::raw::Rc>) -> Self {
-        Self {
-            region: buf.region.into(),
-        }
-    }
-}
-impl<L> From<Shared<owners::Edge<owners::Plain<L>>>> for Shared<Option<regions::Tag>> {
-    fn from(buf: Shared<owners::Edge<owners::Plain<L>>>) -> Self {
-        Self {
-            region: buf.region.into(),
-        }
-    }
-}
-impl<'pool, L> From<Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>>>
-    for Shared<owners::Edge<owners::Plain<L>, pool::Owned>>
-{
-    fn from(buf: Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>>) -> Self {
-        Self {
-            region: buf.region.into(),
-        }
-    }
-}
-
-impl<O: buffer::raw::Retain> Shared<O> {
-    pub fn try_clone(&self) -> Result<Self, rc::Error> {
-        Ok(Self {
-            region: self.region.try_clone()?,
-        })
-    }
-}
-
 impl<O: buffer::raw::Retain> buffer::View<'_, Shared<O>> {
     pub(in crate::buffer) fn try_clone(&self) -> Result<Shared<O>, rc::Error> {
-        Ok(Shared {
-            // SAFETY: the source-bound selection retains the same immutable
-            // region throughout retention; no independent owner can be supplied.
-            region: unsafe { self.source().region.try_view(self.as_slice())? },
-        })
+        // SAFETY: the source-bound selection retains the same immutable
+        // region throughout retention; no independent owner can be supplied.
+        unsafe { self.source.try_view(self.as_slice()) }
     }
 }
 
@@ -123,20 +76,9 @@ impl<O: regions::End> Shared<O> {
         }
     }
 }
-impl<O> ops::Deref for Shared<O> {
-    type Target = regions::Value<O>;
-    fn deref(&self) -> &Self::Target {
-        &self.region
-    }
-}
-impl<O> ops::DerefMut for Shared<O> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.region
-    }
-}
 impl<O: regions::End> consume::Consume for Shared<O> {
     fn remaining(&self) -> usize {
-        self.region.len()
+        self.len()
     }
     fn try_consume(&mut self, amount: usize) -> Result<(), consume::Error> {
         buffer::raw::Selection::try_new(self, amount).map(buffer::raw::Selection::consume)
@@ -160,22 +102,16 @@ impl<O> Shared<Option<O>> {
 impl TryFrom<&mut vec::Vec<u8>> for Shared {
     type Error = crate::alloc::Exhausted;
     fn try_from(source: &mut vec::Vec<u8>) -> Result<Self, Self::Error> {
-        Ok(Self {
-            region: regions::Header::try_new(source)?,
-        })
+        regions::Header::try_new(source)
     }
 }
 impl Shared {
     pub fn try_copy(bytes: &[u8]) -> Result<Self, storage::AllocError> {
         storage::Exact::try_copy(bytes).map(storage::Exact::into_shared)
     }
-    pub fn try_get(&self, range: impl ops::RangeBounds<usize>) -> Result<Option<Self>, rc::Error> {
-        Ok(self.region.try_get(range)?.map(|region| Self { region }))
-    }
-
     #[doc(hidden)]
     pub fn backing(&self) -> Option<backing::View<'_, '_>> {
-        backing::View::new(&self.region)
+        backing::View::new(self)
     }
     pub fn clear(&mut self) {
         *self = Self::new();
@@ -243,6 +179,6 @@ unsafe impl<O: regions::End> buffer::raw::Store for Shared<O> {
     fn restrict(slice: buffer::raw::Slice<'_, '_, Self>) {
         let (target, range) = slice.into_parts();
         // SAFETY: the exclusive operation retains this owner's selected initialized extent.
-        unsafe { target.region.restrict(range.into_inner()) };
+        unsafe { target.restrict(range.into_inner()) };
     }
 }

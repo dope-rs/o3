@@ -8,15 +8,12 @@ static ALLOCATOR: Tracker = Tracker;
 use common::{alloc::system::Tracker, depot::model::Lcg};
 use o3::depot::{
     capacity::Count,
-    queue::{
-        indexed::{exact, fifo},
-        links,
-    },
+    queue::{indexed::fifo, links},
 };
 
 #[test]
 fn coalesces_each_index() {
-    let mut queue = (fifo::List::<u64, u32, exact::Policy>::try_count(Count::new(2)))
+    let mut queue = (fifo::List::<u64, u32>::try_count(Count::new(2)))
         .expect("the two-slot exact FIFO must allocate");
     assert_eq!(queue.len(), 0);
     let mut entry = queue.try_entry(1).expect("represented identity");
@@ -37,8 +34,7 @@ fn coalesces_each_index() {
 #[test]
 fn rejects_bounds() {
     for capacity in [0, 1, 3] {
-        let mut queue =
-            fifo::List::<u64, u32, exact::Policy>::try_new(capacity).expect("bounded queue");
+        let mut queue = fifo::List::<u64, u32>::try_new(capacity).expect("bounded queue");
         for index in [capacity as u32, u32::MAX] {
             let error = queue
                 .try_entry(index)
@@ -53,7 +49,7 @@ fn rejects_bounds() {
 
 #[test]
 fn sweeps_original_heads() {
-    let mut queue = fifo::List::<u32, links::Index, exact::Policy>::try_count(Count::new(3))
+    let mut queue = fifo::List::<u32, links::Index>::try_count(Count::new(3))
         .expect("three physical identities");
     for raw in 0..3 {
         let index = links::Index::try_new(raw).expect("compact identity");
@@ -113,8 +109,7 @@ fn sweeps_original_heads() {
 
 #[test]
 fn preserves_order() {
-    let mut queue =
-        fifo::List::<_, u32, exact::Policy>::try_new(3).expect("three physical identities");
+    let mut queue = fifo::List::<_, u32>::try_new(3).expect("three physical identities");
     for index in 0..3 {
         queue
             .try_entry(index)
@@ -134,8 +129,7 @@ fn preserves_order() {
 
 #[test]
 fn requeues_admitted_head() {
-    let mut queue =
-        fifo::List::<_, u32, exact::Policy>::try_new(3).expect("three physical identities");
+    let mut queue = fifo::List::<_, u32>::try_new(3).expect("three physical identities");
     for index in 0..3 {
         queue
             .try_entry(index)
@@ -161,8 +155,7 @@ fn requeues_admitted_head() {
 fn matches_model() {
     use std::collections::VecDeque;
 
-    let mut queue =
-        fifo::List::<_, u32, exact::Policy>::try_new(7).expect("seven physical identities");
+    let mut queue = fifo::List::<_, u32>::try_new(7).expect("seven physical identities");
     let mut model = VecDeque::new();
     let mut rng = Lcg::<1>::new(1_u64);
     for _ in 0..50_000 {
@@ -195,7 +188,7 @@ fn matches_model() {
 
 #[test]
 fn exact_allocates_once() {
-    let (created, cold) = Tracker::measure(|| fifo::List::<u64, u32, exact::Policy>::try_new(4));
+    let (created, cold) = Tracker::measure(|| fifo::List::<u64, u32>::try_new(4));
     let freed = {
         let mut queue = created.expect("four exact slots");
         assert_eq!(cold, [1, 64, 0, 0]);

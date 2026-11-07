@@ -36,11 +36,6 @@ impl<'a, const MAX: usize> Prefix<'a, MAX> {
         self.0
     }
 
-    #[must_use]
-    pub const fn into_slice(self) -> &'a [u8] {
-        self.0
-    }
-
     pub fn split_first(self) -> Option<(&'a u8, Self)> {
         let (head, tail) = self.0.split_first()?;
         Some((head, Self(tail)))

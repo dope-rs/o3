@@ -5,18 +5,15 @@
 use std::{mem, num::NonZero};
 
 use assembly::total;
-pub(in crate::buffer::segments) use chain::edit::Consume;
 pub use chain::{
     Chain,
     edit::drain::Drain,
     front::Front,
     many::{Many, flatten::Flatten},
-    sequence::Sequence,
     single::Single,
     view::{cursor::Cursor, iter::Iter},
 };
 use handles::Key;
-pub(in crate::buffer) use handles::pool::exact::Built;
 pub use handles::{
     handle::Handle,
     header::Header,
@@ -26,7 +23,7 @@ pub use item::Item;
 pub(in crate::buffer) use item::seal::Seal;
 pub use shape::{Shape, nonempty::Nonempty, owners::Owners};
 
-use crate::{buffer, buffer::write::consume, depot::capacity, mem::rc};
+use crate::{buffer::write::consume, depot::capacity, mem::rc};
 
 pub mod assembly;
 pub mod queue;
@@ -35,7 +32,7 @@ pub mod scatter;
 mod shape;
 
 /// A fixed metadata pool cannot admit the requested transition.
-#[repr(u8)]
+#[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
     /// No segment slot is available.
@@ -50,36 +47,19 @@ pub enum Error {
     Logical(assembly::Overflow),
     /// Resident byte length exceeded the address domain.
     Resident(assembly::Overflow),
-    /// Combined unchanged-sequence accounting exceeded its exact domain.
-    Total(total::Error),
     /// The requested byte prefix exceeds the source length.
     Boundary(consume::Error),
     /// A payload or metadata owner has no remaining reference capacity.
     Retain(rc::Error),
 }
 
-impl Error {
-    pub(in crate::buffer::segments) const fn component(error: total::Error) -> Self {
+impl From<total::Error> for Error {
+    fn from(error: total::Error) -> Self {
         match error {
             total::Error::Count(error) => Self::Count(error),
             total::Error::Logical(error) => Self::Logical(error),
             total::Error::Resident(error) => Self::Resident(error),
         }
-    }
-}
-
-impl From<total::Error> for Error {
-    fn from(error: total::Error) -> Self {
-        Self::Total(error)
-    }
-}
-
-impl<T: buffer::raw::Segment> From<crate::mem::Rejected<Item<T>, Error>>
-    for crate::mem::Rejected<T, Error>
-{
-    fn from(rejected: crate::mem::Rejected<Item<T>, Error>) -> Self {
-        let (item, error) = rejected.into_parts();
-        Self::new(item.into_inner(), error)
     }
 }
 
@@ -97,7 +77,7 @@ impl Plan {
 }
 
 const _: () = {
-    assert!(mem::size_of::<Error>() == 4 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Error>() == 3 * mem::size_of::<usize>());
     assert!(mem::size_of::<Plan>() == 2 * mem::size_of::<usize>());
 };
 
@@ -109,26 +89,6 @@ mod item;
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct Count(u32);
-
-/// Zero-sized proof of one-segment cardinality.
-#[derive(Clone, Copy, Debug)]
-pub struct One(());
-
-impl Default for One {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl One {
-    pub const fn new() -> Self {
-        Self(())
-    }
-
-    pub const fn count(&self) -> Count {
-        Count::ONE
-    }
-}
 
 #[repr(transparent)]
 pub(in crate::buffer::segments) struct Plural(NonZero<u32>);
@@ -208,12 +168,3 @@ const _: () = {
 
 mod tail;
 pub(in crate::buffer) use tail::Tail;
-
-/// Classification of one complete owner admitted by [`Chain::try_push`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Push<T> {
-    /// The owner became one new segment.
-    Loaded,
-    /// The owner was empty, contributed no segment, and is returned unchanged.
-    Discarded(T),
-}

@@ -35,7 +35,7 @@ fn orders_runtime_lanes() {
             let head = head.expect("required fixture outcome");
             let mut lane = head.borrow(&mut token);
             let vacant = match lane.entry(index) {
-                Ok(entry::State::Vacant(vacant)) => Some(vacant),
+                Ok(Some(vacant)) => Some(vacant),
                 _ => None,
             }
             .expect("the fixture slot must be vacant");
@@ -44,8 +44,8 @@ fn orders_runtime_lanes() {
         let head = queue.head(2);
         let head = head.expect("required fixture outcome");
         let mut lane = head.borrow(&mut token);
-        assert!(matches!(lane.entry(1), Ok(entry::State::Occupied(&11))));
-        assert!(matches!(lane.entry(3), Ok(entry::State::Occupied(&13))));
+        assert!(matches!(lane.entry(1), Ok(None)));
+        assert!(matches!(lane.entry(3), Ok(None)));
         assert!(matches!(
             lane.vacant(1),
             Err(Error::Linked {

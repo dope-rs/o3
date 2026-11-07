@@ -9,31 +9,10 @@ use crate::{
     mem::rc,
 };
 
-#[repr(transparent)]
-struct Link(cell::Cell<u32>);
-
-impl Link {
-    const fn new(next: Option<Key>) -> Self {
-        Self(cell::Cell::new(Key::encode(next)))
-    }
-
-    fn clear(&self) {
-        self.0.set(Key::<false>::encode(None));
-    }
-
-    fn set(&self, next: Option<Key>) {
-        self.0.set(Key::encode(next));
-    }
-
-    fn insert(&self, key: Key<true>) {
-        self.0.set(key.get());
-    }
-}
-
 #[repr(C, align(8))]
 pub(in crate::buffer) struct Slot {
     prefix: regions::Prefix,
-    link: Link,
+    link: cell::Cell<u32>,
 }
 
 // SAFETY: Slot retains its exact initialized prefix and embedded reference domain.
@@ -53,12 +32,12 @@ impl Slot {
     const fn new(index: Key, next: Option<Key>) -> Self {
         Self {
             prefix: regions::Prefix::empty(index.get()),
-            link: Link::new(next),
+            link: cell::Cell::new(Key::encode(next)),
         }
     }
 
     pub(super) unsafe fn unlink(&self) {
-        self.link.clear();
+        self.link.set(Key::<false>::encode(None));
     }
 }
 
@@ -66,7 +45,7 @@ pub(super) struct Vacant<'a>(&'a Slot);
 
 impl Vacant<'_> {
     pub(super) fn insert(self, key: Key<true>) {
-        self.0.link.insert(key);
+        self.0.link.set(key.get());
     }
 }
 
@@ -103,8 +82,8 @@ impl<K: crate::buffer::raw::Backing, S> Claim<K, S> {
         let slot = self.slots.slot(self.key);
         let header = self.slots.header();
         // SAFETY: Claim exclusively owns this exact head and its vacant link.
-        unsafe { header.free.pop(slot.link.0.get()) };
-        slot.link.clear();
+        unsafe { header.free.pop(slot.link.get()) };
+        slot.link.set(Key::<false>::encode(None));
         // SAFETY: Claim exclusively owns this free-list head until activation.
         unsafe { slot.activate() };
         header.available.set(header.available.get() - 1);
@@ -164,7 +143,11 @@ impl<K: crate::buffer::raw::Backing, S> Retired<K, S> {
             let header = self.slots.header();
             let slot = self.slots.slot(self.key);
             // SAFETY: Retired owns this exact detached slot until publication.
-            unsafe { header.free.push(self.key, |next| slot.link.set(next)) };
+            unsafe {
+                header
+                    .free
+                    .push(self.key, |next| slot.link.set(Key::encode(next)))
+            };
             header.available.set(header.available.get() + 1);
         }
         super::Header::retire(self.slots);
@@ -190,7 +173,7 @@ pub(in crate::buffer) struct Entry<'span, K: crate::buffer::raw::Backing, S = st
 }
 
 impl<'span, K: crate::buffer::raw::Backing, S> Entry<'span, K, S> {
-    pub(in crate::buffer::pool) const fn new<M>(span: &'span pool::Lease<K, M, S>) -> Self {
+    pub(in crate::buffer::pool) const fn new<M>(span: &'span pool::Span<K, M, S>) -> Self {
         Self {
             slots: span.slots,
             key: span.key,
@@ -246,7 +229,7 @@ impl<'span, K: crate::buffer::raw::Backing, S> Entry<'span, K, S> {
         let slot = self.slot();
         // SAFETY: Entry proves this is an active slot, whose link is either
         // empty or an account key published from this exact pool's table.
-        unsafe { Key::<true>::decode(slot.link.0.get()) }.ok_or(Vacant(slot))
+        unsafe { Key::<true>::decode(slot.link.get()) }.ok_or(Vacant(slot))
     }
 }
 
@@ -259,7 +242,6 @@ impl<K: crate::buffer::raw::Backing, S> Clone for Entry<'_, K, S> {
 impl<K: crate::buffer::raw::Backing, S> Copy for Entry<'_, K, S> {}
 
 const _: () = {
-    assert!(size_of::<Link>() == size_of::<u32>());
     assert!(size_of::<Slot>() == 16);
     assert!(align_of::<Slot>() == 8);
     assert!(size_of::<Seed<super::Plain, state::Uninit>>() == size_of::<usize>());

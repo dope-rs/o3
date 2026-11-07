@@ -1,13 +1,12 @@
-use std::{io, marker};
+use std::io;
 
 /// A standard reader over borrowed byte-bearing parts.
-pub struct Reader<'data, I, T: ?Sized> {
+pub struct Reader<'data, I> {
     parts: I,
     current: &'data [u8],
-    item: marker::PhantomData<fn() -> T>,
 }
 
-impl<'data, I, T> Reader<'data, I, T>
+impl<'data, I, T> Reader<'data, I>
 where
     I: Iterator<Item = &'data T>,
     T: AsRef<[u8]> + ?Sized + 'data,
@@ -16,7 +15,6 @@ where
         Self {
             parts,
             current: &[],
-            item: marker::PhantomData,
         }
     }
 
@@ -30,7 +28,7 @@ where
     }
 }
 
-impl<'data, I, T> io::Read for Reader<'data, I, T>
+impl<'data, I, T> io::Read for Reader<'data, I>
 where
     I: Iterator<Item = &'data T>,
     T: AsRef<[u8]> + ?Sized + 'data,
@@ -44,7 +42,7 @@ where
     }
 }
 
-impl<'data, I, T> io::BufRead for Reader<'data, I, T>
+impl<'data, I, T> io::BufRead for Reader<'data, I>
 where
     I: Iterator<Item = &'data T>,
     T: AsRef<[u8]> + ?Sized + 'data,

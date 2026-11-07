@@ -10,12 +10,6 @@ pub mod linked;
 pub mod pool;
 pub mod slab;
 
-#[derive(Default)]
-pub struct Inline {
-    pub len: usize,
-    pub bytes: [u8; 32],
-}
-
 pub enum Tag {}
 
 pub struct Borrowed<'a>(pub &'a u8);

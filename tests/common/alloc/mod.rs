@@ -1,7 +1,7 @@
 use std::{
     alloc::{Layout, LayoutError},
     array::from_fn,
-    cell, marker, mem,
+    marker, mem,
 };
 
 use o3::alloc::{self, array};
@@ -16,22 +16,6 @@ pub struct AlignedZst;
 
 #[repr(align(64))]
 pub struct AlignedUnit;
-
-#[derive(Debug)]
-pub struct Owner<'a> {
-    pub drops: &'a cell::Cell<Option<usize>>,
-    pub digit: usize,
-}
-
-impl Drop for Owner<'_> {
-    fn drop(&mut self) {
-        self.drops.set(
-            self.drops
-                .get()
-                .and_then(|order| order.checked_mul(10)?.checked_add(self.digit)),
-        );
-    }
-}
 
 #[repr(align(64))]
 pub struct Aligned(pub u8);

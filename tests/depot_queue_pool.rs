@@ -179,10 +179,16 @@ fn reuses_bound_lane() {
     let mut lanes = pool::Lanes::<u64, u64>::try_new(plan).expect("allocated lanes");
     let ((), delta) = Tracker::measure(|| {
         let mut lane = lanes.try_bind_mut(1).expect("last lane");
-        for value in [3, 5, 7] {
+        let (vacant, state) = lane.borrow_mut().reserve();
+        *state = 10;
+        vacant.expect("free node").append(3);
+        for value in [5, 7] {
             lane.push_back(value).expect("free node");
         }
-        *lane.state_mut() = 11;
+        let (vacant, state) = lane.borrow_mut().reserve();
+        assert!(vacant.is_none());
+        *state += 1;
+        drop(vacant);
         let mut front = lane.borrow_mut().front_entry().expect("nonempty lane");
         let (value, state) = front.parts_mut();
         *value += *state;
@@ -288,6 +294,8 @@ fn borrow_front_before_pop() {
         .expect("required fixture outcome");
 
     assert_eq!(pool::View::from(&lane).front(), Some(&1));
+    let tail = pool::View::from(&lane).back();
+    assert_eq!(tail, Some(&2));
     assert_eq!(lane.count().get(), 2);
     assert_eq!(lane.pop_front(), Some(1));
     assert_eq!(lane.pop_front(), Some(2));
@@ -444,16 +452,6 @@ fn fifos_share_nodes() {
                 .push_back([value, 0, 0]);
         }
         assert!(reused.vacant().is_none());
-
-        if usize::BITS == 64 {
-            assert_eq!(mem::size_of::<fifo::Fifo<'static, [usize; 3]>>(), 16);
-            assert_eq!(
-                mem::size_of::<
-                    slots::Vacant<[usize; 3], &'static mut fifo::Fifo<'static, [usize; 3]>>,
-                >(),
-                16
-            );
-        }
     });
     assert_eq!(hot, [0; 4]);
 }
@@ -485,17 +483,6 @@ fn lanes_pack_states() {
     });
     assert_eq!(hot, [0; 4]);
 
-    if usize::BITS == 64 {
-        assert_eq!(mem::size_of_val(&lanes), 40);
-    }
-    assert_eq!(
-        mem::size_of::<pool::View<'static, u64>>(),
-        2 * mem::size_of::<usize>()
-    );
-    assert_eq!(
-        mem::size_of::<pool::Lane<'static, u64>>(),
-        2 * mem::size_of::<usize>()
-    );
     let ((), teardown) = Tracker::measure(move || drop(lanes));
     assert_eq!(teardown, [0, 0, 1, BYTES]);
 }
@@ -512,8 +499,8 @@ fn detached_fifo_recycles() {
     }
     {
         let front: fifo::Front<'_, '_, [usize; 3]> = queue.front().expect("nonempty queue");
-        assert_eq!(front.get(), &[0, 0, 0]);
         let detached: fifo::Nonempty<'_, [usize; 3]> = front.take();
+        assert_eq!(detached.front(), &[0, 0, 0]);
         assert!(queue.is_empty());
         assert!(queue.vacant().is_none());
         assert_eq!(

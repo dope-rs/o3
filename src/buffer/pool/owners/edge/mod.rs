@@ -1,4 +1,4 @@
-pub(in crate::buffer) use input::{Input, Measured};
+pub(in crate::buffer) use input::Measured;
 
 use crate::buffer::{pool::owners, storage::regions};
 

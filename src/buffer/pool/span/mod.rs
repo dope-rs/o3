@@ -1,7 +1,5 @@
 pub(in crate::buffer::pool) mod lease;
-use std::{marker, mem, ops, ptr};
-
-use pool::Lease;
+use std::{marker, mem, ptr};
 
 use crate::{
     buffer,
@@ -15,36 +13,21 @@ use crate::{
 };
 
 pub(in crate::buffer::pool) mod append;
-pub(in crate::buffer::pool) mod complete;
-pub(in crate::buffer::pool) mod copy;
 pub(in crate::buffer::pool) mod frozen;
 
-/// A writable span retaining an initialized slot lease.
+/// Owns one live slot edge and its initialized prefix. The backing and prefix
+/// cannot be replaced independently through this capability.
 #[derive(Debug)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct Span<K: crate::buffer::raw::Backing = owners::Plain, M = pool::Owned, S = state::Uninit>
 {
-    pub(in crate::buffer::pool) lease: Lease<K, M, S>,
-}
-
-impl<K: crate::buffer::raw::Backing, M, S> ops::Deref for Span<K, M, S> {
-    type Target = Lease<K, M, S>;
-    fn deref(&self) -> &Self::Target {
-        &self.lease
-    }
-}
-
-impl<K: crate::buffer::raw::Backing, M, S> ops::DerefMut for Span<K, M, S> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.lease
-    }
+    pub(in crate::buffer::pool) slots: owners::Ptr<K, S>,
+    pub(in crate::buffer::pool) key: owners::Key,
+    pub(in crate::buffer::pool) len: u32,
+    pub(in crate::buffer::pool) root: M,
 }
 
 impl<K: crate::buffer::raw::Backing, S> Span<K, pool::Owned, S> {
-    pub fn recycle(self) {
-        drop(self);
-    }
-
     pub(in crate::buffer::pool) fn acquire(core: owners::Ptr<K, S>) -> Option<Self> {
         let slots = core;
         let claim = owners::Claim::new(slots)?;
@@ -53,7 +36,8 @@ impl<K: crate::buffer::raw::Backing, S> Span<K, pool::Owned, S> {
 
     pub(in crate::buffer::pool) fn from_seed(seed: owners::Seed<K, S>) -> Self {
         let (core, active) = seed.take();
-        owners::Header::release(core);
+        // Seed transferred the sole root; active keeps the pool live through detachment.
+        owners::Header::detach(core);
         Self::new(active, pool::Owned)
     }
 }
@@ -75,25 +59,11 @@ impl<K: crate::buffer::raw::Backing, M, S> Span<K, M, S> {
     pub(in crate::buffer::pool) fn new(active: owners::Active<K, S>, root: M) -> Self {
         let active = mem::ManuallyDrop::new(active);
         Self {
-            lease: Lease {
-                slots: active.slots,
-                key: active.key,
-                len: 0,
-                root,
-            },
+            slots: active.slots,
+            key: active.key,
+            len: 0,
+            root,
         }
-    }
-}
-
-// SAFETY: Span tracks exactly its initialized prefix.
-unsafe impl<K: crate::buffer::raw::Backing, M, S> pool::raw::Init for Span<K, M, S> {
-    type Backing = K;
-    type Root = M;
-    type State = S;
-
-    fn into_parts(self) -> (Span<K, M, S>, usize, usize) {
-        let len = self.len();
-        (self, 0, len)
     }
 }
 
@@ -107,12 +77,7 @@ impl<'d> Span<owners::Resident<'d>> {
         let seed =
             owners::Block::<owners::Accounted, state::Uninit>::try_seed(layout, pool.budget())?;
         let span = Span::from_seed(seed);
-        let span = buffer::raw::Copy::copy(pool::CopyIn {
-            span,
-            sources: (first, second.into_input()),
-            len,
-        });
-        Ok(span)
+        Ok(span.copy_in((first, second.into_input()), len))
     }
 }
 
@@ -136,12 +101,10 @@ impl<S: state::State, L> pool::Span<owners::Plain<L>, pool::Owned, S> {
     pub fn freeze(self) -> pool::Span<owners::Plain<L>, pool::Owned, pool::Frozen> {
         let this = mem::ManuallyDrop::new(self);
         Span {
-            lease: Lease {
-                slots: this.slots.erase_state(),
-                key: this.key,
-                len: this.len,
-                root: this.root,
-            },
+            slots: this.slots.erase_state(),
+            key: this.key,
+            len: this.len,
+            root: this.root,
         }
     }
 }
@@ -149,7 +112,9 @@ impl<S: state::State, L> pool::Span<owners::Plain<L>, pool::Owned, S> {
 impl<'pool, S: state::State, L> pool::Span<owners::Plain<L>, pool::Borrowed<'pool>, S> {
     #[must_use]
     pub fn freeze(self) -> storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>> {
-        pool::raw::Init::into_shared(self)
+        let len = self.len();
+        // SAFETY: consuming the span retains its exact initialized prefix.
+        unsafe { pool::raw::into_shared(self, 0, len) }
     }
 }
 
@@ -171,33 +136,24 @@ impl pool::Span<owners::Plain<pool::Layout>, pool::Owned, state::Uninit> {
             .map_err(pool::CreateError::Exhausted)?;
         Ok(pool::Span::from_seed(seed))
     }
-}
 
-impl<L> pool::Span<owners::Plain<L>, pool::Owned, state::Initialized> {
-    pub fn output(&mut self) -> buffer::raw::Output<'_, L> {
-        buffer::raw::Output::new(self)
+    pub fn try_copy<const N: usize>(
+        mut self,
+        source: buffer::raw::Slices<'_, N>,
+    ) -> Result<pool::Span<owners::Plain, pool::Owned, pool::Frozen>, Error> {
+        let start = self.len();
+        let len = source.len().get();
+        Error::check(len as usize, self.capacity().get() as usize - start)?;
+        let target = self.entry().data();
+        // SAFETY: admission retains every source and this exact exclusive suffix.
+        unsafe { buffer::raw::SliceExt::copy_to(source.slices(), target.add(start)) };
+        self.len += len;
+        Ok(self.freeze())
     }
 }
 
 /// One acquired resident-pool backing without a duplicate pool owner.
 impl<'d> pool::Span<owners::Resident<'d>> {
-    pub(in crate::buffer) fn staged<I: buffer::raw::SliceExt>(
-        reserve: staging::Reserve<Self, owners::Measured<I>>,
-    ) -> Self {
-        let (mut cursor, _, src) = reserve.into_parts();
-        let start = cursor.len();
-        let target = cursor.entry().data();
-        let end = start + src.len();
-        buffer::raw::Copy::copy(Append {
-            cursor: &mut cursor,
-            sources: src.into_input(),
-            start,
-            target,
-            end,
-        });
-        cursor
-    }
-
     pub(in crate::buffer) fn try_extend<'a, I: buffer::raw::SliceExt>(
         slot: staging::Slot<'a, 'd>,
         slab: Option<&pool::Pool<state::Uninit, owners::Resident<'d>>>,
@@ -211,13 +167,10 @@ impl<'d> pool::Span<owners::Resident<'d>> {
             Ok(()) => {
                 let start = cursor.len();
                 let target = cursor.entry().data();
-                buffer::raw::Copy::copy(Append {
-                    cursor,
-                    sources: src,
-                    start,
-                    target,
-                    end: start + added,
-                });
+                let end = start + added;
+                // SAFETY: admission retains the exact suffix and every disjoint source.
+                unsafe { src.copy_to(target.add(start)) };
+                cursor.len = end as u32;
                 return Ok(());
             }
             Err(error) => error,
@@ -229,55 +182,24 @@ impl<'d> pool::Span<owners::Resident<'d>> {
             let start = mem::take(head) as usize;
             // SAFETY: the exclusive slot is unique and both ranges remain within its initialized extent.
             unsafe { ptr::copy(data.add(start), data, len) };
-            buffer::raw::Copy::copy(Append {
-                cursor,
-                sources: src,
-                start: len,
-                target: data,
-                end: len + added,
-            });
+            let end = len + added;
+            // SAFETY: compaction preserves the admitted suffix and disjoint sources.
+            unsafe { src.copy_to(data.add(len)) };
+            cursor.len = end as u32;
             return Ok(());
         }
         let Some(slab) = slab else {
             return Err(Cause::Shared(tail));
         };
         // Slot and slab retain the same warm pool; the suffix check above proves the copy fits.
-        let Some(mut next) = slab.acquire() else {
+        let Some(next) = slab.acquire() else {
             return Err(Cause::Rotation(tail));
         };
         // SAFETY: the exclusive source borrow retains its exact suffix through the copy.
         let bytes = unsafe { cursor.as_slice().get_unchecked(*head as usize..) };
-        let target = next.entry().data();
-        buffer::raw::Copy::copy(Append {
-            cursor: &mut next,
-            sources: (bytes, src),
-            start: 0,
-            target,
-            end: bytes.len() + added,
-        });
+        let next = next.copy_in((bytes, src), bytes.len() + added);
         *head = 0;
         *cursor = next;
         Ok(())
-    }
-}
-
-struct Append<'a, 'd, I> {
-    cursor: &'a mut pool::Span<owners::Resident<'d>>,
-    sources: I,
-    start: usize,
-    target: *mut u8,
-    end: usize,
-}
-
-// SAFETY: each admitted edit retains the exact writable suffix and disjoint sources.
-unsafe impl<I: buffer::raw::SliceExt> buffer::raw::Copy for Append<'_, '_, I> {
-    type Output = ();
-
-    fn parts(&mut self) -> (impl buffer::raw::SliceExt, *mut u8, usize) {
-        (&self.sources, self.target, self.start)
-    }
-
-    unsafe fn publish(self) {
-        self.cursor.len = self.end as u32;
     }
 }

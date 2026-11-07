@@ -1,4 +1,4 @@
-use std::{num::NonZero, ops};
+use std::{mem::MaybeUninit, num::NonZero, ops};
 
 use provided::account;
 
@@ -30,9 +30,18 @@ impl<const N: usize> Value<[u8; N]> {
 
 impl<T: buffer::raw::Source> Value<T> {
     pub fn try_new(value: T) -> Result<Self, bounded::Rejected<T>> {
-        if value.as_ref().len() > bounded::MAX {
+        if U32::<0, { bounded::MAX as u32 }>::try_usize(value.as_ref().len()).is_err() {
             return Err(bounded::Rejected::new(value));
         }
+        Ok(Self(value))
+    }
+}
+
+impl<'a> TryFrom<&'a mut [MaybeUninit<u8>]> for Value<&'a mut [MaybeUninit<u8>]> {
+    type Error = bounded::Overflow;
+
+    fn try_from(value: &'a mut [MaybeUninit<u8>]) -> Result<Self, Self::Error> {
+        U32::<0, { bounded::MAX as u32 }>::try_usize(value.len())?;
         Ok(Self(value))
     }
 }
@@ -98,14 +107,15 @@ impl<T: buffer::Residency> buffer::Residency for Value<T> {
     }
 }
 
-impl<'d> Value<storage::Shared<provided::Owner<'d>>> {
-    pub fn try_account(
-        &self,
-        budget: &resident::Budget<'d>,
-    ) -> Result<Value<storage::Shared<Option<provided::Account<'d>>>>, account::Cause> {
+impl<'d> provided::Frozen<'d> for Value<storage::Shared<provided::Owner<'d>>> {
+    type Account = Value<storage::Shared<Option<provided::Account<'d>>>>;
+
+    fn try_account(&self, budget: &resident::Budget<'d>) -> Result<Self::Account, account::Cause> {
         Ok(Value(self.0.try_account(budget)?))
     }
+}
 
+impl<'d> Value<storage::Shared<provided::Owner<'d>>> {
     pub fn try_get(
         &self,
         range: ops::Range<usize>,
@@ -206,21 +216,22 @@ unsafe impl<'d> hold::raw::Retain<'d> for Value<storage::Shared<provided::Owner<
         <storage::Shared<provided::Owner<'d>> as hold::raw::Retain<'d>>::charge(&plan.0)
     }
 
+    #[inline]
     fn try_copy<'a>(
         plan: &Self::View<'a>,
         budget: &resident::Budget<'d>,
-    ) -> Result<resident::Shared<'d>, hold::Error>
+    ) -> Result<storage::Owned<resident::Budget<'d>>, hold::Error>
     where
         Self: 'a,
     {
-        Ok(resident::Shared::try_copy(plan, budget)?)
+        Ok(storage::Owned::try_copy(plan, budget)?)
     }
 
     /// Retains this admitted extent with its original account and borrow domain.
     fn try_retain<'a>(
         plan: &Self::View<'a>,
         budget: &resident::Budget<'d>,
-    ) -> Result<resident::Shared<'d>, hold::Error>
+    ) -> Result<hold::Retained<'d>, hold::Error>
     where
         Self: 'a,
     {
@@ -283,7 +294,7 @@ impl<S: ?Sized> bounded::Source for Value<buffer::View<'_, S>> {}
 
 impl<S: ?Sized> Clone for Value<buffer::View<'_, S>> {
     fn clone(&self) -> Self {
-        Self(self.0.reborrow())
+        Self(self.0)
     }
 }
 

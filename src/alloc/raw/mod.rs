@@ -1,4 +1,4 @@
-use std::{alloc, marker, mem, num::NonZero, pin, ptr};
+use std::{alloc, marker, mem, num::NonZero, ptr};
 
 pub use block::Block;
 pub use extent::Extent;
@@ -8,8 +8,8 @@ pub use rows::Rows;
 pub use shape::Shape;
 
 use crate::{
-    alloc::{Exhausted, Overflow, Vacant, array},
-    base::{cell::region, marker::ThreadBound},
+    alloc::{Exhausted, Overflow, array},
+    base::marker::ThreadBound,
 };
 mod layout;
 pub(crate) use layout::Root;
@@ -29,7 +29,7 @@ pub trait VecExt<T> {
     /// Retains one previously admitted insertion.
     /// # Safety
     /// This vector's length is strictly below its capacity.
-    unsafe fn vacancy(&mut self) -> Vacant<'_, T>;
+    unsafe fn vacancy(&mut self) -> impl FnOnce(T) + '_;
 
     /// Removes one retained resident and returns the tail moved into its place.
     /// # Safety
@@ -38,10 +38,19 @@ pub trait VecExt<T> {
 }
 
 impl<T> VecExt<T> for Vec<T> {
-    unsafe fn vacancy(&mut self) -> Vacant<'_, T> {
-        Vacant {
-            values: self,
-            _bound: ThreadBound::NEW,
+    unsafe fn vacancy(&mut self) -> impl FnOnce(T) + '_ {
+        let bound = ThreadBound::NEW;
+        move |value| {
+            let _bound = bound;
+            let values = self;
+            let len = values.len();
+            // SAFETY: admission proved len + 1 fits both usize and this
+            // vector's capacity. The captured exclusive loan preserves its
+            // allocation and length, including aligned zero-sized storage.
+            unsafe {
+                values.as_mut_ptr().add(len).write(value);
+                values.set_len(len + 1);
+            }
         }
     }
 
@@ -58,28 +67,6 @@ impl<T> VecExt<T> for Vec<T> {
         let slot = unsafe { &mut *pointer.add(index) };
         (mem::replace(slot, value), Some(slot))
     }
-}
-
-/// Transfers a completely initialized backing into its element owner.
-pub trait AssumeInit: Sized {
-    type Value;
-    type Output;
-
-    /// # Safety
-    /// Every element is initialized, and the block exclusively owns its drop obligation.
-    unsafe fn assume_init(self) -> Self::Output;
-
-    /// # Safety
-    /// The retained source yields at most this allocation's extent and exactly it on natural completion.
-    /// Its count, order, ownership and item borrows stay valid through callbacks and cleanup.
-    unsafe fn try_map<I: Iterator, F>(
-        self,
-        source: I,
-        make: impl for<'slot> FnMut(
-            array::Slot<'slot, Self::Value>,
-            I::Item,
-        ) -> Result<array::Written<'slot>, F>,
-    ) -> Result<Self::Output, F>;
 }
 
 /// Relocates admitted storage runs into their replacement, retaining the source state.
@@ -177,64 +164,41 @@ unsafe impl TailIndex for u32 {
     }
 }
 
-impl<T, E: Extent, S> AssumeInit for array::Block<mem::MaybeUninit<T>, E, S> {
-    type Value = T;
-    type Output = array::Block<T, E, S>;
-
-    unsafe fn assume_init(self) -> Self::Output {
-        // SAFETY: the caller transfers the complete initialized backing.
-        unsafe { self.assume_init() }
-    }
-
-    unsafe fn try_map<I: Iterator, F>(
-        mut self,
-        source: I,
-        mut make: impl for<'slot> FnMut(
-            array::Slot<'slot, T>,
-            I::Item,
-        ) -> Result<array::Written<'slot>, F>,
-    ) -> Result<array::Block<T, E, S>, F> {
-        let pointer = ptr::NonNull::from(&mut *self).cast::<T>();
-        let mut filled = 0;
-        for item in source {
-            // SAFETY: the retained exact source supplies one item for each admitted
-            // slot, in order; this slot is still unpublished and uninitialized.
-            let place = unsafe { pointer.add(filled) };
-            let status = region::Token::scope_pinned(pin::Pin::new(&mut filled), |token, count| {
-                make(
-                    array::Slot {
-                        pointer: place,
-                        filled: count.get_mut(),
-                        proof: token.proof(),
-                        value: marker::PhantomData,
-                    },
-                    item,
-                )
-                .map(|done| *token.borrow(&done.value))
-            });
-            if let Err(error) = status {
-                // SAFETY: this prefix includes every committed value, including the
-                // current one when the callback failed after insertion. The block still
-                // owns the backing as MaybeUninit<T> and releases it after make.
-                unsafe {
-                    ptr::drop_in_place(ptr::slice_from_raw_parts_mut(pointer.as_ptr(), filled));
-                }
-                return Err(error);
+/// # Safety
+/// The retained source yields at most this allocation's extent and exactly it on natural completion.
+/// Its count, order, ownership and item borrows stay valid through callbacks and cleanup.
+pub unsafe fn try_map<T, E: Extent, S, I: Iterator, F>(
+    mut block: array::Block<mem::MaybeUninit<T>, E, S>,
+    source: I,
+    mut make: impl for<'slot> FnMut(array::Slot<'slot, T>, I::Item) -> Result<array::Written<'slot>, F>,
+) -> Result<array::Block<T, E, S>, F> {
+    let pointer = ptr::NonNull::from(&mut *block).cast::<T>();
+    let mut filled = 0;
+    for item in source {
+        // SAFETY: the retained exact source supplies one item for each admitted
+        // slot, in order; this slot is still unpublished and uninitialized.
+        let place = unsafe { pointer.add(filled) };
+        // The HRTB requires this invariant slot's private completion;
+        // neither earlier nor nested calls can supply it.
+        if let Err(error) = make(
+            array::Slot {
+                pointer: place,
+                filled: &mut filled,
+                value: marker::PhantomData,
+            },
+            item,
+        ) {
+            // SAFETY: this prefix includes every committed value, including the
+            // current one when the callback failed after insertion. The block still
+            // owns the backing as MaybeUninit<T> and releases it after make.
+            unsafe {
+                ptr::drop_in_place(ptr::slice_from_raw_parts_mut(pointer.as_ptr(), filled));
             }
+            return Err(error);
         }
-        // SAFETY: terminal iteration completed exactly the retained extent.
-        Ok(unsafe { self.assume_init() })
     }
-}
-
-pub(in crate::alloc) fn into_vec<T>(block: array::Block<T, usize, ()>) -> Vec<T> {
-    let mut block = mem::ManuallyDrop::new(block);
-    let len = *block.extent();
-    let pointer = block.as_mut_ptr();
-    // SAFETY: the consumed block owns exactly len initialized T values in
-    // the standard allocator's matching array layout. Its unit state has
-    // no drop obligation; empty and zero-sized arrays retain aligned storage.
-    unsafe { Vec::from_raw_parts(pointer, len, len) }
+    // SAFETY: terminal iteration completed exactly the retained extent.
+    Ok(unsafe { block.assume_init() })
 }
 
 #[repr(C)]

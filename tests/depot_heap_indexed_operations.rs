@@ -3,7 +3,7 @@ pub mod common;
 use std::cell::Cell;
 
 use common::depot::{
-    heap::EntryExt as _,
+    heap::{into_vacant, occupied},
     model::{Lcg, drops::Tracked},
 };
 use o3::depot::{
@@ -31,34 +31,26 @@ fn keeps_callback_owners() {
     let mut heap = Min::try_new(Count::new(8)).expect("eight priorities allocate");
     let original = [10, 30, 20, 40, 50, 25, 21];
     for (index, value) in original.into_iter().enumerate() {
-        heap.try_entry(index)
-            .expect("bounded index")
-            .into_vacant()
+        into_vacant(heap.try_entry(index).expect("bounded index"))
             .expect("fresh slot")
             .set(Priority::new(value, &compare, &release));
     }
     calls.set(0);
-    heap.try_entry(7)
-        .expect("bounded index")
-        .into_vacant()
+    into_vacant(heap.try_entry(7).expect("bounded index"))
         .expect("spare slot")
         .set(Priority::new(0, &compare, &release));
     assert!(calls.get() > 0);
     assert_eq!((heap.len(), drops.get()), (8, 0));
 
     calls.set(0);
-    heap.try_entry(4)
-        .expect("bounded index")
-        .occupied()
+    occupied(heap.try_entry(4).expect("bounded index"))
         .expect("resident slot")
         .set(Priority::new(1, &compare, &release));
     assert!(calls.get() > 0);
     assert_eq!((drops.get(), released.get()), (1, calls.get()));
 
     calls.set(0);
-    heap.try_entry(4)
-        .expect("bounded index")
-        .occupied()
+    occupied(heap.try_entry(4).expect("bounded index"))
         .expect("unchanged resident")
         .set(Priority::new(1, &compare, &release_replacement));
     assert_eq!((calls.get(), drops.get(), released.get()), (1, 2, 1));
@@ -98,9 +90,7 @@ fn drops_reverse_prefix() {
     let release = [1, 2, 3].map(|digit| move || order.set(order.get() * 10 + digit));
     let mut heap = Min::try_new(Count::new(5)).expect("heap allocation");
     for (index, release) in release.iter().enumerate() {
-        heap.try_entry(index)
-            .expect("bounded index")
-            .into_vacant()
+        into_vacant(heap.try_entry(index).expect("bounded index"))
             .expect("fresh slot")
             .set(Priority::new(index as u32, &compare, release));
     }
@@ -137,32 +127,32 @@ fn matches_heap_model() {
     let mut model = [None; 64];
     assert_eq!(heap.get(0), None);
 
-    let entry = heap
-        .try_entry(0)
-        .expect("heap index must remain in its original domain")
-        .into_vacant()
-        .expect("fresh heap index zero must be vacant");
+    let entry = into_vacant(
+        heap.try_entry(0)
+            .expect("heap index must remain in its original domain"),
+    )
+    .expect("fresh heap index zero must be vacant");
     entry.set((9, 0));
     assert_eq!(heap.get(0), Some(&(9, 0)));
-    let entry = heap
-        .try_entry(1)
-        .expect("heap index must remain in its original domain")
-        .into_vacant()
-        .expect("fresh heap index one must be vacant");
+    let entry = into_vacant(
+        heap.try_entry(1)
+            .expect("heap index must remain in its original domain"),
+    )
+    .expect("fresh heap index one must be vacant");
     entry.set((4, 1));
     assert_eq!(heap.peek(), Some((1, &(4, 1))));
-    let entry = heap
-        .try_entry(0)
-        .expect("heap index must remain in its original domain")
-        .occupied()
-        .expect("inserted model index must be occupied");
+    let entry = occupied(
+        heap.try_entry(0)
+            .expect("heap index must remain in its original domain"),
+    )
+    .expect("inserted model index must be occupied");
     assert_eq!(entry.take(), (9, 0));
     assert_eq!(heap.get(0), None);
-    let entry = heap
-        .try_entry(1)
-        .expect("heap index must remain in its original domain")
-        .occupied()
-        .expect("inserted model index must be occupied");
+    let entry = occupied(
+        heap.try_entry(1)
+            .expect("heap index must remain in its original domain"),
+    )
+    .expect("inserted model index must be occupied");
     assert_eq!(entry.take(), (4, 1));
 
     let steps = if cfg!(miri) { 500 } else { 10_000 };
@@ -216,32 +206,32 @@ fn sets_and_pops() {
     let mut heap =
         (Min::<u64>::try_new(Count::new(3))).expect("heap storage must fit its declared domain");
 
-    let entry = heap
-        .try_entry(0)
-        .expect("heap index must remain in its original domain")
-        .into_vacant()
-        .expect("the first fresh heap index must be vacant");
+    let entry = into_vacant(
+        heap.try_entry(0)
+            .expect("heap index must remain in its original domain"),
+    )
+    .expect("the first fresh heap index must be vacant");
     entry.set(9);
-    let entry = heap
-        .try_entry(2)
-        .expect("heap index must remain in its original domain")
-        .into_vacant()
-        .expect("the last fresh heap index must be vacant");
+    let entry = into_vacant(
+        heap.try_entry(2)
+            .expect("heap index must remain in its original domain"),
+    )
+    .expect("the last fresh heap index must be vacant");
     entry.set(7);
     assert_eq!(heap.peek(), Some((2, &7)));
-    let entry = heap
-        .try_entry(2)
-        .expect("heap index must remain in its original domain")
-        .occupied()
-        .expect("the inserted last slot must be occupied");
+    let entry = occupied(
+        heap.try_entry(2)
+            .expect("heap index must remain in its original domain"),
+    )
+    .expect("the inserted last slot must be occupied");
     let (entry, old) = entry.replace(11);
     assert_eq!((entry.index(), *entry.priority(), old), (2, 11, 7));
     assert_eq!(heap.peek(), Some((0, &9)));
-    let entry = heap
-        .try_entry(0)
-        .expect("heap index must remain in its original domain")
-        .occupied()
-        .expect("the first heap index must be occupied");
+    let entry = occupied(
+        heap.try_entry(0)
+            .expect("heap index must remain in its original domain"),
+    )
+    .expect("the first heap index must be occupied");
     let (entry, old) = entry.replace(4);
     assert_eq!((entry.index(), *entry.priority(), old), (0, 4, 9));
     {
@@ -266,20 +256,20 @@ fn keeps_heap_ownership() {
             .expect("heap storage must fit its declared domain");
 
         for (index, value) in [(0, 2), (1, 0), (2, 1)] {
-            let entry = heap
-                .try_entry(index)
-                .expect("heap index must remain in its original domain")
-                .into_vacant()
-                .expect("each fresh ownership heap index must be vacant");
+            let entry = into_vacant(
+                heap.try_entry(index)
+                    .expect("heap index must remain in its original domain"),
+            )
+            .expect("each fresh ownership heap index must be vacant");
             entry.set(Tracked::try_new(value, &drops).expect("drop counter exists"));
         }
         assert_eq!(heap.peek().map(|(index, _)| index), Some(1));
 
-        let entry = heap
-            .try_entry(2)
-            .expect("heap index must remain in its original domain")
-            .occupied()
-            .expect("the inserted drop-count slot must be occupied");
+        let entry = occupied(
+            heap.try_entry(2)
+                .expect("heap index must remain in its original domain"),
+        )
+        .expect("the inserted drop-count slot must be occupied");
         entry.retire();
         assert_eq!(drops.each_ref().map(Cell::get), [0, 1, 0, 0].map(Some));
         assert_eq!(heap.peek().map(|(index, _)| index), Some(1));
@@ -287,11 +277,11 @@ fn keeps_heap_ownership() {
         heap.clear();
         assert!(heap.is_empty());
         assert_eq!(drops.each_ref().map(Cell::get), [1, 1, 1, 0].map(Some));
-        let entry = heap
-            .try_entry(0)
-            .expect("heap index must remain in its original domain")
-            .into_vacant()
-            .expect("clear must restore index zero vacancy");
+        let entry = into_vacant(
+            heap.try_entry(0)
+                .expect("heap index must remain in its original domain"),
+        )
+        .expect("clear must restore index zero vacancy");
         entry.set(Tracked::try_new(3, &drops).expect("drop counter exists"));
         assert_eq!(drops.each_ref().map(Cell::get), [1, 1, 1, 0].map(Some));
     }

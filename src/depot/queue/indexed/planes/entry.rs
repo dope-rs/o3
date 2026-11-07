@@ -1,7 +1,7 @@
 use std::{marker, num::NonZero, ops};
 
 use crate::depot::queue::{
-    indexed::planes::{self, Core, Hooks, Node, State, phase},
+    indexed::planes::{Core, Hooks, Node, State, phase},
     links,
 };
 
@@ -45,12 +45,6 @@ impl<'a, T, const PLANES: usize, P> Entry<'a, T, PLANES, P> {
         self.index.get()
     }
 
-    pub fn front<const PLANE: usize>(self) -> Option<Entry<'a, T, PLANES, phase::Front<PLANE>>> {
-        const { assert!(PLANE < PLANES) };
-        let index = self.set.queues[PLANE].first()?;
-        Some(Entry::new(self.set, index))
-    }
-
     /// Returns whether this entry is linked in `PLANE`.
     pub fn is_linked<const PLANE: usize>(&self) -> bool {
         const { assert!(PLANE < PLANES) };
@@ -92,7 +86,7 @@ impl<'storage, T, const PLANES: usize, const PLANE: usize>
         });
 
         crate::depot::raw::Insert::commit(unsafe {
-            crate::depot::raw::Insert::<u32, false>::from_vacant(queue, &hooks, vacant)
+            crate::depot::raw::Insert::<u32>::from_vacant(queue, &hooks, vacant)
         });
     }
 
@@ -110,62 +104,18 @@ impl<'storage, T, const PLANES: usize, const PLANE: usize>
 
 impl<'a, T, const N: usize, const P: usize> Entry<'a, T, N, phase::Linked<P>> {
     pub fn unlink(self) -> Entry<'a, T, N, phase::Vacant<P>> {
-        crate::depot::raw::Membership::<true>::transition(self)
+        let hooks = Hooks::<T, N, P>(&self.set.entries);
+        // SAFETY: this phase retains the complete exclusive set and its linked hook in P.
+        unsafe { self.set.queues[P].unlink(&hooks, self.index) }.idle();
+        self.into_phase()
     }
 }
 
 impl<'a, T, const N: usize, const P: usize> Entry<'a, T, N, phase::Vacant<P>> {
     pub fn link_back(self) -> Entry<'a, T, N, phase::Linked<P>> {
-        crate::depot::raw::Membership::<false>::transition(self)
-    }
-}
-
-// SAFETY: this native phase retains the complete exclusive set and its linked hook in P.
-unsafe impl<'a, T, const N: usize, const P: usize> crate::depot::raw::Membership<true>
-    for Entry<'a, T, N, phase::Linked<P>>
-{
-    type Output = Entry<'a, T, N, phase::Vacant<P>>;
-
-    fn parts(
-        &self,
-    ) -> (
-        &links::Chain<u32>,
-        impl crate::depot::raw::Hooks + '_,
-        links::Index,
-    ) {
-        (
-            &self.set.queues[P],
-            planes::Hooks::<T, N, P>(&self.set.entries),
-            self.index,
-        )
-    }
-
-    unsafe fn finish(self) -> Self::Output {
-        self.into_phase()
-    }
-}
-
-// SAFETY: this native phase retains the complete exclusive set and its detached hook in P.
-unsafe impl<'a, T, const N: usize, const P: usize> crate::depot::raw::Membership<false>
-    for Entry<'a, T, N, phase::Vacant<P>>
-{
-    type Output = Entry<'a, T, N, phase::Linked<P>>;
-
-    fn parts(
-        &self,
-    ) -> (
-        &links::Chain<u32>,
-        impl crate::depot::raw::Hooks + '_,
-        links::Index,
-    ) {
-        (
-            &self.set.queues[P],
-            planes::Hooks::<T, N, P>(&self.set.entries),
-            self.index,
-        )
-    }
-
-    unsafe fn finish(self) -> Self::Output {
+        let hooks = Hooks::<T, N, P>(&self.set.entries);
+        // SAFETY: this phase retains the complete exclusive set and its detached hook in P.
+        unsafe { self.set.queues[P].link_back(&hooks, self.index) };
         self.into_phase()
     }
 }

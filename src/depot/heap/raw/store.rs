@@ -17,29 +17,26 @@ pub(in crate::depot) unsafe trait Store: Sized {
     /// The auxiliary plane retained by the backing block's state.
     type Extra;
 
-    fn precedes(left: &Self::Key, right: &Self::Key) -> bool;
+    fn precedes(_: &Self::Key, _: &Self::Key) -> bool {
+        false
+    }
 
     /// The backing block retaining this store's disjoint planes.
     fn storage(&self) -> &alloc::raw::Block<Self::Storage, u32, Self::Extra>;
 
     /// The same backing block under this exclusive owner borrow.
+    /// Restore the initialized prefix and reverse-map bijection before releasing the loan.
     fn storage_mut(&mut self) -> &mut alloc::raw::Block<Self::Storage, u32, Self::Extra>;
 
-    /// The prefix length, backing entries and reverse map belong to this exact owner.
-    fn view(&self) -> View<'_, Self> {
-        let block = self.storage();
-        (&block.state, block.as_ref(), block.tail())
-    }
-
     fn values(&self) -> &[mem::MaybeUninit<heap::Stored<Self::Key, Self::Priority>>] {
-        let view = self.view();
+        let block = self.storage();
         // SAFETY: the retained prefix length is bounded by this backing allocation.
-        unsafe { view.1.get_unchecked(..*view.0 as usize) }
+        unsafe { block.as_ref().get_unchecked(..block.state as usize) }
     }
 
-    /// The initialized reverse map returned by `parts`, under the same owner loan.
+    /// The initialized reverse map under the same owner loan.
     fn positions(&self) -> &[Self::Position] {
-        self.view().2
+        self.storage().tail()
     }
 
     fn first(&self) -> Option<&heap::Stored<Self::Key, Self::Priority>> {
@@ -69,9 +66,13 @@ pub(in crate::depot) unsafe trait Store: Sized {
         })
     }
 
-    /// Restore the initialized prefix and reverse-map bijection before releasing the loan.
-    unsafe fn parts(&mut self) -> Edit<'_, Self> {
-        self.storage_mut().parts_mut()
+    /// # Safety
+    /// The key and destination (or NONE) belong to this map's exact owner.
+    /// Complete that heap mutation before releasing its exclusive planes.
+    unsafe fn reindex(map: &mut [Self::Position], key: Self::Key, position: Self::Position) {
+        use crate::depot::raw::Address as _;
+
+        unsafe { *map.get_unchecked_mut(key.index()) = position };
     }
 
     /// Runs required priority destruction before terminal deallocation.
@@ -90,28 +91,18 @@ pub(in crate::depot) unsafe trait Store: Sized {
     }
 
     fn clear(&mut self) {
-        let (len, entries, map) = unsafe { self.parts() };
+        use crate::depot::raw::Link as _;
+
+        let (len, entries, map) = self.storage_mut().parts_mut();
         while *len != 0 {
             *len -= 1;
             let entry = unsafe { entries.get_unchecked_mut(*len as usize).assume_init_mut() };
             // SAFETY: this exclusive owner retains the initialized entry and its
             // exact reverse map until retirement precedes native destruction.
             unsafe {
-                heap::raw::Reindex::<Self>::new(map).removed(entry);
+                Self::reindex(map, entry.identity, Self::Position::NONE);
                 ptr::drop_in_place(entry);
             }
         }
     }
 }
-
-/// Shared and exclusive views retain the same heap prefix and reverse-map bijection.
-type View<'a, S> = (
-    &'a u32,
-    &'a [mem::MaybeUninit<heap::Stored<<S as Store>::Key, <S as Store>::Priority>>],
-    &'a [<S as Store>::Position],
-);
-type Edit<'a, S> = (
-    &'a mut u32,
-    &'a mut [mem::MaybeUninit<heap::Stored<<S as Store>::Key, <S as Store>::Priority>>],
-    &'a mut [<S as Store>::Position],
-);

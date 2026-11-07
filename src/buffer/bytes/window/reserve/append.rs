@@ -13,17 +13,15 @@ impl<'a, 'source, const N: usize, const S: usize> Append<'a, 'source, N, S> {
         slices: [&'source [u8]; S],
         limit: usize,
     ) -> Result<Self, Error> {
-        let core = &ring.ring;
-        let capacity = core.capacity() - if ring.closed { 0 } else { N };
-        Error::checked_end(core.len(), capacity.min(limit), &slices)?;
+        let capacity = ring.buf.len() - if ring.closed { 0 } else { N };
+        Error::checked_end(ring.len(), capacity.min(limit), &slices)?;
         Ok(Self { ring, slices })
     }
 
     pub fn commit(self) {
         let Self { ring, slices } = self;
-        let core = &mut ring.ring;
         for source in slices {
-            core.append(source);
+            ring.append(source);
         }
     }
 }

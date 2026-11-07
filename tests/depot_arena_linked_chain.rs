@@ -3,7 +3,7 @@ pub mod common;
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
 
-use std::{cell::Cell, num::NonZero, ops, ptr};
+use std::{cell::Cell, num::NonZero, ptr};
 
 use common::{
     Counted,
@@ -172,22 +172,16 @@ fn interleaves_insertions() {
         .expect("layout")
         .try_allocate()
         .expect("outer allocation");
-    let mut init = memory.start(chain::Node::new(7));
-    let block = loop {
-        match init {
-            ops::ControlFlow::Break(block) => break block,
-            ops::ControlFlow::Continue(entry) => {
-                let value = *entry.header().header();
-                let memory = tail::Plan::try_new(1)
-                    .expect("layout")
-                    .try_allocate()
-                    .expect("inner allocation");
-                owner.push(memory.repeat(chain::Node::new(value + 1), value + 1));
-                assert_eq!(first.as_slice(), [3]);
-                init = entry.insert(value);
-            }
-        }
-    };
+    let block = memory.fill(chain::Node::new(7), |header, _| {
+        let value = *header.header();
+        let memory = tail::Plan::try_new(1)
+            .expect("layout")
+            .try_allocate()
+            .expect("inner allocation");
+        owner.push(memory.repeat(chain::Node::new(value + 1), value + 1));
+        assert_eq!(first.as_slice(), [3]);
+        value
+    });
     let outer = owner.push(block);
     assert_eq!(outer.as_slice(), [7, 7]);
     assert!(owner.iter().map(|link| *link.header()).eq([7, 8, 8, 3]));

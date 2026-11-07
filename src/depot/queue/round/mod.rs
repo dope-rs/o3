@@ -3,7 +3,7 @@
 use std::{marker, mem};
 
 pub use lanes::{Lanes, group::Group, lane::Lane};
-pub use location::{Location, conflict::Conflict, error::Error, idle::Idle, linked::Linked};
+pub use location::{Location, idle::Idle, linked::Linked};
 pub use slot::Slot;
 pub use snapshot::{Snapshot, front::Front, place::Place, turn::Turn};
 
@@ -33,12 +33,6 @@ pub enum Bounds {
 pub(in crate::depot::queue::round) struct Position {
     pub lane: links::Index,
     pub index: links::Index,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub enum Insertion {
-    Inserted,
-    Present,
 }
 
 mod lanes;
@@ -99,14 +93,10 @@ impl<T, Tag, const MAX: u32, B> Set<T, Tag, MAX, B> {
     /// Borrows each usable resident once; other entries cannot change its membership.
     pub fn entries(&mut self) -> impl Iterator<Item = set::Entry<'_, T, Tag, MAX, B>> {
         let order = &self.order;
-        slab::Slots::new(&mut self.values)
-            .entries()
-            .map(move |entry| match entry {
-                slab::Entry::Vacant(entry) => set::Entry::Vacant(set::Vacant { entry, order }),
-                slab::Entry::Occupied(entry) => {
-                    set::Entry::Occupied(set::Occupied::new(entry, order))
-                }
-            })
+        self.values.entries().map(move |entry| match entry {
+            slab::Entry::Vacant(entry) => set::Entry::Vacant(set::Vacant { entry, order }),
+            slab::Entry::Occupied(entry) => set::Entry::Occupied(set::Occupied::new(entry, order)),
+        })
     }
 
     /// Acquires the scheduled resident directly from this owner's live head.
@@ -134,7 +124,7 @@ impl<'h, T, Tag, const MAX: u32> Set<T, Tag, MAX, capacity::Domain<'h>> {
     }
 
     pub fn contains(&self, key: capacity::Key<'h, key::Handle<Tag, MAX>>) -> bool {
-        slab::Slots::contains(unsafe { crate::depot::raw::Proof::new((&self.values, key)) })
+        slab::Store::contains(unsafe { crate::depot::raw::Proof::new((&self.values, key)) })
     }
 
     pub fn try_entry(
@@ -154,6 +144,7 @@ const _: () = {
         mem::size_of::<Set<()>>()
             == mem::size_of::<slab::Store<()>>() + 2 * mem::size_of::<usize>()
     );
+    assert!(mem::size_of::<Set<u64>>() == 6 * mem::size_of::<usize>());
     assert!(mem::size_of::<Option<Set<()>>>() == mem::size_of::<Set<()>>());
 };
 

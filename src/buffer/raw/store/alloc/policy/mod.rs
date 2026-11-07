@@ -1,42 +1,31 @@
 use std::{convert, num};
 
-pub(in crate::buffer) use debit::{Debit, Token};
+pub(in crate::buffer) use debit::Debit;
 
 mod debit;
 
-pub trait Policy: Sized {
-    type Seed: Copy;
+pub trait Policy: Copy {
     type Failure;
-    type Charge: crate::buffer::raw::Token<Self>;
 
-    fn available(seed: Self::Seed) -> usize;
+    fn available(self) -> usize;
 
-    fn try_acquire(debit: crate::buffer::raw::Debit<Self>) -> Result<Self::Charge, Self::Failure>;
+    fn try_acquire(self, amount: num::NonZero<u32>) -> Result<(), Self::Failure>;
 
-    fn seed(&self) -> Self::Seed;
-
-    fn grow(growth: crate::buffer::raw::Growth<Self>) -> (Self, num::NonZero<u32>);
+    /// # Safety
+    /// Transfer this policy's exact acquired credit from its owning caller.
+    unsafe fn refund(self, amount: num::NonZero<u32>);
 }
 
 impl Policy for () {
-    type Seed = ();
     type Failure = convert::Infallible;
-    type Charge = crate::buffer::raw::Debit<Self>;
 
-    fn available((): Self::Seed) -> usize {
+    fn available(self) -> usize {
         usize::MAX
     }
 
-    fn try_acquire(debit: crate::buffer::raw::Debit<Self>) -> Result<Self::Charge, Self::Failure> {
-        Ok(debit)
+    fn try_acquire(self, _: num::NonZero<u32>) -> Result<(), Self::Failure> {
+        Ok(())
     }
 
-    fn seed(&self) {
-        *self
-    }
-
-    fn grow(growth: crate::buffer::raw::Growth<Self>) -> (Self, num::NonZero<u32>) {
-        let ((), (), capacity) = growth.into_parts();
-        ((), capacity)
-    }
+    unsafe fn refund(self, _: num::NonZero<u32>) {}
 }

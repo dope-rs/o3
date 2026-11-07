@@ -1,9 +1,6 @@
-use std::{mem, ops};
+use std::mem;
 
-use crate::{
-    buffer,
-    buffer::{is_within, segments::queue},
-};
+use crate::{buffer, buffer::segments::queue};
 
 pub struct Cursor<'a, T> {
     pub(in crate::buffer::segments::queue) queue: &'a queue::Fifo<T>,
@@ -37,30 +34,6 @@ impl<'a, T: buffer::raw::Segment> Cursor<'a, T> {
     pub fn seek(&mut self, offset: usize) -> Result<(), queue::Bounds> {
         *self = queue::Position::try_new(self, offset, 0)?.locate();
         Ok(())
-    }
-
-    #[must_use]
-    pub fn contiguous(&mut self, range: ops::Range<usize>) -> Option<&'a [u8]> {
-        if range.start < self.start as usize || !is_within(&range, self.len()) {
-            return None;
-        }
-        if range.is_empty() {
-            *self = queue::Position {
-                location: self,
-                start: range.start as u32,
-                end: range.end as u32,
-            }
-            .locate();
-            return Some(&[]);
-        }
-        // SAFETY: admission proves start is at least this cursor's floor;
-        // the nonempty range places it strictly below this queue's byte length.
-        let (location, chunk) = unsafe { self.locate(range.start as u32) };
-        let start = range.start - location.start as usize;
-        let end = range.end - location.start as usize;
-        let bytes = chunk.bytes().get(start..end)?;
-        *self = location;
-        Some(bytes)
     }
 
     /// # Safety
@@ -118,7 +91,12 @@ impl<'p, 'a, T> Position<'p, 'a, T> {
         let floor = location.start as usize;
         let ceiling = location.queue.len();
         if offset < floor || offset > ceiling || len > ceiling - offset {
-            return Err(queue::Bounds::new(offset, len, floor, ceiling));
+            return Err(queue::Bounds {
+                offset,
+                amount: len,
+                floor,
+                ceiling,
+            });
         }
         Ok(Self {
             location,

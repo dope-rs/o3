@@ -1,10 +1,10 @@
 //! Exact-capacity local ring queues.
 
-use std::{cell, iter, marker, mem, num::NonZero, slice};
+use std::{iter, mem, num::NonZero, slice};
 
 pub use full::Full;
 pub use lease::Lease;
-pub use pool::Pool;
+pub use pool::{Cell, Pool};
 
 use crate::{
     alloc::array,
@@ -15,7 +15,7 @@ mod full;
 pub mod inline;
 
 mod lease;
-mod pool;
+pub(in crate::depot) mod pool;
 mod state;
 pub use state::State;
 
@@ -35,13 +35,6 @@ pub struct Front<'a, S: ?Sized> {
 #[must_use]
 pub struct Vacant<'a, S: ?Sized> {
     pub(in crate::depot::queue::ring) source: &'a mut S,
-}
-
-/// A thread-confined exact FIFO whose operations use a shared borrow.
-pub struct Cell<T> {
-    pub(in crate::depot) block: array::Block<mem::MaybeUninit<T>, capacity::Count>,
-    pub(in crate::depot) state: cell::Cell<ring::State<u32>>,
-    invariant: marker::PhantomData<cell::Cell<T>>,
 }
 
 impl<T> Fifo<T> {
@@ -68,10 +61,9 @@ impl<T> Fifo<T> {
     }
 
     pub fn try_vacant(&mut self) -> Result<Vacant<'_, Fifo<T>>, ring::Full> {
-        let used = self.state.len();
-        let capacity = self.capacity();
-        if used == capacity {
-            return Err(ring::Full { used, capacity });
+        let capacity = *self.block.extent();
+        if self.state.len() == capacity.get() {
+            return Err(ring::Full { capacity });
         }
         Ok(ring::Vacant { source: self })
     }
@@ -88,10 +80,6 @@ impl<T> Fifo<T> {
         Some(self.front_entry()?.remove())
     }
 
-    pub fn front(&self) -> Option<&T> {
-        crate::depot::raw::RingRead::front(self)
-    }
-
     /// Borrows the current front exclusively so inspection and removal refer
     /// to the same entry without a second occupancy check.
     pub fn front_entry(&mut self) -> Option<Front<'_, Fifo<T>>> {
@@ -101,22 +89,11 @@ impl<T> Fifo<T> {
         Some(ring::Front { source: self })
     }
 
-    pub fn get(&self, index: usize) -> Option<&T> {
-        crate::depot::raw::RingRead::get(self, index)
-    }
-
-    pub fn as_slices(&self) -> (&[T], &[T]) {
-        crate::depot::raw::RingRead::as_slices(self)
-    }
-
     pub fn clear(&mut self) {
-        if !mem::needs_drop::<T>() && !self.state.is_empty() {
-            // SAFETY: this nonempty queue retains a valid head, length, and capacity.
-            unsafe { self.state.clear(self.capacity()) };
-            return;
-        }
-        while let Some(front) = self.front_entry() {
-            front.discard();
+        if !self.state.is_empty() {
+            // SAFETY: the exclusive owner destroys both initialized runs once.
+            unsafe { crate::depot::raw::drop_ring(self) };
+            self.state = ring::State::EMPTY;
         }
     }
 
@@ -214,42 +191,7 @@ impl<'a, S: crate::depot::raw::RingEdit + ?Sized> Vacant<'a, S> {
     }
 }
 
-impl<T> Cell<T> {
-    /// Allocates exactly `capacity` entries.
-    pub fn try_new(capacity: capacity::Count) -> Result<Self, crate::alloc::Error> {
-        Ok(Self {
-            block: array::Block::try_new(capacity, ())?,
-            state: cell::Cell::new(ring::State::EMPTY),
-            invariant: marker::PhantomData,
-        })
-    }
-
-    pub fn pop_front(&self) -> Option<T> {
-        crate::depot::raw::RingCell::take_front(self)
-    }
-
-    /// Drops every resident value in place.
-    pub fn clear(&self) {
-        crate::depot::raw::RingDestroy::clear(self);
-    }
-
-    pub const fn capacity(&self) -> usize {
-        self.block.extent().get()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.state.get().is_empty()
-    }
-}
-
 impl<T> Drop for Fifo<T> {
-    fn drop(&mut self) {
-        // SAFETY: Drop is the terminal exclusive owner of both resident runs.
-        unsafe { crate::depot::raw::drop_ring(self) };
-    }
-}
-
-impl<T> Drop for Cell<T> {
     fn drop(&mut self) {
         // SAFETY: Drop is the terminal exclusive owner of both resident runs.
         unsafe { crate::depot::raw::drop_ring(self) };

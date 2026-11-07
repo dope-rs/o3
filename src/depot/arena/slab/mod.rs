@@ -2,7 +2,6 @@ use std::{convert, iter, marker, pin::Pin};
 
 pub use cell::Cell;
 use cycle::Policy;
-pub use slots::Slots;
 use storage::Plane as _;
 
 use crate::depot::{
@@ -23,8 +22,8 @@ mod cell;
 mod entry;
 mod slots;
 pub use entry::{
-    anchor::Anchor, anchored::Anchored, borrowed::Borrowed, occupied::Occupied, rest::Rest,
-    restore::Withdrawn, staged::Staged, vacant::Vacant,
+    anchor::Anchor, anchored::Anchored, borrowed::Borrowed, occupied::Occupied, restore::Withdrawn,
+    staged::Staged, vacant::Vacant,
 };
 
 /// One issued identity retaining its reserved slot until installation or retirement.
@@ -64,19 +63,19 @@ pub struct Pinned<
     const RECYCLE: bool = false,
     const PARTITIONS: usize = 1,
     S = storage::Heap,
-    I = storage::Eager,
 > where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
-    pub(in crate::depot) core: entries::Core<T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, S, I>,
+    pub(in crate::depot) core: entries::Core<T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, S>,
     _pin: marker::PhantomPinned,
     tag: marker::PhantomData<fn() -> Tag>,
 }
 
-impl<T, Tag, const MAX: u32, const PARTITIONS: usize, I: storage::Init>
-    Pinned<T, Tag, MAX, false, PARTITIONS, storage::Heap, I>
+impl<T, Tag, const MAX: u32, const PARTITIONS: usize, S> Pinned<T, Tag, MAX, false, PARTITIONS, S>
+where
+    S: storage::Storage,
+    S::Plane<T, MAX, entries::Exclusive>: storage::HeapPlane<T, MAX, entries::Exclusive>,
 {
     /// Allocates one pinned heap extent under its slot initialization policy.
     pub fn try_new(cap: capacity::Count) -> Result<Self, crate::alloc::Error> {
@@ -88,8 +87,8 @@ impl<T, Tag, const MAX: u32, const PARTITIONS: usize, I: storage::Init>
     }
 }
 
-impl<T, Tag, const MAX: u32, const PARTITIONS: usize, const N: usize, I: storage::Init> Default
-    for Pinned<T, Tag, MAX, false, PARTITIONS, storage::Inline<N>, I>
+impl<T, Tag, const MAX: u32, const PARTITIONS: usize, const N: usize> Default
+    for Pinned<T, Tag, MAX, false, PARTITIONS, storage::Inline<N>>
 {
     /// Builds the complete inline slot plane without allocating.
     fn default() -> Self {
@@ -101,12 +100,11 @@ impl<T, Tag, const MAX: u32, const PARTITIONS: usize, const N: usize, I: storage
     }
 }
 
-impl<T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S, I>
-    Pinned<T, Tag, MAX, RECYCLE, PARTITIONS, S, I>
+impl<T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S>
+    Pinned<T, Tag, MAX, RECYCLE, PARTITIONS, S>
 where
     cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    I: storage::Init,
 {
     pub fn capacity(&self) -> usize {
         self.core.slots.capacity()
@@ -118,7 +116,7 @@ where
 
     pub fn vacant(
         self: Pin<&mut Self>,
-    ) -> Option<slab::Anchor<'_, T, Tag, MAX, RECYCLE, PARTITIONS, S, I>> {
+    ) -> Option<slab::Anchor<'_, T, Tag, MAX, RECYCLE, PARTITIONS, S>> {
         let store = self.into_ref().get_ref();
         Some(slab::Anchor {
             entry: store.core.free()?,
@@ -130,32 +128,16 @@ where
         Some(entries::Occupied::key(&self.core, parts.index(), parts.generation())?.read())
     }
 
-    pub fn parts_mut(self: Pin<&mut Self>, parts: key::Parts<MAX>) -> Option<Pin<&mut T>> {
-        Some(self.anchor(parts)?.into_value())
-    }
-
     pub fn anchor(
         self: Pin<&mut Self>,
         parts: key::Parts<MAX>,
-    ) -> Option<slab::Anchored<'_, T, Tag, MAX, RECYCLE, PARTITIONS, S, I>> {
+    ) -> Option<slab::Anchored<'_, T, Tag, MAX, RECYCLE, PARTITIONS, S>> {
         let store = self.into_ref().get_ref();
         let entry = entries::Occupied::key(&store.core, parts.index(), parts.generation())?;
         Some(slab::Anchored {
             entry: entry.take(),
             tag: marker::PhantomData,
         })
-    }
-
-    /// Passes the pinned value to `f`, then drops it in place.
-    pub fn remove_with<R>(
-        self: Pin<&mut Self>,
-        parts: key::Parts<MAX>,
-        f: impl FnOnce(u32, Pin<&mut T>) -> R,
-    ) -> Option<R> {
-        let mut entry = self.anchor(parts)?;
-        let result = f(parts.index(), entry.value());
-        entry.discard();
-        Some(result)
     }
 }
 
@@ -194,7 +176,7 @@ where
         let Some(pending) = self.core.free() else {
             return Err(value);
         };
-        Ok(slab::Vacant::<_, Tag>::from_pending(pending).insert(value))
+        Ok(slab::Vacant::<_, Tag>::new(pending).insert(value))
     }
 
     /// Reserves a slot or preserves the exact temporary or permanent refusal.
@@ -204,7 +186,7 @@ where
         slab::Vacant<entries::Pending<'_, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>, Tag>,
         Vacancy,
     > {
-        Ok(slab::Vacant::from_pending(
+        Ok(slab::Vacant::new(
             self.core.free().ok_or_else(|| self.core.refusal())?,
         ))
     }
@@ -221,7 +203,7 @@ where
         >,
     > {
         let core = &self.core;
-        iter::from_fn(move || core.free().map(slab::Vacant::from_pending))
+        iter::from_fn(move || core.free().map(slab::Vacant::new))
     }
 }
 
@@ -278,6 +260,21 @@ where
 
 const _: () = {
     assert!(size_of::<slab::Occupied<entries::Busy<'static, u64>>>() == 2 * size_of::<usize>());
+    assert!(
+        size_of::<Option<slab::Occupied<entries::Busy<'static, u64>>>>() == 2 * size_of::<usize>()
+    );
+    assert!(
+        size_of::<Option<slab::Vacant<entries::Pending<'static, u64>>>>() == 2 * size_of::<usize>()
+    );
+    assert!(
+        size_of::<
+            Option<
+                slab::Staged<
+                    crate::mem::Lease<entries::Busy<'static, u64>, crate::mem::lease::Open>,
+                >,
+            >,
+        >() == 2 * size_of::<usize>()
+    );
     assert!(
         size_of::<slab::Occupied<entries::Busy<'static, u64>, (), false>>()
             == size_of::<slab::Occupied<entries::Busy<'static, u64>>>()
@@ -351,21 +348,14 @@ pub enum State<B, R> {
     Retired(R),
 }
 
-/// The exact non-live-borrow refusal of one admitted slot.
+/// The exact refusal of one admitted slot.
 #[derive(Debug)]
-pub(in crate::depot::arena::slab) enum Refusal<R> {
+pub(in crate::depot::arena::slab) enum Refusal<B, R> {
     Free,
     Reserved,
     Retired(R),
     Stale,
-}
-
-/// The classification of one admitted slot against a retained generation.
-#[derive(Debug)]
-pub(in crate::depot::arena::slab) enum Admitted<B, R> {
-    Exact,
-    Refused(Refusal<R>),
-    Borrowed(B),
+    Busy(B),
 }
 
 impl<B, R> State<B, R> {
@@ -374,14 +364,14 @@ impl<B, R> State<B, R> {
         self,
         actual: key::Generation<MAX>,
         expected: key::Generation<MAX>,
-    ) -> Admitted<B, R> {
+    ) -> Result<(), Refusal<B, R>> {
         match self {
-            Self::Free => Admitted::Refused(Refusal::Free),
-            Self::Reserved => Admitted::Refused(Refusal::Reserved),
-            Self::Retired(retired) => Admitted::Refused(Refusal::Retired(retired)),
-            Self::Busy(borrow) => Admitted::Borrowed(borrow),
-            Self::Occupied if actual != expected => Admitted::Refused(Refusal::Stale),
-            Self::Occupied => Admitted::Exact,
+            Self::Free => Err(Refusal::Free),
+            Self::Reserved => Err(Refusal::Reserved),
+            Self::Retired(retired) => Err(Refusal::Retired(retired)),
+            Self::Busy(borrow) => Err(Refusal::Busy(borrow)),
+            Self::Occupied if actual != expected => Err(Refusal::Stale),
+            Self::Occupied => Ok(()),
         }
     }
 }

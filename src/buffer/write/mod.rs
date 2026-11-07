@@ -6,7 +6,6 @@ use std::{
 };
 
 pub use array::Array;
-pub(in crate::buffer) use cursor::Cursor;
 pub use reserved::Reserved;
 pub use slice::Slice;
 pub use staged::Staged;
@@ -35,25 +34,20 @@ pub trait Sink {
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error>;
 }
 
-/// Checked transfers of a stable contiguous owner, fixed by the blanket implementation.
-pub trait SourceExt: buffer::raw::Source + Sized {
-    /// Copies exactly `source` into an empty owner, returning that owner on either outcome.
-    /// Rejects its existing prefix before writing, or propagates the exact write failure.
-    fn try_copy(mut self, source: &[u8]) -> Result<Self, (Self, CopyError<Self::Error>)>
-    where
-        Self: Sink,
-    {
-        if let Some(len) = NonZero::new(self.as_ref().len()) {
-            return Err((self, CopyError::Prefix(len)));
-        }
-        if let Err(error) = self.write_slice(source) {
-            return Err((self, CopyError::Write(error)));
-        }
-        Ok(self)
+/// Copies exactly `source` into an empty owner, returning that owner on either outcome.
+/// Rejects its existing prefix before writing, or propagates the exact write failure.
+pub fn try_copy<S: buffer::raw::Source + Sink>(
+    mut target: S,
+    source: &[u8],
+) -> Result<S, (S, CopyError<S::Error>)> {
+    if let Some(len) = NonZero::new(target.as_ref().len()) {
+        return Err((target, CopyError::Prefix(len)));
     }
+    if let Err(error) = target.write_slice(source) {
+        return Err((target, CopyError::Write(error)));
+    }
+    Ok(target)
 }
-
-impl<T: buffer::raw::Source> SourceExt for T {}
 
 /// Failure to copy an exact source into an empty destination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,39 +78,11 @@ impl Sink for Vec<u8> {
 
 mod array;
 pub mod consume;
-mod cursor;
 pub mod edit;
 mod reserved;
 mod slice;
 pub mod spans;
 mod staged;
-
-/// Rejected complete write, before either source or destination advances.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Error {
-    Capacity(consume::Error),
-    Overflow(Overflow),
-}
-
-const _: () = assert!(size_of::<Error>() == 3 * size_of::<usize>());
-
-/// Exact operands of an unrepresentable combined write length.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Overflow {
-    pub length: usize,
-    pub added: NonZero<usize>,
-}
-
-impl Overflow {
-    fn add(length: usize, added: usize) -> Result<usize, Self> {
-        length.checked_add(added).ok_or_else(|| Self {
-            length,
-            added: NonZero::<usize>::MIN.saturating_add(added - 1),
-        })
-    }
-}
-
-const _: () = assert!(size_of::<Overflow>() == 2 * size_of::<usize>());
 
 /// Appends to one vector without exposing or removing its existing prefix.
 #[derive(Debug)]
@@ -304,7 +270,7 @@ impl<'a> Spare<'a> {
     }
 
     pub fn remaining(&self) -> usize {
-        buffer::raw::Space::remaining(self)
+        buffer::raw::Exclusive::remaining(self)
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
@@ -319,35 +285,20 @@ impl<'a> Spare<'a> {
     pub fn write(&mut self, src: &[u8]) -> usize {
         let (append, _) = Staging::prefix(self, src);
         let copied = append.len();
-        buffer::raw::Copy::copy(append);
+        append.copy();
         copied
     }
 
     /// Publishes the largest fitting prefix and leaves the original source's tail.
     pub fn drain(mut self, source: &mut &[u8]) {
         let (append, tail) = Staging::prefix(&mut self, source);
-        buffer::raw::Copy::copy(append);
+        append.copy();
         self.commit();
         *source = tail;
     }
 
-    pub fn bounded(&mut self) -> spans::Writer<'_, 'a, false> {
-        spans::Writer {
-            cursor: Cursor::new(self),
-        }
-    }
-
-    pub fn exact(&mut self) -> spans::Writer<'_, 'a, true> {
-        spans::Writer {
-            cursor: Cursor::new(self),
-        }
-    }
-
-    pub fn try_exact<'writer>(
-        &'writer mut self,
-        len: usize,
-    ) -> Result<spans::Writer<'writer, 'a, true>, consume::Error> {
-        Cursor::try_new(self, len).map(|cursor| spans::Writer { cursor })
+    pub fn bounded(&mut self) -> spans::Writer<'_, 'a> {
+        spans::Writer::new(self)
     }
 
     /// Admits the exact source before dependent work, then copies only on success.
@@ -358,7 +309,7 @@ impl<'a> Spare<'a> {
     ) -> Result<T, E> {
         let append = Staging::try_new(self, [bytes])?;
         let value = ready()?;
-        buffer::raw::Copy::copy(append);
+        append.copy();
         Ok(value)
     }
 
@@ -379,18 +330,12 @@ impl write::Sink for Spare<'_> {
     type Error = consume::Error;
 
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
-        Staging::try_new(self, slices).map(buffer::raw::Copy::copy)
+        Staging::try_new(self, slices).map(Staging::copy)
     }
 }
 
 const _: () = assert!(size_of::<Spare<'static>>() == size_of::<usize>() * 3);
 const _: () = assert!(size_of::<Option<Spare<'static>>>() == size_of::<Spare<'static>>());
-
-impl buffer::raw::Space for Spare<'_> {
-    fn remaining(&self) -> usize {
-        (self.capacity - self.len) as usize
-    }
-}
 
 // SAFETY: Spare retains its original suffix and counts only initialized bytes.
 unsafe impl buffer::raw::Prefix for Spare<'_> {

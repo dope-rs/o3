@@ -9,9 +9,3 @@ pub struct Overflow<T = usize> {
     pub(in crate::buffer::segments) current: T,
     pub(in crate::buffer::segments) added: T,
 }
-
-impl<T> Overflow<T> {
-    pub(in crate::buffer::segments) const fn new(current: T, added: T) -> Self {
-        Self { current, added }
-    }
-}

@@ -15,16 +15,13 @@ use common::{
         },
     },
 };
-use o3::{
-    alloc,
-    buffer::{
-        self, Complete as _,
-        hold::{self, scope},
-        resident,
-        storage::{
-            self,
-            provided::{self, Frozen as _, Mutable as _, account},
-        },
+use o3::buffer::{
+    self, Complete as _,
+    hold::{self, scope},
+    resident,
+    storage::{
+        self,
+        provided::{self, Frozen as _, Mutable as _, account},
     },
 };
 
@@ -99,7 +96,6 @@ fn projected_prefix_keeps_provided_owner() {
         });
         assert!(empty.as_ref().is_empty());
         assert!(!arena.has_returned());
-        drop(empty);
         assert_eq!(unique.as_slice(), b"ctly");
         drop(unique);
         assert!(arena.has_returned());
@@ -163,9 +159,8 @@ fn chunks_preserve_owner() {
 
 #[test]
 fn keeps_foreign_charge() {
-    let mut arena =
-        provided::Arena::<_, _>::try_with(NonZero::<u32>::MIN, || Ok::<(), alloc::Error>(()))
-            .expect("one-slot arena must allocate");
+    let mut arena = provided::Arena::<_, _>::try_allocate(NonZero::<u32>::MIN)
+        .expect("one-slot arena must allocate")(());
     let mut domains = (resident::Domain::new(), resident::Domain::new());
     arena.scope(Pin::new(&mut domains), |token, arena, domains| {
         let (first, second) = domains.get_mut();
@@ -286,6 +281,39 @@ fn backing_keeps_charge() {
 }
 
 #[test]
+fn copies_bounded_retention() {
+    use buffer::{Residency as _, bytes::bounded};
+
+    let mut arena =
+        provided::Arena::<_, _>::try_allocate(NonZero::<u32>::MIN).expect("one-slot arena")(());
+    let mut domain = resident::Domain::new();
+    arena.scope(Pin::new(&mut domain), |token, arena, domain| {
+        let budget = domain
+            .get_mut()
+            .try_budget(7, token.proof())
+            .expect("copy budget");
+        let unique = arena
+            .vacant()
+            .expect("initial vacancy")
+            .try_insert(*b"exactly", 7, <[u8; 7]>::as_mut_slice)
+            .expect("provided bytes");
+        let source = bounded::Value::try_new(unique.into_shared())
+            .map_err(|rejected| rejected.into_parts().1)
+            .expect("bounded registration");
+        let bound = scope::Input::new(&source, &budget)
+            .defer_all()
+            .bind(std::hint::black_box(hold::Policy::compact()));
+        let held = bound
+            .try_retain()
+            .map_err(|(_, error)| error)
+            .expect("bounded copy");
+        assert_eq!(held.as_slice(), source.as_ref());
+        assert_ne!(held.as_slice().as_ptr(), source.as_ref().as_ptr());
+        assert_eq!(held.resident(), 7);
+    });
+}
+
+#[test]
 fn keeps_registration() {
     use buffer::{Read as _, Residency as _, bytes::bounded, write::consume::Consume as _};
     Item::try_scope(|unique, budget, arena| {
@@ -301,7 +329,8 @@ fn keeps_registration() {
             let held = <bounded::Value<storage::Shared<provided::Owner<'_>>> as hold::raw::Retain<
                     '_,
                 >>::try_retain(&source.view(), &budget)
-                .expect("registered retention");
+                .expect("registered retention")
+                .into_shared();
             assert_eq!(held.as_slice().as_ptr(), pointer);
             assert_eq!(held.resident(), 7);
             let clone = held.try_clone().expect("registered edge");
@@ -365,12 +394,13 @@ fn rejects_without_refund() {
             let held = <bounded::Value<storage::Shared<provided::Owner<'_>>> as hold::raw::Retain<
                     '_,
                 >>::try_retain(&source.view(), &budget)
-                .expect("registered retention");
+                .expect("registered retention")
+                .into_shared();
             let pointer = held.as_slice().as_ptr();
             (held, pointer)
         };
         let result = held.project(7..8);
-        let rejected = result.err().expect("range exceeds registration");
+        let rejected = result.expect_err("range exceeds registration");
         let (held, error) = rejected.into_parts();
         assert_eq!((error.start(), error.end(), error.len()), (7, 8, 7));
         assert_eq!(held.as_slice(), b"exactly");

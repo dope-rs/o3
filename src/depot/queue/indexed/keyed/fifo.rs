@@ -54,6 +54,15 @@ impl<K: crate::depot::raw::Key, P> Fifo<K, P> {
         // SAFETY: this retained source owns the initialized endpoint and its exact plane.
         Some(unsafe { crate::depot::raw::Proof::new((source, index)) })
     }
+
+    /// Retains the last initialized endpoint with its original FIFO source.
+    pub fn last<S: crate::depot::raw::KeySource<P, Key = K>>(
+        source: S,
+    ) -> Option<crate::depot::raw::Proof<(S, links::Index), Initialized<P>>> {
+        let index = source.fifo().raw.last()?;
+        // SAFETY: this retained source owns the initialized endpoint and its exact plane.
+        Some(unsafe { crate::depot::raw::Proof::new((source, index)) })
+    }
 }
 
 impl<K: crate::depot::raw::Key, P> Fifo<K, P> {

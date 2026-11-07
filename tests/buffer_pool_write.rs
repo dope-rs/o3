@@ -3,7 +3,7 @@ pub mod common;
 use common::alloc::system::{Activity, Tracker};
 use o3::buffer::{
     self, bytes, pool,
-    write::{self, Sink, SpareExt as _, consume::Consume},
+    write::{self, Sink, consume::Consume},
 };
 
 #[global_allocator]
@@ -30,42 +30,6 @@ fn freeze_keeps_tail() {
         assert_eq!(pool.available(), 0);
     }
     assert_eq!(pool.available(), 1);
-}
-
-#[test]
-fn exact_requires_full() {
-    let created = pool::Pool::try_new(1, 16);
-    let pool: pool::Pool = created.expect("exact-write pool must contain one sixteen-byte slot");
-    let mut buffer = (pool.acquire()).expect("one slot is available");
-    let mut writer = buffer.spare();
-    {
-        let planned = writer.try_exact(4);
-        let mut exact = planned.expect("four-byte exact plan must fit empty spare storage");
-        exact
-            .write_slice(b"two")
-            .as_ref()
-            .expect("required fixture outcome");
-        assert!(exact.try_commit().is_err());
-    }
-    assert_eq!(writer.len(), 0);
-
-    let planned = writer.try_exact(4);
-    let mut exact = planned.expect("second four-byte exact plan must fit spare storage");
-    exact
-        .write_slice(b"tw")
-        .as_ref()
-        .expect("required fixture outcome");
-    exact
-        .write_slice(b"o!")
-        .as_ref()
-        .expect("required fixture outcome");
-    exact
-        .try_commit()
-        .as_ref()
-        .expect("required fixture outcome");
-    writer.commit();
-
-    assert_eq!(buffer.as_slice(), b"two!");
 }
 
 #[test]
@@ -155,47 +119,39 @@ fn bounds_admitted_writes() {
     use buffer::pool::Limit;
 
     let pool = (pool::Pool::try_new(1, 8)).expect("the bounded fixture must allocate");
-    let mut cursor = (pool.cursor()).expect("the bounded fixture owns a free slot");
-    Sink::write_slice(&mut cursor, b"abcdef")
-        .as_ref()
-        .expect("required fixture outcome");
-    cursor
-        .try_consume(4)
-        .as_ref()
-        .expect("required fixture outcome");
+    let mut span = (pool.acquire()).expect("the bounded fixture owns a free slot");
+    span.try_append(b"ef")
+        .expect("the initialized prefix fits")
+        .commit();
     let identity = String::from("frame");
     let origin = identity.as_ptr();
-    let result = Limit::try_from(cursor, 7, identity);
-    assert!(result.is_err(), "the retained suffix leaves six bytes");
-    let Err((cursor, identity, error)) = result else {
+    let result = Limit::try_from(span, 7, identity);
+    assert!(result.is_err(), "the initialized prefix leaves six bytes");
+    let Err((span, identity, error)) = result else {
         return;
     };
     let (required, room) = error.into_parts();
     assert_eq!((required.get(), room), (7, 6));
-    assert_eq!(cursor.as_ref(), b"ef");
+    assert_eq!(span.as_ref(), b"ef");
     assert_eq!(identity.as_ptr(), origin);
-    let admitted = Limit::try_from(cursor, 5, identity);
+    let admitted = Limit::try_from(span, 5, identity);
     let mut limit = admitted
         .map_err(|rejected| (rejected.1, rejected.2))
-        .expect("five bytes fit the retained cursor's six-byte spare region");
+        .expect("five bytes fit the span's six-byte spare region");
     limit
         .try_extend(b"ghi")
         .as_ref()
         .expect("required fixture outcome");
     let result = limit.try_extend(b"jkl");
-    let error = result
-        .err()
-        .expect("physical capacity does not authorize a larger quota");
+    let error = result.expect_err("physical capacity does not authorize a larger quota");
     let (required, room) = error.into_parts();
     assert_eq!((required.get(), room), (3, 2));
     assert_eq!(limit.remaining(), 2);
-    limit
-        .try_extend(b"jk")
-        .as_ref()
-        .expect("required fixture outcome");
-    assert_eq!(limit.remaining(), 0);
-    let (cursor, identity) = limit.into_parts();
-    assert_eq!(cursor.as_ref(), b"efghijk");
+    drop(pool);
+    let (mut span, identity) = limit.into_parts();
+    assert_eq!(span.as_ref(), b"efghi");
+    span.as_mut_slice().fill(0);
+    assert_eq!(span.as_ref(), &[0; 5]);
     assert_eq!(identity.as_ptr(), origin);
 }
 
@@ -209,7 +165,7 @@ fn admits_before_acquiring() {
     let identity = {
         let held = (pool.cursor()).expect("the fixture owns a free slot");
         assert!(held.is_empty());
-        let result = Limit::try_borrow(&pool, 9, identity);
+        let result = Limit::try_acquire(&pool, 9, identity);
         let error = result
             .err()
             .expect("capacity rejection must precede slot exhaustion");
@@ -220,7 +176,7 @@ fn admits_before_acquiring() {
         .expect("capacity rejection must precede slot exhaustion");
         let (required, room) = error.into_parts();
         assert_eq!((required.get(), room), (9, 8));
-        let result = Limit::try_borrow(&pool, 8, identity);
+        let result = Limit::try_acquire(&pool, 8, identity);
         let error = result.err().expect("the sole slot is still held");
         let (identity,) = match error {
             (identity, Error::Empty) => Some((identity,)),
@@ -231,16 +187,21 @@ fn admits_before_acquiring() {
         identity
     };
     {
-        let mut limit = (Limit::try_borrow(&pool, 8, identity))
-            .expect("the recycled slot must admit the exact quota");
-        limit
-            .try_extend(b"abcdefgh")
-            .as_ref()
-            .expect("required fixture outcome");
-        let (cursor, identity) = limit.into_parts();
-        assert_eq!(cursor.as_ref(), b"abcdefgh");
-        assert_eq!(identity.as_ptr(), origin);
+        let mut limit = (Limit::try_acquire(&pool, 5, identity))
+            .expect("the recycled slot must admit five bytes");
         assert_eq!(pool.available(), 0);
+        limit.try_extend(b"abc").expect("the first three bytes fit");
+        let error = limit
+            .try_extend(b"def")
+            .expect_err("the remaining quota is smaller than physical capacity");
+        let (required, room) = error.into_parts();
+        assert_eq!((required.get(), room), (3, 2));
+        assert_eq!((limit.remaining(), limit.as_ref()), (2, &b"abc"[..]));
+        limit.try_extend(b"de").expect("the last two bytes fit");
+        assert_eq!(limit.remaining(), 0);
+        let (span, identity) = limit.into_parts();
+        assert_eq!(span.as_ref(), b"abcde");
+        assert_eq!(identity.as_ptr(), origin);
     }
     assert_eq!(pool.available(), 1);
 }
@@ -280,9 +241,7 @@ fn appends_in_place() {
         .try_consume(8)
         .expect("the initialized head and body must fit");
     let result = cursor.try_consume(usize::MAX);
-    let error = result
-        .err()
-        .expect("an oversized consume must preserve the initialized suffix");
+    let error = result.expect_err("an oversized consume must preserve the initialized suffix");
     let (required, room) = error.into_parts();
     assert_eq!((required.get(), room), (usize::MAX, 4));
     assert_eq!(cursor.as_ref(), b"tail");

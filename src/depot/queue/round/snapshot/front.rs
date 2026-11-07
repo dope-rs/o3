@@ -8,12 +8,12 @@ pub struct Front;
 
 impl<'a, T, const G: usize, const N: usize> round::Snapshot<&'a round::Lanes<T, G, N>, Front> {
     pub fn get(&self) -> Option<&'a T> {
-        Some(self.resolve()?.get())
+        Some(self.resolve::<false>()?.get())
     }
 
     /// Removes this snapshot if it still names the exact front.
     pub fn pop(self) -> Option<&'a T> {
-        Some(self.resolve()?.pop())
+        Some(self.resolve::<false>()?.pop())
     }
 
     /// Commits only while this remains the exact front after the predicate.
