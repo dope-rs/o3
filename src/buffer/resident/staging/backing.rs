@@ -1,5 +1,3 @@
-use std::num;
-
 use crate::buffer::{
     bytes::window,
     pool,
@@ -32,13 +30,6 @@ impl<'d> Backing<'d> {
                 let cursor = pool::Span::try_staged(reserve)?;
                 Ok(Self::Accounted(cursor))
             }
-        }
-    }
-
-    pub(super) fn capacity(&self) -> num::NonZero<u32> {
-        match self {
-            Self::Warm(cursor) | Self::Accounted(cursor) => cursor.capacity(),
-            Self::Local(snapshot) => snapshot.capacity(),
         }
     }
 }

@@ -1,5 +1,3 @@
-use crate::mem::credit::fair;
-
 /// A borrowed pool view bound to one independently owned lane state.
 pub struct Lane<'p, 's, const N: usize = 1, Tag = (), W: crate::mem::raw::Word = usize> {
     pub(super) pool: &'p crate::mem::raw::Pool<N, Tag, W>,
@@ -53,13 +51,5 @@ impl<'p, 's, const N: usize, Tag, W: crate::mem::raw::Word> Lane<'p, 's, N, Tag,
         self.state.held.set(next);
         self.pool.shared.set(shared);
         crate::mem::raw::Charge::new(self, amount)
-    }
-
-    pub fn try_acquire<A: crate::mem::raw::Amount<N, W>>(
-        self,
-        amount: A,
-    ) -> Result<crate::mem::raw::Charge<Self, N, A>, crate::mem::Rejected<A, fair::Cause<W, N>>>
-    {
-        crate::mem::raw::Charge::try_new(self, amount)
     }
 }

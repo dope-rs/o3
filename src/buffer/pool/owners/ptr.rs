@@ -86,19 +86,14 @@ impl<K, S: state::State> Block<K, S> {
     }
 }
 
-impl<L, S: state::State> Block<super::Plain<L>, S> {
-    fn init(self) -> Ptr<super::Plain<L>, S> {
-        self.initialize();
-        // SAFETY: the complete plain block has been initialized before publication.
-        unsafe { self.base.publish() }
-    }
-}
-
 impl<L: Into<pool::Layout>, S: state::State> Block<super::Plain<L>, S> {
     pub(in crate::buffer::pool) fn try_new(
         public: L,
     ) -> Result<Ptr<super::Plain<L>, S>, alloc::Exhausted> {
-        Ok(Self::allocate(super::Shape::new(public))?.init())
+        let block = Self::allocate(super::Shape::new(public))?;
+        block.initialize();
+        // SAFETY: the complete plain block has been initialized before publication.
+        Ok(unsafe { block.base.publish() })
     }
 }
 

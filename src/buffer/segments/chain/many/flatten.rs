@@ -12,9 +12,9 @@ use crate::{
 /// One allocation and an owned segment position for bounded copying.
 #[must_use = "step or release the retained copy"]
 pub struct Flatten<T: buffer::raw::Segment> {
-    pub(in crate::buffer) source: Nonempty<T>,
-    pub(in crate::buffer) offset: usize,
-    pub(in crate::buffer) output: storage::Owned,
+    source: Nonempty<T>,
+    offset: usize,
+    output: storage::Owned,
 }
 
 impl<T: buffer::raw::Segment> Flatten<T> {

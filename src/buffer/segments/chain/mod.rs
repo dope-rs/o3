@@ -167,27 +167,6 @@ pub(in crate::buffer::segments) mod edit;
 pub(in crate::buffer::segments) mod prefix;
 pub(in crate::buffer::segments) mod view;
 
-impl<T: buffer::raw::Segment> Chain<T> {
-    pub fn try_take(&mut self, amount: usize) -> Result<Self, segments::Error> {
-        if amount == self.len() {
-            let empty = Self::new(self.handle.try_clone().map_err(segments::Error::Retain)?);
-            return Ok(mem::replace(self, empty));
-        }
-        let shape = prefix::Shape::try_new(self, amount)?;
-        shape.try_take()
-    }
-
-    pub fn try_move_to(&mut self, target: &mut Self, amount: usize) -> Result<(), segments::Error> {
-        if amount == self.len() {
-            return edit::Relation::new((target, self))
-                .try_commit()
-                .map_err(|error| error.into_error());
-        }
-        let shape = prefix::Shape::try_new(self, amount)?;
-        shape.try_move_to(target)
-    }
-}
-
 impl<T: buffer::raw::Segment, H: Handle<T>> Chain<T, H> {
     pub fn front_entry(&mut self) -> Option<segments::Front<'_, T, H>> {
         if self.key.is_empty() {

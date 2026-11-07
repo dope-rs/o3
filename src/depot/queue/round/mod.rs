@@ -1,6 +1,6 @@
 //! Fixed-domain insertion-ordered round-robin membership.
 
-use std::{marker, mem};
+use std::mem;
 
 pub use lanes::{Lanes, group::Group, lane::Lane};
 pub use location::{Location, idle::Idle, linked::Linked};
@@ -106,12 +106,7 @@ impl<T, Tag, const MAX: u32, B> Set<T, Tag, MAX, B> {
         // A ring head is occupied in values; the exclusive loan covers both stores.
         let live = unsafe { crate::depot::raw::Proof::new(((&mut self.values, ()), index)) };
         let (entry, ()) = slab::Occupied::from_live(live);
-        Some(set::Occupied {
-            entry,
-            order: &self.order,
-            index,
-            phase: marker::PhantomData,
-        })
+        Some(set::Occupied::new(entry, &self.order))
     }
 }
 

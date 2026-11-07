@@ -42,13 +42,6 @@ pub enum Admission<T> {
     Exhausted,
 }
 
-/// Whether an attempted quota acquisition produced one item.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Acquire {
-    Item,
-    Empty,
-}
-
 #[must_use = "take reports whether the requested quota was consumed"]
 pub enum Take {
     Taken,
@@ -100,10 +93,6 @@ impl<Tag> Ledger<Tag> {
             return Admission::Empty;
         };
         Admission::Item(value)
-    }
-
-    pub fn apply(&self, run: impl FnOnce() -> Acquire) {
-        let _ = self.admit_with(|| (run() == Acquire::Item).then_some(()));
     }
 }
 

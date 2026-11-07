@@ -1,4 +1,4 @@
-use std::{num, ptr};
+use std::num;
 
 use crate::{
     base::cell::region,
@@ -44,17 +44,6 @@ impl Domain {
 impl<'d> Budget<'d> {
     pub(in crate::buffer) const fn core(self) -> &'d Domain {
         self.core.0
-    }
-
-    pub(in crate::buffer) fn try_bind(self, domain: &mut Option<Self>) -> Result<(), BindError> {
-        match domain {
-            Some(bound) if !ptr::eq(bound.core(), self.core()) => Err(BindError::Foreign),
-            Some(_) => Ok(()),
-            None => {
-                *domain = Some(self);
-                Ok(())
-            }
-        }
     }
 
     pub fn capacity(self) -> usize {

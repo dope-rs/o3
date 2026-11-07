@@ -1,6 +1,6 @@
 //! Allocation-owner retention projected onto accounting authorities.
 
-use std::num::NonZero;
+use std::{num::NonZero, ptr};
 
 pub use crate::buffer::storage::regions::retained::Retained;
 pub use charge::Charge;
@@ -143,8 +143,14 @@ impl<C: buffer::raw::Segment> Retention<C> {
 
 impl<'d> Retention<resident::Shared<'d>> {
     /// Binds once to an exact resident domain. Rebinding that same domain is inert.
+    #[inline]
     pub fn try_bind(&mut self, budget: resident::Budget<'d>) -> Result<(), resident::BindError> {
-        budget.try_bind(&mut self.authority)
+        let bound = self.authority.get_or_insert(budget);
+        if ptr::eq(bound.core(), budget.core()) {
+            Ok(())
+        } else {
+            Err(resident::BindError::Foreign)
+        }
     }
 }
 

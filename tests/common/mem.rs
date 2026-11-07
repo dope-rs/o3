@@ -71,7 +71,7 @@ unsafe impl mem::raw::Source<1> for Reentry<'_, '_> {
 
     unsafe fn accounts(&self) -> mem::raw::Accounts<'_, 1, (), u32> {
         if let Some(amount) = self.acquire.take() {
-            match self.other.try_acquire([amount]) {
+            match mem::raw::Charge::try_new(self.other, [amount]) {
                 Ok(charge) => drop(self.nested.replace(Some(charge))),
                 Err(error) => self.failure.set(Some(error.into_parts().1)),
             }

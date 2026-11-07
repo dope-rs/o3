@@ -1,5 +1,6 @@
-pub(in crate::buffer::segments::chain) use shape::Shape;
-use shape::Split;
+use std::mem;
+
+use shape::{Shape, Split};
 use topology::{Original, Topology};
 
 use crate::{
@@ -14,6 +15,29 @@ use crate::{
 
 mod shape;
 mod topology;
+
+impl<T: buffer::raw::Segment> Chain<T> {
+    pub fn try_take(&mut self, amount: usize) -> Result<Self, segments::Error> {
+        if amount == self.len() {
+            let empty = Self::new(self.handle.try_clone().map_err(segments::Error::Retain)?);
+            return Ok(mem::replace(self, empty));
+        }
+        let shape = Shape::try_new(self, amount)?;
+        let mut target = Self::new(shape.source.try_clone().map_err(segments::Error::Retain)?);
+        Projection::try_new(&mut target, shape)?.try_commit()?;
+        Ok(target)
+    }
+
+    pub fn try_move_to(&mut self, target: &mut Self, amount: usize) -> Result<(), segments::Error> {
+        if amount == self.len() {
+            return super::edit::Relation::new((target, self))
+                .try_commit()
+                .map_err(|error| error.into_error());
+        }
+        let shape = Shape::try_new(self, amount)?;
+        Projection::try_new(target, shape)?.try_commit()
+    }
+}
 
 /// Exclusive access to the byte prefix of one retained chain.
 struct Projection<'a, T> {

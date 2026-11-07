@@ -160,20 +160,14 @@ impl regions::Extent {
         self.0.len()
     }
 
-    fn offset(&self, amount: usize) -> ptr::NonNull<u8> {
-        let pointer = self.0.cast::<u8>().as_ptr().wrapping_add(amount);
-        // SAFETY: constructors establish nonwrapping addresses; callers keep amount
-        // within the stored extent, so the resulting address remains nonzero.
-        unsafe { ptr::NonNull::new_unchecked(pointer) }
-    }
-
     /// # Safety
     /// The range must be ordered and contained in this exact initialized extent,
     /// proving its length cannot underflow.
     pub(in crate::buffer) unsafe fn restrict(&self, range: ops::Range<usize>) -> Self {
         let len = range.end - range.start;
+        let pointer = self.0.cast::<u8>().as_ptr().wrapping_add(range.start);
         // SAFETY: the caller proves this subrange of the original nonwrapping extent.
-        unsafe { Self::new(self.offset(range.start), len) }
+        unsafe { Self::new(ptr::NonNull::new_unchecked(pointer), len) }
     }
 }
 

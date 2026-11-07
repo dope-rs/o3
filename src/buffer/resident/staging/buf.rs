@@ -114,10 +114,11 @@ impl<'d> Buf<'d> {
     }
 
     fn growth(&self, target: num::NonZero<u32>, current: u32) -> num::NonZero<u32> {
-        let (warm, limit) = self.pool.plan().bounds();
+        let plan = self.pool.plan();
+        let warm = plan.warm();
         let current = num::NonZero::new(current).map_or(warm, |current| warm.max(current));
         window::Capacity::from(current)
-            .grow_to(target.into(), limit.into())
+            .grow_to(target.into(), plan.ceiling().into())
             .nonzero()
     }
 }
@@ -437,7 +438,10 @@ impl State<'_> {
     fn capacity(&self) -> usize {
         match self {
             Self::Empty | Self::Cold(_) => 0,
-            Self::Live(backing) => backing.capacity().get() as usize,
+            Self::Live(Backing::Warm(cursor) | Backing::Accounted(cursor)) => {
+                cursor.capacity().get() as usize
+            }
+            Self::Live(Backing::Local(state)) => state.capacity().get() as usize,
         }
     }
 }

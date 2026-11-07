@@ -1,4 +1,4 @@
-use std::{marker, num::NonZero};
+use std::num::NonZero;
 
 use crate::depot::index::{bitmap, bitmap::entry::Row};
 
@@ -21,10 +21,7 @@ impl<'a, W: bitmap::Width> Level<'a, W> {
     pub(in crate::depot::index::bitmap) fn find(
         &self,
         mut start: usize,
-    ) -> Option<(Found<'_, Self, W>, W)> {
-        const {
-            assert!(size_of::<Option<Found<'_, Self, W>>>() == 2 * size_of::<usize>());
-        }
+    ) -> Option<(NonZero<u32>, W)> {
         let mut count = NonZero::new(self.bits)?;
         let mut offset = 0;
         let mut shift = 0;
@@ -44,13 +41,8 @@ impl<'a, W: bitmap::Width> Level<'a, W> {
                     if shift == 0 {
                         let position = index * radix.get() + bits.trailing_zeros() as usize;
                         return Some((
-                            Row {
-                                source: self,
-                                // SAFETY: exact tail bits and this source's u32 domain bound the selection.
-                                index: unsafe { NonZero::new_unchecked(position as u32 + 1) },
-                                plane: (),
-                                phase: marker::PhantomData,
-                            },
+                            // SAFETY: exact tail bits and this source's u32 domain bound the selection.
+                            unsafe { NonZero::new_unchecked(position as u32 + 1) },
                             current,
                         ));
                     }
@@ -133,5 +125,3 @@ impl<W: bitmap::Width, S: crate::depot::raw::Words<W>, P> Row<S, P, (), W> {
         unsafe { level.update::<SET>(self.index()) };
     }
 }
-
-type Found<'l, S, W> = Row<&'l S, (), (), W>;

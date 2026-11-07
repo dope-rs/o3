@@ -13,13 +13,8 @@ use crate::{
 
 /// Only admitted registrations can change this arena's outstanding count.
 #[repr(transparent)]
+#[derive(Default)]
 pub(super) struct Counter(cell::Cell<u32>);
-
-impl Counter {
-    pub(super) const fn new() -> Self {
-        Self(cell::Cell::new(0))
-    }
-}
 
 /// One arena debit and resident charge retained by its live account edges.
 /// Only this owner's Drop returns its debit; other drops preserve that debit

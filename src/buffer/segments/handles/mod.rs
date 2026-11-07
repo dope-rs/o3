@@ -41,7 +41,7 @@ impl<T> Parts<T> {
             current.into_raw() as usize,
             count,
         )
-        .min(segments::Plan::max_segments());
+        .min(u32::MAX as usize);
         let plan = segments::Plan {
             segments: capacity,
             chains: 1,

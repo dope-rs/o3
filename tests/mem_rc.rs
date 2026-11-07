@@ -20,10 +20,10 @@ fn transfers_raw_edge() {
     assert_eq!(owner.get().value, 17);
     let other = owner.try_clone().expect("second edge");
     // SAFETY: the clone transfers its exact live edge; owner retains the target.
-    unsafe { mem::raw::Owner::release_raw(other.into_raw()) };
+    drop(other);
     assert_eq!(finished.get(), Some(0));
     // SAFETY: owner transfers the last edge with no outstanding target borrow.
-    unsafe { mem::raw::Owner::release_raw(owner.into_raw()) };
+    drop(owner);
     assert_eq!(finished.get(), Some(1));
 }
 

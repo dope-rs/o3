@@ -59,11 +59,11 @@ pub(in crate::buffer::storage::provided) struct State<'d> {
 }
 
 impl<'d> State<'d> {
-    const fn new(capacity: num::NonZero<u32>, limit: u32) -> Self {
+    fn new(capacity: num::NonZero<u32>, limit: u32) -> Self {
         Self {
             free: cell::Cell::new(None),
             returned: cell::Cell::new(None),
-            accounted: Counter::new(),
+            accounted: Counter::default(),
             capacity,
             limit,
             brand: marker::PhantomData,

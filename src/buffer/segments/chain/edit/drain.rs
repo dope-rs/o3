@@ -69,12 +69,18 @@ impl<T: buffer::raw::Segment> Drain<'_, segments::Chain<T>> {
                     return;
                 }
                 handles::Occupied::Multi(index) => {
-                    let left = edit::Multi {
+                    let mut multi = edit::Multi {
                         sequence: &mut *head.sequence,
                         index,
+                    };
+                    let (desc, owner) = multi.front();
+                    if let Some(tail) = Tail::positive(owner, amount) {
+                        tail.commit();
+                        desc.len -= amount.get();
+                        return;
                     }
-                    .consume(amount);
-                    let Some(left) = left else {
+                    let owner = multi.take_front().0;
+                    let Some(left) = NonZero::new(amount.get() - owner.len().get()) else {
                         return;
                     };
                     amount = left;
