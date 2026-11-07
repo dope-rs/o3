@@ -24,6 +24,29 @@ use o3::{
 static ALLOCATOR: Tracker = Tracker;
 
 #[test]
+fn resumes_surviving_lane_suffix() {
+    let mut lanes = pool::Lanes::<u32>::try_new(pool::Plan::new(3, 1).expect("one lane"))
+        .expect("node storage");
+    let mut lane = std::hint::black_box(lanes.try_bind_mut(0).expect("allocated lane"));
+    for value in [10, 20, 30] {
+        lane.push_back(value).expect("available node");
+    }
+    let index = {
+        let mut iter = pool::View::from(&lane).iter();
+        let _ = iter.next();
+        let (index, value) = iter.next_with_index().expect("second node");
+        assert_eq!(*value, 20);
+        index
+    };
+    assert_eq!(lane.pop_front(), Some(10));
+    lane.push_back(40).expect("recycled head slot");
+    // SAFETY: the selected node survives in this exact lane; its fresh borrow retains the suffix.
+    let proof =
+        unsafe { Proof::<_, depot::index::Initialized<()>>::new((pool::View::from(&lane), index)) };
+    assert!(proof.into().copied().eq([20, 30, 40]));
+}
+
+#[test]
 fn move_keeps_address() {
     let plan = pool::Plan::new(1, 1).expect("one lane and slot");
     let mut lanes = pool::Lanes::<Pinned>::try_new(plan).expect("one resident allocation");

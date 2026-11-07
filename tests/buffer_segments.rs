@@ -3,7 +3,7 @@ pub mod common;
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
 
-use std::mem;
+use std::{mem, num::NonZero};
 
 use common::{
     alloc::system::Tracker,
@@ -20,6 +20,40 @@ use o3::{
     },
     depot::capacity::Count,
 };
+
+#[test]
+fn resumes_after_whole_owner_removal() {
+    let pool = segments::Pool::try_new(segments::Plan {
+        segments: 4,
+        chains: 1,
+    })
+    .expect("metadata pool");
+    let mut chain = pool.try_chain().expect("chain edge");
+    try_fill(&mut chain, &[b"ab", b"cde", b"fg", b"hij"]).expect("four owners");
+    let mut ahead = segments::scatter::raw::Position::new();
+    let mut removed = segments::scatter::raw::Position::new();
+    // SAFETY: both offsets are in this unchanged chain.
+    unsafe {
+        let _ = ahead.resume(&chain, 5);
+        let _ = removed.resume(&chain, 1);
+    }
+    let segments::Shape::Many(owners) = chain.into_shape() else {
+        panic!("many");
+    };
+    let bytes = NonZero::new(owners.front().as_slice().len()).expect("nonempty owner");
+    let (segments::Nonempty::Many(rest), _) = owners.discard() else {
+        panic!("many");
+    };
+    // SAFETY: one whole head was removed; the same chain retains every suffix node and byte.
+    unsafe {
+        ahead.rebase_prefix(bytes);
+        removed.rebase_prefix(bytes);
+        let mut kept = ahead.resume(rest.as_chain(), 3);
+        let mut reset = removed.resume(rest.as_chain(), 0);
+        assert_eq!(kept.take_bytes(2).next().expect("chunk").bytes(), b"fg");
+        assert_eq!(reset.take_bytes(3).next().expect("chunk").bytes(), b"cde");
+    }
+}
 
 #[test]
 fn snapshots_retain_owners() {
