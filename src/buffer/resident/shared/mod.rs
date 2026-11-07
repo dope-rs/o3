@@ -107,8 +107,7 @@ unsafe impl buffer::raw::Source for Shared<'_> {}
 impl buffer::Residency for Shared<'_> {
     #[inline]
     fn resident(&self) -> usize {
-        use backing::Owner as _;
-        self.region.owner().root().map_or(0, backing::Root::bytes)
+        self.region.resident()
     }
 }
 impl Consume for Shared<'_> {

@@ -18,6 +18,14 @@ pub(in crate::buffer) enum State<'d> {
     Provided(provided::Account<'d>),
 }
 
+impl buffer::Residency for State<'_> {
+    #[inline]
+    fn resident(&self) -> usize {
+        use backing::Owner as _;
+        self.root().map_or(0, backing::Root::bytes)
+    }
+}
+
 // SAFETY: every variant retains the same backing identity and original domain.
 unsafe impl buffer::raw::Retain for State<'_> {
     #[inline]

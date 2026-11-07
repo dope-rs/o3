@@ -10,6 +10,7 @@ use common::{
     buffer::domain::Capacity,
 };
 use o3::buffer::{
+    Residency as _,
     hold::{
         self,
         scope::{self, Input},
@@ -48,6 +49,7 @@ fn materializes_policy_choices() {
             assert_eq!(bytes, b"ayloa");
             assert_eq!(shared.as_slice(), bytes);
             assert_eq!(shared.as_slice().as_ptr(), want);
+            assert_eq!(shared.resident(), 8);
 
             let (copied, alloc) = Tracker::measure(|| {
                 let bound = scope::Input::new(&snap, budget)
@@ -191,6 +193,7 @@ fn cursor_charges_budget() {
                         .map_err(|(_, error)| error)
                 });
                 let shared = retained.expect("deferred view must fit the resident budget");
+                assert_eq!(shared.resident(), 4);
                 assert_eq!(budget.resident(), 4);
                 assert_eq!(shared.as_slice(), b"cdef");
                 assert_ne!(shared.as_slice().as_ptr(), source);

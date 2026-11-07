@@ -53,7 +53,7 @@ mod value;
 
 pub(in crate::buffer) mod retained {
     use super::{Extent, Shared, resident};
-    use crate::buffer::{raw, storage};
+    use crate::buffer::{self, raw, storage};
 
     #[derive(Debug)]
     enum Owner<'d> {
@@ -100,6 +100,16 @@ pub(in crate::buffer) mod retained {
             };
             resident::Shared {
                 region: Shared { owner, bytes },
+            }
+        }
+    }
+
+    impl buffer::Residency for Retained<'_> {
+        #[inline]
+        fn resident(&self) -> usize {
+            match &self.0.owner {
+                Owner::Unique(heap) => heap.capacity().get() as usize,
+                Owner::Shared(owner) => owner.resident(),
             }
         }
     }
