@@ -10,7 +10,6 @@ use common::{
     buffer::domain::Capacity,
 };
 use o3::buffer::{
-    Residency as _,
     hold::{
         self,
         scope::{self, Input},
@@ -43,7 +42,7 @@ fn materializes_policy_choices() {
             let bound = plan.bind(hold::Policy::new(1, 2));
             assert_eq!(bound.ceiling(), 8);
             let bytes = bound.as_slice();
-            let shared = bound.try_into();
+            let shared = bound.try_retain().map_err(|(_, error)| error);
             assert!(sample.finish() == Activity::default());
             let shared = shared.expect("the bounded view must fit its sharing policy");
             assert_eq!(bytes, b"ayloa");
@@ -186,10 +185,12 @@ fn cursor_charges_budget() {
                 .expect("the bytes range must be in bounds");
 
             let act = {
-                let (retained, act) =
-                    Tracker::measure(|| plan.bind(hold::Policy::compact()).try_into());
+                let (retained, act) = Tracker::measure(|| {
+                    plan.bind(hold::Policy::compact())
+                        .try_retain()
+                        .map_err(|(_, error)| error)
+                });
                 let shared = retained.expect("deferred view must fit the resident budget");
-                assert_eq!(shared.resident(), 4);
                 assert_eq!(budget.resident(), 4);
                 assert_eq!(shared.as_slice(), b"cdef");
                 assert_ne!(shared.as_slice().as_ptr(), source);

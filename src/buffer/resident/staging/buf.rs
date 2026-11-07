@@ -368,7 +368,7 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
     fn try_retain<'a>(
         plan: &Self::View<'a>,
         budget: &resident::Budget<'d>,
-    ) -> Result<resident::Shared<'d>, hold::Error>
+    ) -> Result<hold::Retained<'d>, hold::Error>
     where
         Self: 'a,
     {
@@ -376,15 +376,15 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
         use storage::regions::NonEmpty;
 
         let Some(view) = NonEmpty::new(plan) else {
-            return Ok(resident::Shared::new());
+            return Ok(resident::Shared::new().into());
         };
         let view = view.view();
         let owner = match &view.source.backing {
-            State::Empty | State::Cold(_) => return Ok(resident::Shared::new()),
+            State::Empty | State::Cold(_) => return Ok(resident::Shared::new().into()),
             State::Live(Backing::Warm(cursor) | Backing::Accounted(cursor)) => {
                 let Some(owner) = owners::Account::try_bind(cursor, budget)? else {
-                    return resident::Exact::try_copy(budget, view.as_slice())
-                        .map(resident::Exact::into_shared)
+                    return storage::Owned::try_from_slice(budget, view.as_slice())
+                        .map(Into::into)
                         .map_err(hold::Error::Resident);
                 };
                 resident::State::Accounted(owner)
@@ -402,7 +402,8 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
             region: unsafe {
                 regions::Shared::from_extent(owner, regions::Extent::from_bytes(view.as_slice()))
             },
-        })
+        }
+        .into())
     }
 }
 

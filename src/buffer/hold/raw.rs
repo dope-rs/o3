@@ -2,7 +2,7 @@ use storage::provided;
 
 use crate::buffer::{
     self,
-    hold::{Charge, Error, ranges},
+    hold::{Charge, Error, Retained, ranges},
     resident, storage,
     storage::{provided::Frozen as _, regions},
 };
@@ -30,29 +30,26 @@ pub unsafe trait Retain<'d>: buffer::Source {
         Charge::from_commit(buffer::Read::as_slice(plan).len(), 0, 0)
     }
 
-    /// Copies the selected bytes with output Residency at most their length.
+    /// Uniquely owns the copied bytes with output Residency at most their length.
     fn try_copy<'a>(
         plan: &Self::View<'a>,
         budget: &resident::Budget<'d>,
-    ) -> Result<resident::Shared<'d>, Error>
+    ) -> Result<storage::Owned<resident::Budget<'d>>, Error>
     where
         Self: 'a,
     {
-        Ok(
-            resident::Exact::try_copy(budget, buffer::Read::as_slice(plan))
-                .map_err(Error::Resident)?
-                .into_shared(),
-        )
+        storage::Owned::try_from_slice(budget, buffer::Read::as_slice(plan))
+            .map_err(Error::Resident)
     }
 
     fn try_retain<'a>(
         plan: &Self::View<'a>,
         budget: &resident::Budget<'d>,
-    ) -> Result<resident::Shared<'d>, Error>
+    ) -> Result<Retained<'d>, Error>
     where
         Self: 'a,
     {
-        Self::try_copy(plan, budget)
+        Self::try_copy(plan, budget).map(Into::into)
     }
 }
 
@@ -68,7 +65,7 @@ unsafe impl<'d> Retain<'d> for storage::Shared<provided::Owner<'d>> {
     fn try_retain<'a>(
         plan: &Self::View<'a>,
         budget: &resident::Budget<'d>,
-    ) -> Result<resident::Shared<'d>, Error>
+    ) -> Result<Retained<'d>, Error>
     where
         Self: 'a,
     {
@@ -77,7 +74,7 @@ unsafe impl<'d> Retain<'d> for storage::Shared<provided::Owner<'d>> {
             owner: plan.source.owner(),
         };
         let owner = prefix.try_account(budget).map_err(Error::Account)?;
-        Ok(resident::Shared::from(owner))
+        Ok(resident::Shared::from(owner).into())
     }
 }
 
@@ -97,17 +94,18 @@ where
     fn try_retain<'a>(
         plan: &Self::View<'a>,
         _: &resident::Budget<'d>,
-    ) -> Result<resident::Shared<'d>, Error>
+    ) -> Result<Retained<'d>, Error>
     where
         Self: 'a,
     {
         let Some(view) = regions::NonEmpty::new(plan) else {
-            return Ok(resident::Shared::new());
+            return Ok(resident::Shared::new().into());
         };
         let inner = view
             .view()
             .try_clone()
             .map_err(resident::AllocError::Retain)?;
+        let inner: resident::Shared<'d> = inner.into();
         Ok(inner.into())
     }
 }

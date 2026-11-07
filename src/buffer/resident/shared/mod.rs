@@ -1,5 +1,3 @@
-use regions::Initialize as _;
-
 pub(in crate::buffer::resident) mod exact;
 pub(in crate::buffer::resident) mod state;
 
@@ -43,13 +41,7 @@ impl<'d> Shared<'d> {
         source: &impl bounded::Source,
         budget: &resident::Budget<'d>,
     ) -> Result<Self, copy::Error> {
-        let Some(source) = buffer::raw::Slices::from_source(source) else {
-            return Ok(Self::new());
-        };
-        Ok(source
-            .try_init::<resident::Budget<'d>>(*budget)?
-            .into_buf()
-            .into())
+        Ok(storage::Owned::try_copy(source, budget)?.freeze())
     }
 
     pub fn as_slice(&self) -> &[u8] {

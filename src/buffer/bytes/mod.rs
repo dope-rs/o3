@@ -139,7 +139,7 @@ unsafe impl<'pool> hold::raw::Retain<'pool> for Cursor<'_, 'pool> {
     fn try_retain<'a>(
         plan: &Self::View<'a>,
         budget: &resident::Budget<'pool>,
-    ) -> Result<resident::Shared<'pool>, hold::Error>
+    ) -> Result<hold::Retained<'pool>, hold::Error>
     where
         Self: 'a,
     {

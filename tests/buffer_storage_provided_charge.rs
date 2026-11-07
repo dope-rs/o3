@@ -296,7 +296,8 @@ fn keeps_registration() {
             let held = <bounded::Value<storage::Shared<provided::Owner<'_>>> as hold::raw::Retain<
                     '_,
                 >>::try_retain(&source.view(), &budget)
-                .expect("registered retention");
+                .expect("registered retention")
+                .into_shared();
             assert_eq!(held.as_slice().as_ptr(), pointer);
             assert_eq!(held.resident(), 7);
             let clone = held.try_clone().expect("registered edge");
@@ -360,7 +361,8 @@ fn rejects_without_refund() {
             let held = <bounded::Value<storage::Shared<provided::Owner<'_>>> as hold::raw::Retain<
                     '_,
                 >>::try_retain(&source.view(), &budget)
-                .expect("registered retention");
+                .expect("registered retention")
+                .into_shared();
             let pointer = held.as_slice().as_ptr();
             (held, pointer)
         };

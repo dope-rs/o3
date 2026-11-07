@@ -23,6 +23,7 @@ use crate::{
 pub(in crate::buffer) unsafe trait Initialize: Sized {
     fn parts(&self) -> (NonZero<u32>, impl crate::buffer::raw::SliceExt);
 
+    #[inline(always)]
     fn try_init<P: crate::buffer::raw::Policy>(
         self,
         seed: P,
@@ -34,7 +35,7 @@ pub(in crate::buffer) unsafe trait Initialize: Sized {
         // SAFETY: the retained sources exactly fill this fresh disjoint allocation.
         unsafe { sources.copy_to(heap.as_mut_ptr().cast()) };
         // SAFETY: copying every retained source initialized the complete allocation.
-        Ok(unsafe { regions::Init::new(heap.into_shared()) })
+        Ok(unsafe { regions::Init::new(heap) })
     }
 }
 
@@ -49,6 +50,65 @@ mod nonempty;
 mod prefix;
 mod tag;
 mod value;
+
+pub(in crate::buffer) mod retained {
+    use super::{Extent, Shared, resident};
+    use crate::buffer::{raw, storage};
+
+    #[derive(Debug)]
+    enum Owner<'d> {
+        Unique(raw::Heap<resident::Budget<'d>>),
+        Shared(resident::State<'d>),
+    }
+
+    #[derive(Debug)]
+    #[repr(transparent)]
+    pub struct Retained<'d>(Shared<Owner<'d>>);
+
+    impl<'d> From<storage::Owned<resident::Budget<'d>>> for Retained<'d> {
+        #[inline]
+        fn from(value: storage::Owned<resident::Budget<'d>>) -> Self {
+            let bytes = Extent::from_bytes(value.as_slice());
+            let owner = match value.allocation {
+                Some(heap) => Owner::Unique(heap),
+                None => Owner::Shared(resident::State::Slice),
+            };
+            Self(Shared { owner, bytes })
+        }
+    }
+
+    impl<'d> From<resident::Shared<'d>> for Retained<'d> {
+        fn from(value: resident::Shared<'d>) -> Self {
+            let Shared { owner, bytes } = value.region;
+            Self(Shared {
+                owner: Owner::Shared(owner),
+                bytes,
+            })
+        }
+    }
+
+    impl<'d> Retained<'d> {
+        pub fn as_slice(&self) -> &[u8] {
+            self.0.as_slice()
+        }
+
+        pub fn into_shared(self) -> resident::Shared<'d> {
+            let Shared { owner, bytes } = self.0;
+            let owner = match owner {
+                Owner::Unique(heap) => resident::State::Resident(heap.into_shared()),
+                Owner::Shared(owner) => owner,
+            };
+            resident::Shared {
+                region: Shared { owner, bytes },
+            }
+        }
+    }
+
+    const _: () = {
+        assert!(size_of::<Retained<'static>>() == size_of::<resident::Shared<'static>>());
+        assert!(size_of::<Option<Retained<'static>>>() == size_of::<Retained<'static>>());
+    };
+}
 
 /// Opaque byte coordinates, usable only under an exact backing-owner proof.
 /// Public raw contracts may borrow this representation; it exposes no safe views.

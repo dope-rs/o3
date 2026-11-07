@@ -11,6 +11,7 @@ pub(in crate::buffer) struct Heap<P: crate::buffer::raw::Policy = ()> {
 }
 
 impl<P: crate::buffer::raw::Policy> Heap<P> {
+    #[inline]
     pub(in crate::buffer) fn try_new(
         seed: P,
         capacity: num::NonZero<u32>,
@@ -20,6 +21,7 @@ impl<P: crate::buffer::raw::Policy> Heap<P> {
         Self::try_charged(debit).map_err(alloc::Error::Allocation)
     }
 
+    #[inline]
     pub(in crate::buffer) fn try_charged(
         debit: crate::buffer::raw::Debit<P>,
     ) -> Result<Self, crate::alloc::Exhausted> {

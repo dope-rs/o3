@@ -9,7 +9,7 @@ use crate::{
 #[derive(Debug)]
 #[repr(transparent)]
 pub(in crate::buffer) struct Init<P: crate::buffer::raw::Policy = ()> {
-    allocation: crate::buffer::raw::Rc<P>,
+    allocation: crate::buffer::raw::Heap<P>,
 }
 
 /// One complete allocation, with its plain or resident policy encoded in bit zero.
@@ -23,8 +23,8 @@ pub(in crate::buffer) struct Complete<'d> {
 impl<P: crate::buffer::raw::Policy> Init<P> {
     /// # Safety
     /// Every byte through `allocation.capacity()` must be initialized.
-    pub(in crate::buffer) unsafe fn new(rc: crate::buffer::raw::Rc<P>) -> Self {
-        Self { allocation: rc }
+    pub(in crate::buffer) unsafe fn new(heap: crate::buffer::raw::Heap<P>) -> Self {
+        Self { allocation: heap }
     }
 
     pub(in crate::buffer) fn capacity(&self) -> num::NonZero<u32> {
@@ -34,20 +34,32 @@ impl<P: crate::buffer::raw::Policy> Init<P> {
     pub(in crate::buffer) fn as_slice(&self) -> &[u8] {
         // SAFETY: construction proves the complete allocation is initialized,
         // and this owner keeps the header and data live for the borrow.
-        unsafe { slice::from_raw_parts(self.allocation.data(), self.capacity().get() as usize) }
+        unsafe {
+            slice::from_raw_parts(
+                self.allocation.as_ptr().cast(),
+                self.capacity().get() as usize,
+            )
+        }
+    }
+
+    pub(in crate::buffer) fn into_owned(self) -> storage::Owned<P> {
+        storage::Owned {
+            len: self.capacity().get(),
+            allocation: Some(self.allocation),
+        }
     }
 
     pub(in crate::buffer) fn into_buf(self) -> storage::Shared<crate::buffer::raw::Rc<P>> {
         let len = self.capacity();
         // SAFETY: Init transfers its fully initialized extent with its original owner.
-        unsafe { self.allocation.into_range(0, len.get()) }
+        unsafe { self.allocation.into_shared().into_range(0, len.get()) }
     }
 }
 
 impl Init<()> {
     pub(in crate::buffer) fn bind<'d>(self) -> regions::Complete<'d> {
         Complete {
-            pointer: self.allocation.into_raw().cast(),
+            pointer: self.allocation.into_shared().into_raw().cast(),
             ownership: marker::PhantomData,
         }
     }
@@ -58,6 +70,7 @@ impl<'d> Init<resident::Budget<'d>> {
         Complete {
             pointer: self
                 .allocation
+                .into_shared()
                 .into_raw()
                 .cast()
                 .map_addr(|address| address | 1),
@@ -85,16 +98,21 @@ impl<'d> Complete<'d> {
     pub(in crate::buffer) fn into_buf(self) -> resident::Shared<'d> {
         let this = mem::ManuallyDrop::new(self);
         let pointer = this.pointer();
+        let len = this.prefix().word().get();
         if this.pointer.addr().get() & 1 == 0 {
-            // SAFETY: the consumed plain Init's edge and initialization proof move together.
-            let allocation = unsafe { crate::buffer::raw::Rc::<()>::from_raw(pointer.cast()) };
-            let bytes: storage::Shared = Init { allocation }.into_buf().into();
+            // SAFETY: this Complete transfers one plain counted edge and its initialized extent.
+            let bytes: storage::Shared = unsafe {
+                crate::buffer::raw::Rc::<()>::from_raw(pointer.cast()).into_range(0, len)
+            }
+            .into();
             bytes.into()
         } else {
-            // SAFETY: the consumed resident Init retains its complete extent and policy lifetime.
-            let allocation =
-                unsafe { crate::buffer::raw::Rc::<resident::Budget<'d>>::from_raw(pointer.cast()) };
-            Init { allocation }.into_buf().into()
+            // SAFETY: this Complete transfers one resident edge, its extent and policy lifetime.
+            unsafe {
+                crate::buffer::raw::Rc::<resident::Budget<'d>>::from_raw(pointer.cast())
+                    .into_range(0, len)
+            }
+            .into()
         }
     }
 

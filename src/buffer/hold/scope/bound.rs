@@ -50,7 +50,7 @@ impl<'input, 'd, R: hold::raw::Retain<'d> + 'input> Bound<'input, 'd, R> {
         }
     }
 
-    pub fn try_retain(self) -> Result<resident::Shared<'d>, (Self, hold::Error)> {
+    pub fn try_retain(self) -> Result<hold::Retained<'d>, (Self, hold::Error)> {
         self.choice
             .try_retain::<R>(&self.input.0, self.input.1)
             .map_err(|error| (self, error))
@@ -58,7 +58,9 @@ impl<'input, 'd, R: hold::raw::Retain<'d> + 'input> Bound<'input, 'd, R> {
 
     /// Retains this range and ends the bound if resident admission fails.
     pub fn try_into(self) -> Result<resident::Shared<'d>, hold::Error> {
-        self.choice.try_retain::<R>(&self.input.0, self.input.1)
+        self.choice
+            .try_retain::<R>(&self.input.0, self.input.1)
+            .map(hold::Retained::into_shared)
     }
 }
 
@@ -70,7 +72,7 @@ const _: () = {
     assert!(
         size_of::<
             Result<
-                resident::Shared<'static>,
+                hold::Retained<'static>,
                 (Bound<'static, 'static, storage::Shared>, hold::Error),
             >,
         >() == 9 * word

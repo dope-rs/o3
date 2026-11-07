@@ -499,8 +499,8 @@ fn detached_fifo_recycles() {
     }
     {
         let front: fifo::Front<'_, '_, [usize; 3]> = queue.front().expect("nonempty queue");
-        assert_eq!(front.get(), &[0, 0, 0]);
         let detached: fifo::Nonempty<'_, [usize; 3]> = front.take();
+        assert_eq!(detached.front(), &[0, 0, 0]);
         assert!(queue.is_empty());
         assert!(queue.vacant().is_none());
         assert_eq!(

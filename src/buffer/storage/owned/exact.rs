@@ -39,7 +39,7 @@ impl Exact {
         };
         // SAFETY: the original spare completed this owner's entire uninitialized suffix.
         Ok(Self {
-            inner: Some(unsafe { regions::Init::new(heap.into_shared()) }),
+            inner: Some(unsafe { regions::Init::new(heap) }),
         })
     }
 

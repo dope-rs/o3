@@ -2,9 +2,10 @@ use crate::buffer;
 pub(in crate::buffer::storage) mod bytes;
 use std::num;
 
-use storage::alloc;
+use storage::{alloc, regions::Initialize as _};
 
 use crate::buffer::{
+    bytes::bounded,
     resident, storage,
     write::{SpareExt as _, Staging, consume, spans},
 };
@@ -139,6 +140,29 @@ const _: () = assert!(size_of::<Owned<()>>() == 2 * size_of::<usize>());
 
 /// Unique bytes charged to one resident domain.
 impl<'d> storage::Owned<resident::Budget<'d>> {
+    pub fn try_copy(
+        source: &impl bounded::Source,
+        budget: &resident::Budget<'d>,
+    ) -> Result<Self, resident::copy::Error> {
+        let Some(source) = buffer::raw::Slices::from_source(source) else {
+            return Ok(Self::EMPTY);
+        };
+        Ok(source.try_init(*budget)?.into_owned())
+    }
+
+    #[inline]
+    pub fn try_from_slice(
+        budget: &resident::Budget<'d>,
+        bytes: &[u8],
+    ) -> Result<Self, resident::AllocError> {
+        let Some(source) =
+            buffer::raw::Slices::try_new([bytes]).map_err(resident::AllocError::Capacity)?
+        else {
+            return Ok(Self::EMPTY);
+        };
+        Ok(source.try_init(*budget)?.into_owned())
+    }
+
     /// Allocates against an existing debit without acquiring resident capacity again.
     /// Failure releases the consumed charge; a zero charge needs no allocation.
     pub fn try_from_charge(charge: resident::Charge<'d>) -> Result<Self, storage::AllocError> {
@@ -182,6 +206,7 @@ impl<'d> storage::Owned<resident::Budget<'d>> {
     }
 
     #[must_use]
+    #[inline]
     pub fn freeze(self) -> resident::Shared<'d> {
         self.into_shared().map(Into::into).unwrap_or_default()
     }
@@ -190,9 +215,9 @@ impl<'d> storage::Owned<resident::Budget<'d>> {
 const _: () =
     assert!(size_of::<storage::Owned<resident::Budget<'static>>>() == size_of::<usize>() * 2);
 
-impl Default for Owned {
+impl<P: crate::buffer::raw::Policy> Default for Owned<P> {
     fn default() -> Self {
-        Self::new()
+        Self::EMPTY
     }
 }
 
