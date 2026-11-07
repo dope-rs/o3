@@ -97,16 +97,16 @@ impl Growing {
             let groups = self.initialized();
             let hint = usize::from(self.hint.get());
             if let Some(group) = groups.get(hint)
-                && let Some(claim) = owners::Claim::new(group.core)
+                && let Some(active) = owners::Active::acquire(group.core)
             {
-                return Ok(Some(claim.take()));
+                return Ok(Some(active));
             }
             for (index, group) in groups.iter().enumerate() {
                 if index != hint
-                    && let Some(claim) = owners::Claim::new(group.core)
+                    && let Some(active) = owners::Active::acquire(group.core)
                 {
                     self.hint.set(index as u8);
-                    return Ok(Some(claim.take()));
+                    return Ok(Some(active));
                 }
             }
             let before = self.allocated.get();

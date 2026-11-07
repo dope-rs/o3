@@ -97,7 +97,7 @@ impl<K: crate::buffer::raw::Backing, M> buffer::Residency for owners::Edge<K, M>
     fn resident(&self) -> usize {
         self.ptr.map_or(0, |ptr| {
             // SAFETY: Edge retains this exact active pool-slot prefix.
-            unsafe { owners::capacity_of(ptr.cast()) }.get() as usize
+            unsafe { owners::capacity_of::<K>(ptr.cast()) }.get() as usize
         })
     }
 }
