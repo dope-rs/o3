@@ -59,7 +59,7 @@ fn preserves_owner_policy() {
                             1 => assert_eq!(source.consume_max(usize::MAX), capacity),
                             _ => scope::Input::consume::<_, 8>(&mut source, |input| {
                                 let (_, end) = input
-                                    .try_prefix(NonZero::new(capacity).expect("nonempty source"))
+                                    .try_prefix(0, NonZero::new(capacity).expect("nonempty source"))
                                     .expect("complete prefix");
                                 (Some(end), ())
                             }),
@@ -150,7 +150,7 @@ fn retains_ranges() {
                         assert!(matches!(result, Ok(ref bytes) if bytes.as_slice().is_empty()));
                         let ((), activity) = Tracker::measure(|| {
                             Input::consume::<_, 1>(&mut source, &budget, |input| {
-                                let (prefix, end) = (input.try_prefix(NonZero::<usize>::MIN))
+                                let (prefix, end) = (input.try_prefix(0, NonZero::<usize>::MIN))
                                     .expect("source-bound partial consumption");
                                 assert_eq!(prefix.as_slice(), b"a");
                                 (Some(end), ())
@@ -158,7 +158,7 @@ fn retains_ranges() {
                             assert_eq!(source.as_slice(), b"bcd");
                             Input::consume::<_, 4>(&mut source, &budget, |input| {
                                 let (prefix, end) = (input
-                                    .try_prefix(NonZero::<usize>::MIN.saturating_add(2)))
+                                    .try_prefix(0, NonZero::<usize>::MIN.saturating_add(2)))
                                 .expect("source-bound consumption");
                                 assert_eq!(prefix.as_slice(), b"bcd");
                                 (Some(end), ())
@@ -247,7 +247,7 @@ fn empty<'d>(source: &mut staging::Buf<'d>, budget: &resident::Budget<'d>) {
             .map(hold::Retained::into_shared);
         assert!(matches!(result, Ok(ref bytes) if bytes.is_empty() && bytes.resident() == 0));
         scope::Input::consume::<_, 1>(source, |input| {
-            let result = input.try_prefix::<1>(NonZero::<usize>::MIN);
+            let result = input.try_prefix::<1>(0, NonZero::<usize>::MIN);
             assert!(matches!(result, Err(scope::Error::Range(error))
                 if (error.start(), error.end(), error.len()) == (0, 1, 0)));
             (None, ())

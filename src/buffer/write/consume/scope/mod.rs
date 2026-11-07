@@ -76,6 +76,7 @@ impl<'input, R: buffer::Cursor, B> Input<'input, R, B> {
 impl<'id, 'input, R: buffer::Cursor> Input<'input, R, Brand<'id>> {
     pub fn try_prefix<const MAX: u32>(
         &self,
+        start: usize,
         count: num::NonZero<usize>,
     ) -> Result<(R::View<'input>, End<'id, MAX>), Error> {
         if count.get() > MAX as usize {
@@ -84,7 +85,10 @@ impl<'id, 'input, R: buffer::Cursor> Input<'input, R, Brand<'id>> {
                 maximum: MAX,
             });
         }
-        let plan = self.source.try_get(0..count.get()).map_err(Error::Range)?;
+        let plan = self
+            .source
+            .try_get(start..count.get())
+            .map_err(Error::Range)?;
         Ok((
             plan,
             End {

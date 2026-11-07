@@ -57,11 +57,25 @@ fn validates_at_source() {
             input.scope(|input| {
                 let count = NonZero::<usize>::MIN.saturating_add(2);
                 assert!(matches!(
-                    input.try_prefix::<2>(count),
+                    input.try_prefix::<2>(usize::MAX, count),
                     Err(scope::Error::Maximum { count: observed, maximum: 2 }) if observed == count
                 ));
+                let error = input
+                    .try_prefix::<3>(4, count)
+                    .err()
+                    .expect("the payload range is reversed");
+                assert!(matches!(error, scope::Error::Range(error)
+                    if (error.start(), error.end(), error.len()) == (4, 3, 3)));
+                assert_eq!(source.reads.get(), Some(3));
+                let (payload, end) = input.try_prefix::<3>(1, count).expect("payload fits");
+                assert_eq!(payload.as_slice(), b"bc");
+                assert_eq!(
+                    payload.as_slice().as_ptr(),
+                    source.bytes.as_ptr().wrapping_add(1)
+                );
+                assert_eq!(end.count().get(), 3);
             });
-            assert_eq!(source.reads.get(), Some(2));
+            assert_eq!(source.reads.get(), Some(4));
         })
         .expect("resident test domain must admit its budget");
 }
@@ -73,7 +87,7 @@ fn prefix_borrows_source() {
         scope::Input::new(&source).scope(|input| {
             let count = NonZero::<usize>::MIN.saturating_add(2);
             input
-                .try_prefix::<{ u32::MAX }>(count)
+                .try_prefix::<{ u32::MAX }>(0, count)
                 .map(|(prefix, end)| {
                     assert_eq!(end.count().get() as usize, count.get());
                     prefix
@@ -93,9 +107,9 @@ fn consume_own_prefix() {
     let start = source.as_ptr();
     let (result, activity) = Tracker::activity(|| {
         scope::Input::consume(&mut source, |input| {
-            match input.try_prefix::<6>(NonZero::<usize>::MIN.saturating_add(2)) {
+            match input.try_prefix::<6>(1, NonZero::<usize>::MIN.saturating_add(2)) {
                 Ok((prefix, end)) => {
-                    assert_eq!(prefix.as_slice(), b"abc");
+                    assert_eq!(prefix.as_slice(), b"bc");
                     (Some(end), Ok(()))
                 }
                 Err(error) => (None, Err(error)),
@@ -108,14 +122,14 @@ fn consume_own_prefix() {
     assert_eq!(source.as_ptr(), start.wrapping_add(3));
 
     scope::Input::consume::<_, 6>(&mut source, |input| {
-        let admitted = input.try_prefix::<6>(NonZero::<usize>::MIN);
+        let admitted = input.try_prefix::<6>(0, NonZero::<usize>::MIN);
         admitted.as_ref().expect("required fixture outcome");
         (None, ())
     });
     assert_eq!(source.as_slice(), b"def");
 
     let rejected = scope::Input::consume::<_, 6>(&mut source, |input| {
-        match input.try_prefix::<6>(NonZero::<usize>::MIN.saturating_add(3)) {
+        match input.try_prefix::<6>(0, NonZero::<usize>::MIN.saturating_add(3)) {
             Err(error) => (None, Some(error)),
             Ok(_) => (None, None),
         }
@@ -142,7 +156,7 @@ fn commit_or_cancel_pooled() {
             let mut cursor = bytes::Cursor::new(&mut source);
             scope::Input::consume(&mut cursor, |input| {
                 let (prefix, end) = (input
-                    .try_prefix::<6>(NonZero::<usize>::MIN.saturating_add(1)))
+                    .try_prefix::<6>(0, NonZero::<usize>::MIN.saturating_add(1)))
                 .expect("the first two bytes fit");
                 assert_eq!(prefix.as_slice(), b"ab");
                 (Some(end), ())
