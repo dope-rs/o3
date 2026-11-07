@@ -216,6 +216,7 @@ unsafe impl<'d> hold::raw::Retain<'d> for Value<storage::Shared<provided::Owner<
         <storage::Shared<provided::Owner<'d>> as hold::raw::Retain<'d>>::charge(&plan.0)
     }
 
+    #[inline]
     fn try_copy<'a>(
         plan: &Self::View<'a>,
         budget: &resident::Budget<'d>,

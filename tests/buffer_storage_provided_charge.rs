@@ -281,6 +281,39 @@ fn backing_keeps_charge() {
 }
 
 #[test]
+fn copies_bounded_retention() {
+    use buffer::{Residency as _, bytes::bounded};
+
+    let mut arena =
+        provided::Arena::<_, _>::try_allocate(NonZero::<u32>::MIN).expect("one-slot arena")(());
+    let mut domain = resident::Domain::new();
+    arena.scope(Pin::new(&mut domain), |token, arena, domain| {
+        let budget = domain
+            .get_mut()
+            .try_budget(7, token.proof())
+            .expect("copy budget");
+        let unique = arena
+            .vacant()
+            .expect("initial vacancy")
+            .try_insert(*b"exactly", 7, <[u8; 7]>::as_mut_slice)
+            .expect("provided bytes");
+        let source = bounded::Value::try_new(unique.into_shared())
+            .map_err(|rejected| rejected.into_parts().1)
+            .expect("bounded registration");
+        let bound = scope::Input::new(&source, &budget)
+            .defer_all()
+            .bind(std::hint::black_box(hold::Policy::compact()));
+        let held = bound
+            .try_retain()
+            .map_err(|(_, error)| error)
+            .expect("bounded copy");
+        assert_eq!(held.as_slice(), source.as_ref());
+        assert_ne!(held.as_slice().as_ptr(), source.as_ref().as_ptr());
+        assert_eq!(held.resident(), 7);
+    });
+}
+
+#[test]
 fn keeps_registration() {
     use buffer::{Read as _, Residency as _, bytes::bounded, write::consume::Consume as _};
     Item::try_scope(|unique, budget, arena| {
