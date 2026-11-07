@@ -33,6 +33,13 @@ pub enum Reason {
     Allocation(alloc::Error),
 }
 
+impl Shortage {
+    pub(crate) const ONE: Self = Self {
+        requested: NonZero::<usize>::MIN,
+        available: 0,
+    };
+}
+
 impl Count {
     pub const EMPTY: Self = Self(0);
     pub const MAX: Self = Self(u32::MAX);

@@ -137,137 +137,127 @@ impl<'a, T: buffer::raw::Segment> Relation<'a, T> {
             len,
             resident,
         };
-        let result =
-            (|| {
-                match state {
-                    Placement::Same(links) => {
-                        let (target, source) = &mut pair;
-                        let nodes = handles::nodes(&target.handle);
-                        let descs = handles::descriptors(&target.handle);
-                        let desc = match links {
-                            Links::Singles {
-                                target: left,
-                                source: right,
-                            } => {
-                                let claim = descs.vacant().ok_or(Cause::Descriptors(
-                                    capacity::Shortage {
-                                        requested: NonZero::<usize>::MIN,
-                                        available: 0,
-                                    },
-                                ))?;
-                                let mut links = ends::Exclusive::empty();
-                                unsafe {
-                                    links.append_end(nodes, left);
-                                    links.append_end(nodes, right);
-                                }
-                                let claim = claim.insert(Descriptor {
-                                    links,
-                                    count: sum.count,
-                                    len: sum.len,
-                                    resident_bytes: sum.resident,
-                                });
-                                target.key = Key::multi(claim.index());
-                                source.key = Key::EMPTY;
-                                unsafe { claim.publish() };
-                                return Ok(());
+        let result = (|| {
+            match state {
+                Placement::Same(links) => {
+                    let (target, source) = &mut pair;
+                    let nodes = handles::nodes(&target.handle);
+                    let descs = handles::descriptors(&target.handle);
+                    let desc = match links {
+                        Links::Singles {
+                            target: left,
+                            source: right,
+                        } => {
+                            let claim = descs
+                                .vacant()
+                                .ok_or(Cause::Descriptors(capacity::Shortage::ONE))?;
+                            let mut links = ends::Exclusive::empty();
+                            unsafe {
+                                links.append_end(nodes, left);
+                                links.append_end(nodes, right);
                             }
-                            Links::Prepend {
-                                target: left,
-                                source: right,
-                            } => {
-                                let desc = unsafe { &mut *descs.value_ptr(right) };
-                                unsafe { desc.links.prepend_link(nodes, left) };
-                                target.key = Key::multi(right);
-                                desc
-                            }
-                            Links::Push {
-                                target: left,
-                                source: right,
-                            } => {
-                                let desc = unsafe { &mut *descs.value_ptr(left) };
-                                unsafe { desc.links.append_end(nodes, right) };
-                                desc
-                            }
-                            Links::Splice {
-                                target: left,
-                                source: right,
-                            } => {
-                                let (mut from, retired) = unsafe { descs.detached(right) }.take();
-                                let desc = unsafe { &mut *retired.release().value_ptr(left) };
-                                // SAFETY: Relation::Same retained disjoint chains in this exact store.
-                                unsafe { desc.links.append_chain(nodes, &mut from.links) };
-                                desc
-                            }
-                        };
-                        desc.count = sum.count;
-                        desc.len = sum.len;
-                        desc.resident_bytes = sum.resident;
-                        source.key = Key::EMPTY;
-                        Ok(())
-                    }
-                    Placement::Other(from) => {
-                        let (target, source) = &mut pair;
-                        let store = handles::nodes(&target.handle);
-                        let table = handles::descriptors(&target.handle);
-                        let nodes = slots::Input::try_new(
-                            store,
-                            Incoming {
-                                source,
-                                input: from,
-                            },
-                        )?;
-                        let (mut links, output) = match target.key.state() {
-                            None => {
-                                let output = if sum.count.get() == 1 {
-                                    None
-                                } else {
-                                    let claim = table.vacant().ok_or(Cause::Descriptors(
-                                        capacity::Shortage {
-                                            requested: NonZero::<usize>::MIN,
-                                            available: 0,
-                                        },
-                                    ))?;
-                                    Some(claim)
-                                };
-                                (ends::Exclusive::empty(), output)
-                            }
-                            Some(Occupied::Single(index)) => {
-                                let claim = table.vacant().ok_or(Cause::Descriptors(
-                                    capacity::Shortage {
-                                        requested: NonZero::<usize>::MIN,
-                                        available: 0,
-                                    },
-                                ))?;
-                                let mut links = ends::Exclusive::empty();
-                                unsafe { links.append_end(store, index) };
-                                (links, Some(claim))
-                            }
-                            Some(Occupied::Multi(index)) => {
-                                let (desc, claim) = unsafe { table.detached(index) }.take();
-                                (desc.links, Some(claim))
-                            }
-                        };
-                        target.key = Key::EMPTY;
-                        nodes.start().0.run(|claim, value| {
-                            unsafe { claim.insert(value).append(&mut links) };
-                        });
-                        match output {
-                            None => target.key = Key::single(links.head_raw()),
-                            Some(claim) => {
-                                let claim = claim.insert(Descriptor {
-                                    links,
-                                    count: sum.count,
-                                    len: sum.len,
-                                    resident_bytes: sum.resident,
-                                });
-                                target.key = Key::multi(claim.index());
-                                unsafe { claim.publish() };
-                            }
+                            let claim = claim.insert(Descriptor {
+                                links,
+                                count: sum.count,
+                                len: sum.len,
+                                resident_bytes: sum.resident,
+                            });
+                            target.key = Key::multi(claim.index());
+                            source.key = Key::EMPTY;
+                            unsafe { claim.publish() };
+                            return Ok(());
                         }
-                        Ok(())
-                    }
+                        Links::Prepend {
+                            target: left,
+                            source: right,
+                        } => {
+                            let desc = unsafe { &mut *descs.value_ptr(right) };
+                            unsafe { desc.links.prepend_link(nodes, left) };
+                            target.key = Key::multi(right);
+                            desc
+                        }
+                        Links::Push {
+                            target: left,
+                            source: right,
+                        } => {
+                            let desc = unsafe { &mut *descs.value_ptr(left) };
+                            unsafe { desc.links.append_end(nodes, right) };
+                            desc
+                        }
+                        Links::Splice {
+                            target: left,
+                            source: right,
+                        } => {
+                            let (mut from, retired) = unsafe { descs.detached(right) }.take();
+                            let desc = unsafe { &mut *retired.release().value_ptr(left) };
+                            // SAFETY: Relation::Same retained disjoint chains in this exact store.
+                            unsafe { desc.links.append_chain(nodes, &mut from.links) };
+                            desc
+                        }
+                    };
+                    desc.count = sum.count;
+                    desc.len = sum.len;
+                    desc.resident_bytes = sum.resident;
+                    source.key = Key::EMPTY;
+                    Ok(())
                 }
-            })();
+                Placement::Other(from) => {
+                    let (target, source) = &mut pair;
+                    let store = handles::nodes(&target.handle);
+                    let table = handles::descriptors(&target.handle);
+                    let nodes = slots::Input::try_new(
+                        store,
+                        Incoming {
+                            source,
+                            input: from,
+                        },
+                    )?;
+                    let (mut links, output) = match target.key.state() {
+                        None => {
+                            let output = if sum.count.get() == 1 {
+                                None
+                            } else {
+                                let claim = table
+                                    .vacant()
+                                    .ok_or(Cause::Descriptors(capacity::Shortage::ONE))?;
+                                Some(claim)
+                            };
+                            (ends::Exclusive::empty(), output)
+                        }
+                        Some(Occupied::Single(index)) => {
+                            let claim = table
+                                .vacant()
+                                .ok_or(Cause::Descriptors(capacity::Shortage::ONE))?;
+                            let mut links = ends::Exclusive::empty();
+                            unsafe { links.append_end(store, index) };
+                            (links, Some(claim))
+                        }
+                        Some(Occupied::Multi(index)) => {
+                            let (desc, claim) = unsafe { table.detached(index) }.take();
+                            (desc.links, Some(claim))
+                        }
+                    };
+                    target.key = Key::EMPTY;
+                    nodes.start().0.run(|claim, value| {
+                        unsafe { claim.insert(value).append(&mut links) };
+                    });
+                    match output {
+                        None => target.key = Key::single(links.head_raw()),
+                        Some(claim) => {
+                            let claim = claim.insert(Descriptor {
+                                links,
+                                count: sum.count,
+                                len: sum.len,
+                                resident_bytes: sum.resident,
+                            });
+                            target.key = Key::multi(claim.index());
+                            unsafe { claim.publish() };
+                        }
+                    }
+                    Ok(())
+                }
+            }
+        })();
         match result {
             Ok(()) => Ok(()),
             Err(cause) => Err(Rejected::Capacity(sum, cause)),

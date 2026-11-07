@@ -53,10 +53,8 @@ pub(in crate::buffer::segments) enum Cause {
 }
 
 impl Cause {
-    pub(in crate::buffer::segments::chain) const ONE_NODE: Self = Self::Nodes(capacity::Shortage {
-        requested: NonZero::<usize>::MIN,
-        available: 0,
-    });
+    pub(in crate::buffer::segments::chain) const ONE_NODE: Self =
+        Self::Nodes(capacity::Shortage::ONE);
 
     pub(in crate::buffer::segments) fn into_error(self) -> segments::Error {
         match self {
