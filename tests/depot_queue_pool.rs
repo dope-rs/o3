@@ -551,6 +551,31 @@ fn detached_fifo_recycles() {
 }
 
 #[test]
+fn detached_front_keeps_address_and_credit() {
+    let drops = [cell::Cell::new(Some(0)), cell::Cell::new(Some(0))];
+    let arena = depot::raw::Arena::<Tracked<'_>>::try_new(2usize).expect("two nodes");
+    let (retained, address) = {
+        let mut queue = arena.fifo();
+        for index in 0..2 {
+            queue
+                .vacant()
+                .expect("unused slot")
+                .push_back(Tracked::try_new(index, &drops).expect("drop counter exists"));
+        }
+        let front = std::hint::black_box(queue.front().expect("nonempty queue"));
+        let address = ptr::from_ref(front.get());
+        let retained = front.detach();
+        assert!(queue.vacant().is_none());
+        (retained, address)
+    };
+    assert_eq!(ptr::from_ref(retained.get()), address);
+    assert_eq!(drops.each_ref().map(cell::Cell::get), [Some(0), Some(1)]);
+    drop(retained);
+    assert_eq!(drops.each_ref().map(cell::Cell::get), [Some(1); 2]);
+    assert_eq!(arena.available(), 2);
+}
+
+#[test]
 fn forgotten_fifo_reclaimed() {
     let drops = [cell::Cell::new(Some(0)), cell::Cell::new(Some(0))];
     {

@@ -58,7 +58,7 @@ const _: () = {
 };
 
 /// A store borrow whose accounting is fixed by its exclusive topology owner.
-pub(crate) struct Borrow<'a, T, const TRACK: bool>(pub(crate) &'a Store<T>);
+pub struct Borrow<'a, T, const TRACK: bool>(pub(crate) &'a Store<T>);
 
 // SAFETY: topology owners keep this fixed policy from insertion through removal.
 impl<T, const TRACK: bool> linked::Sealed<T> for Borrow<'_, T, TRACK> {}
