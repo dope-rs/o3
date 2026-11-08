@@ -214,24 +214,10 @@ impl<'a, T, G: external::Generation, Tag>
         G,
     >
 {
-    pub fn key(&self) -> external::Key<G, Tag> {
-        external::Key::new(self.entry.index().raw(), self.state)
-    }
-
     pub fn insert(self, value: T) -> external::Key<G, Tag> {
         let key = self.key();
         self.stage(value).publish();
         key
-    }
-
-    pub fn stage(self, value: T) -> Staging<'a, T, G, Tag> {
-        let epoch = self.state;
-        self.into_native()
-            .stage(external::Stamped {
-                generation: epoch,
-                value,
-            })
-            .into_external()
     }
 }
 
@@ -347,15 +333,6 @@ where
         ))
     }
 }
-
-type Staging<'a, T, G, Tag> = external::Staged<
-    crate::mem::Lease<
-        entries::Busy<'a, external::Stamped<T, G>, 1, entries::Interior<true>, 1>,
-        lease::Open,
-    >,
-    Tag,
-    true,
->;
 
 type Replaced<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize> = Result<
     (

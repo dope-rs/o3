@@ -4,7 +4,7 @@ use cycle::Policy;
 
 use crate::{
     depot::arena::slab::{
-        self, entries, external,
+        self, entries,
         key::{self, cycle},
     },
     mem::lease,
@@ -14,12 +14,6 @@ use crate::{
 pub struct Staged<B, Tag = (), const ROOT: bool = true> {
     pub(in crate::depot::arena::slab) entry: B,
     pub(in crate::depot::arena::slab) tag: marker::PhantomData<fn() -> Tag>,
-}
-
-impl<B, Tag, const ROOT: bool> Staged<B, Tag, ROOT> {
-    pub(in crate::depot::arena::slab) fn into_external(self) -> external::Staged<B, Tag, ROOT> {
-        external::Staged { inner: self }
-    }
 }
 
 impl<T, Tag, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, const ROOT: bool>

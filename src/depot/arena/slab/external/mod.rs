@@ -288,29 +288,16 @@ impl<'a, T, G: Generation, Tag, const PARTITIONS: usize, P>
 }
 
 impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> VacantSlot<'a, T, G, Tag, PARTITIONS> {
-    pub fn key(&self) -> Key<G, Tag> {
-        Key::new(self.entry.index().raw(), self.state)
-    }
-
     pub fn commit(self, value: T) {
         self.stage(value).publish();
-    }
-
-    pub fn stage(self, value: T) -> StagedSlot<'a, T, G, Tag, PARTITIONS> {
-        self.stage_with(|_| value)
     }
 
     pub fn stage_with(
         self,
         build: impl FnOnce(links::Index) -> T,
     ) -> StagedSlot<'a, T, G, Tag, PARTITIONS> {
-        let epoch = self.state;
-        self.into_native()
-            .stage_with(|index| Stamped {
-                generation: epoch,
-                value: build(index),
-            })
-            .into_external()
+        let value = build(self.entry.index());
+        self.stage(value)
     }
 }
 
@@ -360,13 +347,12 @@ pub use self::{borrowed::Borrowed, occupied::Occupied, staged::Staged, vacant::V
 /// Exclusive physical phases retain the exact stamped payload and partition domain.
 type Live<'a, T, G, Tag, C, P, const N: usize> =
     crate::depot::raw::Live<(&'a mut Exclusive<T, G, Tag, N>, C), links::Index, P>;
-type Busy<'a, T, G, const N: usize, P = ()> =
-    entries::Busy<'a, Stamped<T, G>, 1, entries::Exclusive<true>, N, P>;
+type Busy<'a, T, G, M, const N: usize, P = ()> = entries::Busy<'a, Stamped<T, G>, 1, M, N, P>;
 type Pending<'a, T, G, const N: usize> =
     entries::Pending<'a, Stamped<T, G>, 1, entries::Exclusive<true>, N>;
 pub type OccupiedSlot<'a, T, G, Tag = (), const N: usize = 1, P = ()> =
-    Occupied<slab::Occupied<Busy<'a, T, G, N, P>, Tag>>;
+    Occupied<slab::Occupied<Busy<'a, T, G, entries::Exclusive<true>, N, P>, Tag>>;
 pub type VacantSlot<'a, T, G, Tag = (), const N: usize = 1> =
     Vacant<Pending<'a, T, G, N>, Tag, true, G>;
 pub type StagedSlot<'a, T, G, Tag = (), const N: usize = 1> =
-    Staged<crate::mem::Lease<Busy<'a, T, G, N>, lease::Open>, Tag, true>;
+    Staged<crate::mem::Lease<Busy<'a, T, G, entries::Exclusive<true>, N>, lease::Open>, Tag, true>;
