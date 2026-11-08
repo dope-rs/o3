@@ -1,7 +1,5 @@
 use std::marker;
 
-use crate::depot;
-
 pub mod bitmap;
 mod domain;
 mod ordinal;
@@ -38,13 +36,9 @@ pub struct Initialized<P>(marker::PhantomData<fn(P) -> P>);
 /// The retained owner excludes writes to this vacant cell until initialization.
 pub struct Vacant<T>(marker::PhantomData<fn(T) -> T>);
 
-impl<P> depot::Predicate for Initialized<P> {}
-
 /// The retained (owner, key) pair names an initialized slot whose exact owner
 /// holds no live borrow of it, so interior admission needs no busy probe.
 pub struct Unborrowed<P>(marker::PhantomData<fn(P) -> P>);
-
-impl<P> depot::Predicate for Unborrowed<P> {}
 
 /// A native dense ordinal whose maximum representation is the absent sentinel.
 pub trait Position:

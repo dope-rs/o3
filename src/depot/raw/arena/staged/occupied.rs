@@ -1,5 +1,3 @@
-use std::num;
-
 use staged::Slot;
 
 use crate::depot::{
@@ -69,13 +67,6 @@ pub unsafe trait StagedPhase<K, Q, P>: Sized {
             phase: (),
             loan: slot.loan,
         }
-    }
-
-    fn occupied<I: crate::depot::raw::Compact>(
-        slot: &Slot<'_, K, Q, P, Self, I>,
-    ) -> num::NonZero<u32> {
-        // SAFETY: this phase retains one initialized payload in its exact owner.
-        unsafe { num::NonZero::new_unchecked(slot.owner.nodes.state().occupied.get()) }
     }
 
     fn payload<'s, I: crate::depot::raw::Compact>(

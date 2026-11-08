@@ -92,10 +92,6 @@ pub enum Append {}
 pub enum Join {}
 
 impl depot::raw::Sealed for Detach {}
-impl depot::Predicate for Detach {}
 impl depot::raw::Sealed for Prepend {}
-impl depot::Predicate for Prepend {}
 impl depot::raw::Sealed for Append {}
-impl depot::Predicate for Append {}
 impl depot::raw::Sealed for Join {}
-impl depot::Predicate for Join {}

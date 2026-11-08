@@ -444,7 +444,6 @@ impl<'a, T, Tag, const MAX: u32, const ROOT: bool> Reuse<'a, T, Tag, MAX, ROOT> 
 pub enum Field {}
 
 impl crate::depot::raw::Sealed for Field {}
-impl crate::depot::Predicate for Field {}
 
 type Lookup<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize> = Result<
     slab::Occupied<entries::Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>, Tag>,

@@ -107,6 +107,4 @@ pub enum Same {}
 pub enum Available {}
 
 impl depot::raw::Sealed for Same {}
-impl depot::Predicate for Same {}
 impl depot::raw::Sealed for Available {}
-impl depot::Predicate for Available {}

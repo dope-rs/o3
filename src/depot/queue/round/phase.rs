@@ -31,8 +31,3 @@ impl depot::raw::Sealed for Vacant {}
 impl depot::raw::Sealed for Linked {}
 impl depot::raw::Sealed for Head {}
 impl depot::raw::Sealed for Active {}
-impl depot::Predicate for Ready {}
-impl depot::Predicate for Vacant {}
-impl depot::Predicate for Linked {}
-impl depot::Predicate for Head {}
-impl depot::Predicate for Active {}

@@ -206,5 +206,3 @@ const _: () = {
 /// The retained (owner, key) pair names a physical slot in that owner's immutable extent.
 /// Initialization and membership are not implied.
 pub enum Physical {}
-
-impl crate::depot::Predicate for Physical {}
