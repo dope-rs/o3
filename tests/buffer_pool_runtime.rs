@@ -200,7 +200,7 @@ fn builds_from_layout() {
 fn source_reuses_range() {
     let pool = pool::Pool::<state::Initialized>::try_new(1, 32);
     let pool = pool.expect("required fixture outcome");
-    let source = borrowed::Source::try_new(&pool, 16, 8);
+    let source = borrowed::Source::<0>::try_new(&pool, 16, 8);
     let source = source.expect("required fixture outcome");
     let ((), counts) = Tracker::usage(|| {
         let mut previous = None;
@@ -233,7 +233,7 @@ fn rejects_exact_extent() {
     let pool = pool::Pool::<state::Initialized>::try_new(1, 32);
     let pool = pool.expect("required fixture outcome");
     for (length, suffix) in [(33, 0), (16, 17), (0, usize::MAX)] {
-        let result = borrowed::Source::try_new(&pool, length, suffix);
+        let result = borrowed::Source::<{ usize::MAX }>::try_new(&pool, length, suffix);
         assert!(matches!(result, Err(borrowed::Error::Capacity {
             length: actual, suffix: tail, capacity,
         }) if actual == length && tail == suffix && capacity.get() == 32));
@@ -245,7 +245,7 @@ fn rejects_exact_extent() {
 fn reject_keeps_payload() {
     let pool = pool::Pool::<state::Initialized>::try_new(1, 32);
     let pool = pool.expect("required fixture outcome");
-    let source = borrowed::Source::try_new(&pool, 16, 8);
+    let source = borrowed::Source::<0>::try_new(&pool, 16, 8);
     let source = source.expect("required fixture outcome");
     let slot = source.acquire();
     let mut slot = slot.expect("assertion failed: slot.is_some()");
@@ -311,7 +311,7 @@ fn reject_keeps_payload() {
 fn empty_releases_slot() {
     let pool = pool::Pool::<state::Initialized>::try_new(1, 32);
     let pool = pool.expect("required fixture outcome");
-    let source = borrowed::Source::try_new(&pool, 0, 0);
+    let source = borrowed::Source::<0>::try_new(&pool, 0, 0);
     let source = source.expect("required fixture outcome");
     {
         let selected = source.acquire();
@@ -329,9 +329,7 @@ fn empty_releases_slot() {
 fn partition() {
     let pool = pool::Pool::<state::Initialized>::try_new(1, 32);
     let pool = pool.expect("required fixture outcome");
-    let source = borrowed::Source::try_new(&pool, 16, 8);
-    let source = source.expect("required fixture outcome");
-    let split = source.try_suffix::<17>();
+    let split = borrowed::Source::<17>::try_new(&pool, 16, 8);
     assert!(matches!(
         split,
         Err(borrowed::Error::Partition {
@@ -340,9 +338,7 @@ fn partition() {
         })
     ));
     assert_eq!(pool.available(), 1);
-    let source = borrowed::Source::try_new(&pool, 16, 8);
-    let source = source.expect("required fixture outcome");
-    let split = source.try_suffix::<4>();
+    let split = borrowed::Source::<4>::try_new(&pool, 16, 8);
     let split = split.expect("required fixture outcome");
     let ((), counts) = Tracker::usage(|| {
         for _ in 0..2 {

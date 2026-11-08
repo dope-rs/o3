@@ -12,7 +12,7 @@ use crate::{
         pool,
         pool::owners,
         resident,
-        storage::{alloc, provided, range, regions},
+        storage::{alloc, provided, regions},
     },
     mem::rc,
 };
@@ -224,12 +224,6 @@ impl<O> regions::Shared<O> {
     pub(in crate::buffer) unsafe fn restrict(&mut self, bounds: ops::Range<usize>) {
         // SAFETY: the caller proves the range; the paired owner remains unchanged.
         self.bytes = unsafe { self.bytes.restrict(bounds) };
-    }
-    pub fn try_restrict(&mut self, visible: ops::Range<usize>) -> Result<(), range::Error>
-    where
-        O: regions::End,
-    {
-        buffer::raw::Slice::try_with(self, visible, buffer::raw::Store::project)
     }
 }
 

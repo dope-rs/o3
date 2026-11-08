@@ -10,7 +10,7 @@ pub struct Source<'pool, const SUFFIX: usize = 0> {
     end: u32,
 }
 
-impl<'pool> Source<'pool> {
+impl<'pool, const SUFFIX: usize> Source<'pool, SUFFIX> {
     pub fn try_new(
         pool: &'pool pool::Pool<state::Initialized>,
         length: usize,
@@ -24,36 +24,25 @@ impl<'pool> Source<'pool> {
         };
         let end = (capacity.get() as usize).checked_sub(suffix).ok_or(error)?;
         let start = end.checked_sub(length).ok_or(error)?;
+        if SUFFIX > length {
+            return Err(borrowed::Error::Partition {
+                suffix: SUFFIX,
+                length,
+            });
+        }
         Ok(Self {
             pool,
             start: start as u32,
             end: end as u32,
         })
     }
-}
 
-impl<'pool, const SUFFIX: usize> Source<'pool, SUFFIX> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     pub fn len(&self) -> usize {
         (self.end - self.start) as usize
-    }
-
-    pub fn try_suffix<const NEXT: usize>(self) -> Result<Source<'pool, NEXT>, borrowed::Error> {
-        let length = self.len();
-        if NEXT > length {
-            return Err(borrowed::Error::Partition {
-                suffix: NEXT,
-                length,
-            });
-        }
-        Ok(Source {
-            pool: self.pool,
-            start: self.start,
-            end: self.end,
-        })
     }
 
     pub fn acquire(&self) -> Option<borrowed::Slice<'pool>> {
