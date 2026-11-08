@@ -19,14 +19,13 @@ enum State {
     External,
 }
 
-/// Scope-owned metadata with permanently initialized, separately typed links.
+/// Scope-owned metadata; the free and returned lists share one phase-owned link.
 #[repr(C, align(8))]
 pub(in crate::buffer::storage::provided) struct Entry<'d> {
     state: cell::Cell<State>,
     pub(super) resident: cell::Cell<MaybeUninit<u32>>,
     pub(super) domain: &'d arena::State<'d>,
-    pub(super) free: cell::Cell<Option<arena::Empty<'d>>>,
-    pub(super) returned: cell::Cell<Option<arena::Ready<'d>>>,
+    pub(super) next: arena::nodes::Link<'d>,
     pub(super) charge: cell::UnsafeCell<Option<ManuallyDrop<arena::Charge<'d>>>>,
 }
 
@@ -39,8 +38,7 @@ impl<'d> Entry<'d> {
             state: cell::Cell::new(State::Empty),
             resident: cell::Cell::new(resident),
             domain,
-            free: cell::Cell::new(None),
-            returned: cell::Cell::new(None),
+            next: cell::Cell::new(None),
             charge: cell::UnsafeCell::new(None),
         }
     }
@@ -146,6 +144,6 @@ impl<'d> Entry<'d> {
 }
 
 const _: () = {
-    assert!(size_of::<Entry<'_>>() == usize::BITS as usize);
+    assert!(size_of::<Entry<'_>>() == 7 * size_of::<usize>());
     assert!(align_of::<Entry<'_>>() == 8);
 };
