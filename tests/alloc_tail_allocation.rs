@@ -14,7 +14,7 @@ static ALLOCATOR: Tracker = Tracker;
 
 #[test]
 fn initializes_exact_tail() {
-    for count in [0, 3] {
+    for count in std::hint::black_box([0, 3]) {
         let drops = Cell::new(Some(0));
         let observed = Cell::new(None);
         let plan = tail::Plan::<Header<'_>, Entry<'_>>::try_new(count).expect("tail layout");

@@ -82,12 +82,7 @@ impl<K: crate::depot::raw::Address, P> Fifo<K, P> {
         });
         // SAFETY: Join retains these disjoint reciprocal chains and their exact endpoints.
         unsafe {
-            crate::depot::raw::Splice::resolved(
-                target,
-                source,
-                &first.raw,
-                last.map(|link| &link.raw),
-            )
+            crate::depot::raw::Splice::new(target, source, &first.raw, last.map(|link| &link.raw))
         }
         .commit();
     }
