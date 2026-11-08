@@ -1,4 +1,4 @@
-use std::{num, ops, ptr};
+use std::{num, ptr};
 
 use storage::alloc;
 
@@ -7,72 +7,6 @@ use crate::{
     buffer::{bytes::window, pool::owners, resident, resident::staging, storage},
     mem::credit,
 };
-
-/// Admitted growth and initialized sources bound to their unique allocation.
-pub(in crate::buffer) struct Resize<
-    'a,
-    P: crate::buffer::raw::Policy,
-    const MAX: usize,
-    I = &'a [u8],
-> {
-    source: crate::buffer::raw::Unique<'a, P>,
-    ideal: window::Growth<MAX>,
-    need: window::Growth<MAX>,
-    range: ops::Range<u32>,
-    tail: I,
-}
-
-impl<'a, P: crate::buffer::raw::Policy, const MAX: usize, I: buffer::raw::SliceExt>
-    Resize<'a, P, MAX, I>
-{
-    /// Grows the admitted owner, retrying once with the required capacity.
-    fn try_commit(self) -> Result<window::Growth<MAX>, alloc::Error<P::Failure>> {
-        let Resize {
-            mut source,
-            ideal,
-            need,
-            range,
-            tail,
-        } = self;
-        let at_start = range.start == 0;
-        let mut growth = ideal;
-        loop {
-            let target = growth.capacity().nonzero();
-            let amount = growth.amount();
-            let error = {
-                let debit = crate::buffer::raw::Debit::try_new(*source.policy(), amount)
-                    .map_err(alloc::Error::Budget)?;
-                if at_start {
-                    match source.try_resize(target, debit) {
-                        Ok(()) => {
-                            // SAFETY: Resize admitted this disjoint tail after the
-                            // initialized prefix; resizing preserves that prefix.
-                            unsafe {
-                                tail.copy_to(source.data().cast_mut().add(range.end as usize));
-                            }
-                            return Ok(growth);
-                        }
-                        Err(error) => error,
-                    }
-                } else {
-                    let plan = crate::buffer::raw::Header::<P>::layout(target);
-                    // SAFETY: this admitted header includes a nonzero target capacity.
-                    match unsafe { crate::alloc::raw::try_new(plan, false) } {
-                        Ok(pointer) => {
-                            source.replace(pointer, target, debit, range, tail);
-                            return Ok(growth);
-                        }
-                        Err(error) => error,
-                    }
-                }
-            };
-            if growth.capacity() == need.capacity() {
-                return Err(alloc::Error::Allocation(error));
-            }
-            growth = need;
-        }
-    }
-}
 
 pub(in crate::buffer) struct Edit<'a, P: crate::buffer::raw::Policy, const MAX_CAPACITY: usize> {
     pub(in crate::buffer::bytes::window) state: &'a mut window::State<P, MAX_CAPACITY>,
@@ -107,20 +41,51 @@ impl<'a, P: buffer::raw::Policy, const MAX_CAPACITY: usize> Edit<'a, P, MAX_CAPA
     ) -> Result<(), alloc::Error<P::Failure>> {
         let window::State { buf, cap, head } = self.state;
         match buf.access() {
-            Some(source) => {
-                let target = if ideal.amount().get() as usize <= source.policy().available() {
+            Some(mut source) => {
+                let mut growth = if ideal.amount().get() as usize <= source.policy().available() {
                     ideal
                 } else {
                     required
                 };
-                let growth = Resize {
-                    source,
-                    ideal: target,
-                    need: required,
-                    range: *self.tail..*head,
-                    tail: src,
-                }
-                .try_commit()?;
+                let range = *self.tail..*head;
+                let at_start = range.start == 0;
+                let growth = loop {
+                    let target = growth.capacity().nonzero();
+                    let error = {
+                        let debit =
+                            crate::buffer::raw::Debit::try_new(*source.policy(), growth.amount())
+                                .map_err(alloc::Error::Budget)?;
+                        if at_start {
+                            match source.try_resize(target, debit) {
+                                Ok(()) => {
+                                    // SAFETY: Edit admitted this disjoint tail after the
+                                    // initialized prefix; resizing preserves that prefix.
+                                    unsafe {
+                                        src.copy_to(
+                                            source.data().cast_mut().add(range.end as usize),
+                                        );
+                                    }
+                                    break growth;
+                                }
+                                Err(error) => error,
+                            }
+                        } else {
+                            let plan = crate::buffer::raw::Header::<P>::layout(target);
+                            // SAFETY: this admitted header includes a nonzero target capacity.
+                            match unsafe { crate::alloc::raw::try_new(plan, false) } {
+                                Ok(pointer) => {
+                                    source.replace(pointer, target, debit, range, src);
+                                    break growth;
+                                }
+                                Err(error) => error,
+                            }
+                        }
+                    };
+                    if growth.capacity() == required.capacity() {
+                        return Err(alloc::Error::Allocation(error));
+                    }
+                    growth = required;
+                };
                 *cap = growth.capacity();
                 *head = end;
                 *self.tail = 0;
@@ -369,11 +334,6 @@ fn try_allocate<P: buffer::raw::Policy, const MAX: usize, I: buffer::raw::SliceE
         head: len,
     })
 }
-
-const _: () = {
-    assert!(size_of::<Resize<'static, (), 1>>() == 6 * size_of::<usize>());
-    assert!(size_of::<Option<Resize<'static, (), 1>>>() == 6 * size_of::<usize>());
-};
 
 pub(in crate::buffer) fn try_staged<'d, I: buffer::raw::SliceExt>(
     reserve: staging::Reserve<resident::Budget<'d>, (&[u8], owners::Measured<I>)>,

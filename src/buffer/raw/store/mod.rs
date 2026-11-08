@@ -86,6 +86,6 @@ mod loans;
 mod tags;
 
 mod alloc;
-pub(in crate::buffer) use alloc::{Debit, Header, Heap, Policy, Rc, Unique};
+pub(in crate::buffer) use alloc::{Debit, Header, Heap, Policy, Rc};
 mod pooling;
 pub(in crate::buffer) use pooling::Backing;
