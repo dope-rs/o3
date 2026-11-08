@@ -18,14 +18,11 @@ pub(in crate::buffer::segments) struct Multi<'a, T, H: Handle<T>> {
     pub(in crate::buffer::segments) index: slots::Index,
 }
 
-/// The detached front and metadata owned by one exclusive sequence.
-/// Its stable extents remain part of that sequence's admitted totals until finalization.
-struct Removed<'a, T, H: Handle<T>> {
-    owner: slots::Live<segments::Item<T>, &'a slots::Store<segments::Item<T>>>,
-    handle: &'a H,
-    key: &'a mut Key,
-    index: slots::Index,
-}
+type Removed<'a, T> = (
+    slots::Live<segments::Item<T>, &'a slots::Store<segments::Item<T>>>,
+    hold::Charge,
+    Remaining,
+);
 
 impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
     pub(in crate::buffer::segments) fn front(
@@ -45,45 +42,30 @@ impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
 
     #[inline(always)]
     pub(in crate::buffer::segments) fn take_front(self) -> (segments::Item<T>, Remaining) {
-        let mut removed = self.detach();
-        let rest = removed.finish().1;
-        let owner = removed.owner.take().0;
-        (owner, rest)
+        let (owner, _, rest) = self.remove();
+        (owner.take().0, rest)
     }
 
     pub(in crate::buffer::segments) fn discard(self) -> (hold::Charge, Remaining) {
-        self.detach().finish()
+        let (_, charge, rest) = self.remove();
+        (charge, rest)
     }
 
-    fn detach(self) -> Removed<'a, T, H> {
+    #[inline(always)]
+    fn remove(self) -> Removed<'a, T> {
         let nodes = handles::nodes(&self.sequence.handle);
         let descs = handles::descriptors(&self.sequence.handle);
         // SAFETY: this head exclusively borrows the sequence owning this descriptor.
         let desc = unsafe { &mut *descs.value_ptr(self.index) };
         let head = desc.links.head_raw();
         let owner = unsafe { crate::depot::raw::SlotOwner::detach(&mut desc.links, nodes, head) };
-        Removed {
-            owner,
-            handle: &self.sequence.handle,
-            key: &mut self.sequence.key,
-            index: self.index,
-        }
-    }
-}
-
-impl<T: buffer::raw::Segment, H: Handle<T>> Removed<'_, T, H> {
-    #[inline(always)]
-    fn finish(&mut self) -> (hold::Charge, Remaining) {
-        let len = self.owner.get().len().get();
-        let resident = buffer::Residency::resident(self.owner.get());
+        let len = owner.get().len().get();
+        let resident = buffer::Residency::resident(owner.get());
         let charge = hold::Charge::from_owner(len, resident);
-        let descs = handles::descriptors(self.handle);
-        // SAFETY: Removed retains the exclusive sequence-key loan and this live descriptor.
-        let desc = unsafe { &mut *descs.value_ptr(self.index) };
         let count = Plural(desc.count);
         let rest = if count.raw() == 2 {
             let entry = unsafe { descs.detached(self.index) };
-            *self.key = Key::single(entry.get().links.head_raw());
+            self.sequence.key = Key::single(entry.get().links.head_raw());
             Remaining::Single
         } else {
             desc.count = count.tail();
@@ -91,7 +73,7 @@ impl<T: buffer::raw::Segment, H: Handle<T>> Removed<'_, T, H> {
             desc.resident_bytes -= resident;
             Remaining::Multi
         };
-        (charge, rest)
+        (owner, charge, rest)
     }
 }
 

@@ -26,12 +26,12 @@ impl<'a, P: Ord, C: alloc::raw::Extent> indexed::Occupied<'a, P, C> {
     }
 
     pub fn replace(self, value: P) -> (Self, P) {
-        let (entry, old) = heap::raw::Hole::replace(self.entry.prepare(value));
+        let (entry, old) = heap::raw::Hole::replace::<false>(self.entry.prepare(value));
         (Self { entry }, old.priority)
     }
 
     pub fn set(self, value: P) {
-        heap::raw::Hole::update(self.entry.prepare(value));
+        heap::raw::Hole::replace::<true>(self.entry.prepare(value));
     }
 
     pub fn retire(self) {

@@ -149,14 +149,14 @@ impl<'a, S: heap::raw::Store> Slot<'a, S> {
             priority,
             |vacant, priority| vacant.prepare(priority).store(),
             |entry, priority| {
-                heap::raw::Hole::prepare(entry.prepare_key(priority));
+                heap::raw::Hole::replace::<false>(entry.prepare_key(priority));
             },
         );
     }
 
     pub(in crate::depot::heap) fn clear(self) {
         if let Some(entry) = self.occupied() {
-            entry.into_parts().0.clear();
+            entry.with_key(()).clear();
         }
     }
 
@@ -165,7 +165,7 @@ impl<'a, S: heap::raw::Store> Slot<'a, S> {
             if entry.value().identity != entry.next {
                 return;
             }
-            entry.into_parts().0.clear();
+            entry.with_key(()).clear();
         }
     }
 }

@@ -12,13 +12,13 @@ impl<K: crate::depot::raw::Address, P: Ord, I: Position, B> keyed::Occupied<'_, 
         &self.entry.value().priority
     }
     pub fn set(self, priority: P) {
-        heap::raw::Hole::update(self.entry.into_parts().0.prepare(priority));
+        heap::raw::Hole::replace::<true>(self.entry.with_key(()).prepare(priority));
     }
     pub fn retire_min(self) -> heap::Change {
-        self.entry.into_parts().0.retire_min()
+        self.entry.with_key(()).retire_min()
     }
     pub fn remove(self) -> P {
-        self.entry.into_parts().0.remove().1.priority
+        self.entry.with_key(()).remove().1.priority
     }
 }
 

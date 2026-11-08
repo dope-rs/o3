@@ -42,12 +42,12 @@ impl<L: Into<Layout>, S: state::State> Pool<S, owners::Plain<L>> {
     }
 }
 
-impl<const CAPACITY: usize> Pool<state::Initialized, owners::Plain<Width<CAPACITY>>> {
+impl<S: state::State, const CAPACITY: usize> Pool<S, owners::Plain<Width<CAPACITY>>> {
     /// Copies fixed-width source arrays into one newly acquired complete slot.
     pub fn copy<const PARTS: usize, const WIDTH: usize>(
         &self,
         sources: [&[u8; WIDTH]; PARTS],
-    ) -> Option<Span<owners::Plain<Width<CAPACITY>>, Owned, state::Initialized>> {
+    ) -> Option<Span<owners::Plain<Width<CAPACITY>>, Owned, S>> {
         const { assert!(PARTS * WIDTH == CAPACITY, "width") }
         let span = self.acquire()?;
         Some(span.copy_in(sources.map(|source| source.as_slice()), CAPACITY))

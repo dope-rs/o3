@@ -87,9 +87,9 @@ fn retains_prefix_sources() {
 #[test]
 fn copies_fixed_sources() {
     let layout = pool::Width::<16>::new(1).expect("one fixed-width slot");
-    let pool = pool::Pool::<state::Initialized, owners::Plain<_>>::try_from(layout)
+    let pool = pool::Pool::<state::Uninit, owners::Plain<_>>::try_from(layout)
         .expect("allocate the fixed-width pool");
-    let (lease, activity) = Tracker::activity(|| {
+    let (mut lease, activity) = Tracker::activity(|| {
         let lease = pool
             .copy([b"abcd", b"efgh", b"ijkl", b"mnop"])
             .expect("the fixed-width slot is available");
@@ -106,7 +106,7 @@ fn copies_fixed_sources() {
     assert!(activity == Activity::default());
     let ((), activity) = Tracker::activity(|| drop(pool));
     assert!(activity == Activity::default());
-    assert_eq!(lease.as_slice(), b"nextnextnextnext");
+    assert_eq!(lease.as_mut_slice(), b"nextnextnextnext");
 }
 
 #[test]

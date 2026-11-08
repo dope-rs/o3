@@ -27,20 +27,20 @@ impl<'a, K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position>
         unsafe { heap::raw::resident_mut(self.entry.owner, self.entry.next) }
     }
     pub fn set(self, priority: P) {
-        heap::raw::Hole::update(self.entry.into_parts().0.prepare(priority));
+        heap::raw::Hole::replace::<true>(self.entry.with_key(()).prepare(priority));
     }
     pub fn set_min(self, priority: P) -> heap::Change {
-        self.entry.into_parts().0.set_min_slot(priority)
+        self.entry.with_key(()).set_min_slot(priority)
     }
     pub fn remove(self) -> resident::Removed<'a, K, P, R, I> {
         resident::Removed {
-            entry: heap::raw::Hole::remove(self.entry.into_parts().0),
+            entry: heap::raw::Hole::remove(self.entry.with_key(())),
         }
     }
     pub fn retire(self) {
-        self.entry.into_parts().0.clear();
+        self.entry.with_key(()).clear();
     }
     pub fn retire_min(self) -> heap::Change {
-        self.entry.into_parts().0.retire_min()
+        self.entry.with_key(()).retire_min()
     }
 }
