@@ -304,10 +304,10 @@ pub unsafe trait Source<const N: usize>: Copy {
     }
 }
 
-// SAFETY: wrapping addition is exact once the admitted component sums fit W.
+// SAFETY: admission proves every component sum fits W.
 unsafe impl<const N: usize, W: Word> Sum<N, W> for [W; N] {
     unsafe fn add_raw(self, other: Self) -> Self {
-        array::from_fn(|axis| self[axis].wrapping_add(other[axis]))
+        array::from_fn(|axis| self[axis] + other[axis])
     }
 }
 
@@ -348,64 +348,34 @@ pub unsafe trait Exact<const N: usize, W: Word, A: Amount<N, W>>: Sized {
 }
 
 /// # Safety
-/// Conversions and representable arithmetic are exact; `wrap` retains low bits.
+/// Representable arithmetic is exact.
 /// `checked_add` rejects overflow; `sub_or_zero` clamps negative differences to zero.
 pub unsafe trait Word:
     Copy + Eq + Ord + ops::Add<Output = Self> + ops::Sub<Output = Self> + owner::Sealed
 {
     const ZERO: Self;
 
-    fn to_usize(self) -> usize;
-
-    /// Converts the low bits of `value` into this word's representation.
-    fn wrap(value: usize) -> Self;
-
     fn checked_add(self, other: Self) -> Option<Self>;
 
     fn sub_or_zero(self, other: Self) -> Self;
-
-    fn wrapping_add(self, other: Self) -> Self {
-        Self::wrap(self.to_usize().wrapping_add(other.to_usize()))
-    }
-
-    fn wrapping_sub(self, other: Self) -> Self {
-        Self::wrap(self.to_usize().wrapping_sub(other.to_usize()))
-    }
 }
 
-// SAFETY: u32 is sealed and 32 bits wide, so `to_usize` widens exactly, `wrap`
-// keeps the low bits, `checked_add` is exact or rejects, and `sub_or_zero`
-// saturates at zero.
+// SAFETY: u32 is sealed; checked addition rejects overflow and subtraction saturates.
 unsafe impl Word for u32 {
     const ZERO: Self = 0;
 
-    fn to_usize(self) -> usize {
-        self as usize
-    }
-
     fn checked_add(self, other: Self) -> Option<Self> {
         self.checked_add(other)
     }
 
     fn sub_or_zero(self, other: Self) -> Self {
         self.saturating_sub(other)
-    }
-
-    fn wrap(value: usize) -> Self {
-        value as Self
     }
 }
 
-const _: () = assert!(usize::BITS >= u32::BITS);
-
-// SAFETY: usize is sealed, so `to_usize` is the identity, `wrap` keeps all bits,
-// `checked_add` is exact or rejects, and `sub_or_zero` saturates at zero.
+// SAFETY: usize is sealed; checked addition rejects overflow and subtraction saturates.
 unsafe impl Word for usize {
     const ZERO: Self = 0;
-
-    fn to_usize(self) -> usize {
-        self
-    }
 
     fn checked_add(self, other: Self) -> Option<Self> {
         self.checked_add(other)
@@ -413,10 +383,6 @@ unsafe impl Word for usize {
 
     fn sub_or_zero(self, other: Self) -> Self {
         self.saturating_sub(other)
-    }
-
-    fn wrap(value: usize) -> Self {
-        value
     }
 }
 

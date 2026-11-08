@@ -24,7 +24,7 @@ impl<W: mem::raw::Counter> Live<W> {
     }
 
     pub(crate) fn release(self) -> Option<Self> {
-        let value = self.get().wrapping_sub(W::ONE);
+        let value = self.get() - W::ONE;
         if value == W::ZERO {
             None
         } else {

@@ -203,6 +203,8 @@ fn extends_full_width() {
 fn rejects_late_axis() {
     let accounts = Lanes::try_new([4, 40], [[2, 20]]).expect("fixture lane capacity");
     let lane = accounts.get(0).expect("first lane");
+    assert!(lane.fits([6, 60]));
+    assert!(!lane.fits([6, 61]));
     let ((), alloc) = Tracker::usage(|| {
         assert!(!lane.can_acquire([6, 61]));
         let Err(error) = Charge::try_new(lane, [6, 61]) else {
