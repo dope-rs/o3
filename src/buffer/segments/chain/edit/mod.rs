@@ -91,17 +91,12 @@ impl Growth {
         first: &segments::Item<T>,
         second: &segments::Item<T>,
     ) -> Result<Self, total::Error> {
-        let current = first.as_ref().as_ref().len();
-        let added = second.as_ref().as_ref().len();
-        let len = total::Error::logical(current, added)?;
-        let current = buffer::Residency::resident(first.as_ref());
-        let added = buffer::Residency::resident(second.as_ref());
-        let resident = total::Error::resident(current, added)?;
-        Ok(Self {
-            count: NonZero::<u32>::MIN.saturating_add(1),
-            len,
-            resident,
-        })
+        Self::try_new(
+            segments::Count::ONE,
+            first.as_ref().as_ref().len(),
+            buffer::Residency::resident(first.as_ref()),
+            second,
+        )
     }
 
     pub(in crate::buffer::segments::chain) fn try_new<T: buffer::raw::Segment>(

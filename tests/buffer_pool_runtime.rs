@@ -331,7 +331,7 @@ fn partition() {
     let pool = pool.expect("required fixture outcome");
     let source = borrowed::Source::try_new(&pool, 16, 8);
     let source = source.expect("required fixture outcome");
-    let split = source.into_split().try_suffix(17);
+    let split = source.try_suffix::<17>();
     assert!(matches!(
         split,
         Err(borrowed::Error::Partition {
@@ -342,12 +342,12 @@ fn partition() {
     assert_eq!(pool.available(), 1);
     let source = borrowed::Source::try_new(&pool, 16, 8);
     let source = source.expect("required fixture outcome");
-    let split = source.into_split().try_suffix(4);
+    let split = source.try_suffix::<4>();
     let split = split.expect("required fixture outcome");
     let ((), counts) = Tracker::usage(|| {
         for _ in 0..2 {
             {
-                let frame = split.acquire();
+                let frame = split.acquire_frame();
                 let mut frame = frame.expect("assertion failed: frame.is_some()");
                 let pointer = frame.as_mut_slice().as_ptr();
                 frame.prefix_mut().copy_from_slice(&[0x41; 12]);

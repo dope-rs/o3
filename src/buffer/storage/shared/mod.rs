@@ -67,13 +67,10 @@ unsafe impl<O: regions::End> buffer::raw::Consume for Shared<O> {
 
 impl<O: regions::End> Shared<O> {
     pub fn project(
-        mut self,
+        self,
         visible: ops::Range<usize>,
     ) -> Result<Self, crate::mem::Rejected<Self, range::Error>> {
-        match self.try_restrict(visible) {
-            Ok(()) => Ok(self),
-            Err(error) => Err(crate::mem::Rejected::new(self, error)),
-        }
+        buffer::raw::Slice::try_project(self, visible)
     }
 }
 impl<O: regions::End> consume::Consume for Shared<O> {

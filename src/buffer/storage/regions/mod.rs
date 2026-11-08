@@ -229,17 +229,7 @@ impl<O> regions::Shared<O> {
     where
         O: regions::End,
     {
-        self.bytes = self
-            .as_slice()
-            .get(visible.clone())
-            .map(regions::Extent::from_bytes)
-            .ok_or_else(|| range::Error::new(visible, self.len()))?;
-        if self.is_empty()
-            && let Some(owner) = O::EMPTY
-        {
-            self.owner = owner;
-        }
-        Ok(())
+        buffer::raw::Slice::try_with(self, visible, buffer::raw::Store::project)
     }
 }
 

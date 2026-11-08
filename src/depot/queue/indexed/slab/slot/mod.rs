@@ -48,7 +48,7 @@ impl<
         slab::Handle::new(self.index, epoch)
     }
     pub(in crate::depot) fn state_mut(&mut self) -> &mut crate::depot::raw::IndexedState {
-        // SAFETY: the admitted metadata cell excludes the dangling empty allocation.
+        // SAFETY: the admitted metadata cell excludes the immutable empty state.
         unsafe { self.core.block.state_mut() }
     }
     pub(in crate::depot) fn release<const RETIRE: bool>(&mut self) {
