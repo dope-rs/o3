@@ -133,6 +133,12 @@ impl Key {
     }
 }
 
+impl From<slots::Index> for Key {
+    fn from(index: slots::Index) -> Self {
+        Self(index.raw().wrapping_add(1) as usize)
+    }
+}
+
 pub(in crate::buffer::segments) fn nodes<T, H: Handle<T>>(
     handle: &H,
 ) -> &slots::Store<segments::Item<T>> {
