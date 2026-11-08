@@ -1,6 +1,5 @@
 use std::{
-    marker,
-    mem::{ManuallyDrop, MaybeUninit, offset_of, take},
+    mem::{MaybeUninit, offset_of, take},
     num, ptr, vec,
 };
 
@@ -8,7 +7,7 @@ use storage::backing;
 
 use crate::{
     buffer,
-    buffer::{pool, pool::owners, storage, storage::regions},
+    buffer::{pool::owners, storage, storage::regions},
     mem,
     mem::rc,
 };
@@ -16,9 +15,8 @@ use crate::{
 /// One compact plain backing edge retaining its original root mode.
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct Tag<M = pool::Owned> {
+pub struct Tag {
     pointer: ptr::NonNull<()>,
-    mode: marker::PhantomData<M>,
 }
 
 enum Kind {
@@ -31,30 +29,26 @@ impl Tag {
     pub(in crate::buffer) fn allocation(owner: crate::buffer::raw::Rc) -> Self {
         Self {
             pointer: owner.into_raw().cast(),
-            mode: marker::PhantomData,
         }
     }
 
     pub(super) fn vec(owner: mem::raw::Owner<Header>) -> Self {
         Self {
             pointer: owner.into_raw().cast().map_addr(|address| address | 0b010),
-            mode: marker::PhantomData,
         }
     }
-}
-
-impl<M> Tag<M> {
-    pub(in crate::buffer) fn pool<L>(owner: owners::Edge<owners::Plain<L>, M>) -> Option<Self> {
+    pub(in crate::buffer) fn pool<L>(owner: owners::Edge<owners::Plain<L>>) -> Option<Self> {
         owner.into_raw().map(|pointer| Self {
             pointer: pointer.cast().map_addr(|address| address | 0b100),
-            mode: marker::PhantomData,
         })
     }
 
+    #[inline]
     pub(in crate::buffer) fn bytes(&self) -> usize {
         self.root().bytes()
     }
 
+    #[inline]
     pub(in crate::buffer) fn root<'a, 'd>(&'a self) -> backing::Root<'a, 'd> {
         use backing::Root;
 
@@ -77,49 +71,39 @@ impl<M> Tag<M> {
         }
     }
 
+    #[inline]
     pub(in crate::buffer) fn untag(&self) -> ptr::NonNull<()> {
         // SAFETY: every constructor retains an aligned, non-null backing address.
         self.pointer
             .map_addr(|address| unsafe { num::NonZero::new_unchecked(address.get() & !7) })
     }
 
+    #[inline]
     pub(in crate::buffer) fn try_clone(&self) -> Result<Self, rc::Error> {
         // SAFETY: this owner keeps its exact count live during admission.
         unsafe { mem::raw::Edge::try_retain(self) }?;
         Ok(Self {
             pointer: self.pointer,
-            mode: marker::PhantomData,
         })
     }
 }
 
-impl Tag<pool::Borrowed<'_>> {
-    pub(in crate::buffer) fn into_owned(self) -> Tag {
-        let this = ManuallyDrop::new(self);
-        Tag {
-            pointer: this.pointer,
-            mode: marker::PhantomData,
-        }
-    }
-}
-
-impl<M> Drop for Tag<M> {
+impl Drop for Tag {
+    #[inline]
     fn drop(&mut self) {
+        use mem::raw::{Edge, Target};
+
+        // SAFETY: Drop consumes this exact live backing edge once.
+        if unsafe { self.release() } != rc::Release::Last {
+            return;
+        }
         let pointer = self.untag();
-        match self.kind() {
-            Kind::Vec => {
-                // SAFETY: Drop transfers this exact vector edge once.
-                drop(unsafe { mem::raw::Owner::<Header>::from_raw(pointer.cast()) });
-            }
-            Kind::Pool => {
-                // SAFETY: Drop transfers this exact plain pool-slot edge once.
-                unsafe { owners::Edge::<owners::Plain>::release_raw(pointer) };
-            }
-            Kind::Allocation => {
-                // SAFETY: Drop transfers this exact plain allocation edge once.
-                drop(unsafe {
-                    mem::raw::Owner::<crate::buffer::raw::Header<()>>::from_raw(pointer.cast())
-                });
+        // SAFETY: Last transfers the exact tagged backing to its finalizer.
+        unsafe {
+            match self.kind() {
+                Kind::Vec => Header::destroy(pointer.cast()),
+                Kind::Pool => owners::Slot::<owners::Plain>::destroy(pointer.cast()),
+                Kind::Allocation => crate::buffer::raw::Header::<()>::destroy(pointer.cast()),
             }
         }
     }
@@ -130,18 +114,7 @@ const _: () = {
     assert!(align_of::<regions::Prefix>() >= 8);
     assert!(size_of::<Tag>() == size_of::<usize>());
     assert!(size_of::<Option<Tag>>() == size_of::<usize>());
-    assert!(size_of::<Tag<pool::Borrowed<'static>>>() == size_of::<usize>());
-    assert!(size_of::<Option<Tag<pool::Borrowed<'static>>>>() == size_of::<usize>());
 };
-
-impl<'d> backing::Owner<'d> for Tag<pool::Borrowed<'d>> {
-    fn root<'a>(&'a self) -> Option<backing::Root<'a, 'd>>
-    where
-        'd: 'a,
-    {
-        Some(self.root())
-    }
-}
 
 impl<'d> backing::Owner<'d> for Option<regions::Tag> {
     #[inline]

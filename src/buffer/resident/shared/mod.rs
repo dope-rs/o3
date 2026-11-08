@@ -79,7 +79,7 @@ impl<'d> Shared<'d> {
     pub fn scope(&self) -> Option<&Self> {
         use resident::State;
         match self.region.owner() {
-            State::Owned(_) | State::Borrowed(_) => None,
+            State::Owned(_) | State::Static => None,
             State::Slice if self.region.is_empty() => None,
             State::Slice | State::Resident(_) | State::Accounted(_) | State::Provided(_) => {
                 Some(self)

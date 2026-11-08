@@ -331,10 +331,13 @@ impl<'a: 'd, 'd> From<&'a [u8]> for resident::Shared<'d> {
 }
 
 impl<'d> From<regions::Shared<Option<regions::Tag>>> for resident::Shared<'d> {
+    #[inline]
     fn from(region: regions::Shared<Option<regions::Tag>>) -> Self {
         Self {
             region: regions::Shared {
-                owner: resident::State::Owned(region.owner),
+                owner: region
+                    .owner
+                    .map_or(resident::State::Static, resident::State::Owned),
                 bytes: region.bytes,
             },
         }
@@ -358,15 +361,7 @@ impl<'d, L> From<regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'
     for resident::Shared<'d>
 {
     fn from(region: regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>) -> Self {
-        match regions::Tag::pool(region.owner) {
-            Some(owner) => Self {
-                region: regions::Shared {
-                    owner: resident::State::Borrowed(owner),
-                    bytes: region.bytes,
-                },
-            },
-            None => Self::new(),
-        }
+        region.into_owner().into()
     }
 }
 
@@ -390,7 +385,7 @@ impl<'d> regions::Shared<resident::State<'d>> {
     ) -> Result<regions::Shared<Option<regions::Tag>>, Self> {
         if let resident::State::Resident(owner) = self.owner {
             self.owner = match owner.try_own() {
-                Ok(owner) => resident::State::Owned(Some(regions::Tag::allocation(owner))),
+                Ok(owner) => resident::State::Owned(regions::Tag::allocation(owner)),
                 Err(owner) => resident::State::Resident(owner),
             };
         }

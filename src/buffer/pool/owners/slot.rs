@@ -22,6 +22,14 @@ unsafe impl<K: crate::buffer::raw::Backing> crate::mem::raw::Edge for Slot<K> {
     }
 }
 
+// SAFETY: each slot edge retains its exact published pool until terminal release.
+unsafe impl<K: crate::buffer::raw::Backing> crate::mem::raw::Target for Slot<K> {
+    unsafe fn destroy(pointer: ptr::NonNull<Self>) {
+        // SAFETY: Last transfers this slot before its live key is replaced.
+        unsafe { Retired::<K, super::Any>::from_owner(pointer.cast()) }.finish();
+    }
+}
+
 /// One freshly initialized nonempty slot list before its first acquisition.
 #[repr(transparent)]
 pub(in crate::buffer::pool) struct Seed<K, S> {
