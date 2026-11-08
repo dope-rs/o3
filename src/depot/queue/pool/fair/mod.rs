@@ -29,21 +29,16 @@ pub enum Error {
 const _: () = assert!(std::mem::size_of::<Plan>() == 2 * std::mem::size_of::<u32>());
 
 impl Plan {
+    #[inline]
     pub fn new(capacity: usize, lanes: usize) -> Result<Self, Error> {
         if capacity < lanes {
             return Err(Error::CapacityBelowLanes { capacity, lanes });
         }
-        let Some(count) = num::NonZero::<u32>::new(lanes as u32) else {
-            return Err(if lanes == 0 {
-                Error::ZeroLanes { capacity }
-            } else {
-                Error::Capacity(capacity::Error::new(capacity))
-            });
-        };
+        let lanes = num::NonZero::new(lanes).ok_or(Error::ZeroLanes { capacity })?;
         let slots = capacity::Count::try_from(capacity).map_err(Error::Capacity)?;
         Ok(Self {
             slots,
-            lanes: count,
+            lanes: capacity::Count::try_nonzero(lanes).map_err(Error::Capacity)?,
         })
     }
 }

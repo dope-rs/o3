@@ -17,8 +17,8 @@ unsafe impl<T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
     fn heads(&self) -> &Self::Heads {
         self.block.heads()
     }
-    fn capacity(&self) -> usize {
-        self.block.capacity()
+    fn is_node(&self, word: u32) -> bool {
+        (word as usize) < self.block.capacity()
     }
     unsafe fn hook(&self, index: links::Index) -> &tagged::Hook {
         &unsafe { self.block.metadata.add(index.get()).as_ref() }.hook

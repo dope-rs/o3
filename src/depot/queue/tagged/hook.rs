@@ -26,7 +26,7 @@ impl Link {
         self,
         store: &S,
     ) -> depot::raw::Neighbor<'_, Self, S::Head> {
-        if (self.0 as usize) < store.capacity() {
+        if store.is_node(self.0) {
             // SAFETY: a node link is initialized in this immutable domain.
             let index = unsafe { links::Index::new_raw(self.0) };
             depot::raw::Neighbor::node(self, unsafe { store.hook(index) }.parts())
