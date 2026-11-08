@@ -70,12 +70,6 @@ pub struct Plan {
     pub chains: usize,
 }
 
-impl Plan {
-    pub(crate) const fn max_segments() -> usize {
-        u32::MAX as usize
-    }
-}
-
 const _: () = {
     assert!(mem::size_of::<Error>() == 3 * mem::size_of::<usize>());
     assert!(mem::size_of::<Plan>() == 2 * mem::size_of::<usize>());

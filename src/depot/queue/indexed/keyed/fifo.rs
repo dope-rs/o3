@@ -5,18 +5,18 @@ use crate::depot::{index::Initialized, queue::links};
 /// One allocation-free, generation-checked intrusive FIFO.
 /// It stores two `u32` endpoints; an invariant marker prevents widening branded keys.
 #[repr(transparent)]
-pub struct Fifo<K: crate::depot::raw::Key, P = ()> {
+pub struct Fifo<K: crate::depot::raw::Address, P = ()> {
     pub(super) raw: links::Chain,
     invariant: Domain<K, P>,
 }
 
-impl<K: crate::depot::raw::Key, P> Default for Fifo<K, P> {
+impl<K: crate::depot::raw::Address, P> Default for Fifo<K, P> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<K: crate::depot::raw::Key, P> Fifo<K, P> {
+impl<K: crate::depot::raw::Address, P> Fifo<K, P> {
     /// Consumes a retained nonempty source without repeating its admission.
     pub fn front<S: crate::depot::raw::KeySource<P, Key = K>>(
         source: crate::depot::raw::Proof<S, super::NonEmpty>,
@@ -45,7 +45,7 @@ const _: () = {
     );
 };
 
-impl<K: crate::depot::raw::Key, P> Fifo<K, P> {
+impl<K: crate::depot::raw::Address, P> Fifo<K, P> {
     /// Retains the first initialized endpoint with its original FIFO source.
     pub fn first<S: crate::depot::raw::KeySource<P, Key = K>>(
         source: S,
@@ -65,7 +65,7 @@ impl<K: crate::depot::raw::Key, P> Fifo<K, P> {
     }
 }
 
-impl<K: crate::depot::raw::Key, P> Fifo<K, P> {
+impl<K: crate::depot::raw::Address, P> Fifo<K, P> {
     /// Appends the entire source in constant time and empties it.
     pub fn append<S: crate::depot::raw::KeyJoin<P, Key = K>>(source: S) {
         let Some(head) = Self::first(source) else {

@@ -32,7 +32,10 @@ impl<K> Base<K> {
         self.0
     }
 
-    pub(super) unsafe fn slots(self) -> ptr::NonNull<super::Slot> {
+    pub(super) unsafe fn slots(self) -> ptr::NonNull<super::Slot<K>>
+    where
+        K: crate::buffer::raw::Backing,
+    {
         // SAFETY: callers prove this base has storage for the Header followed
         // by the Slot array selected by its physical layout.
         unsafe { self.0.add(1).cast() }
@@ -70,27 +73,13 @@ impl<K, S: state::State> Block<K, S> {
         let block = unsafe { alloc::raw::try_new(layout, S::ZEROED) }?;
         // SAFETY: this exact shape supplies both allocation and initialization geometry.
         let base = unsafe { Base::from_raw(block) };
+        // SAFETY: this unpublished allocation owns its exact shape's Header cell.
+        unsafe { base.as_raw().write(super::Header::new(shape)) };
         Ok(Self {
             base,
             shape,
             state: marker::PhantomData,
         })
-    }
-
-    fn initialize(&self) {
-        let header = super::Header::new(self.shape);
-        // SAFETY: Block uniquely owns the Header cell allocated by this same shape.
-        unsafe { self.base.as_raw().write(header) };
-        // SAFETY: the same shape owns exactly these uninitialized Slot cells.
-        unsafe { super::Slot::initialize(self.base, self.shape.slots()) };
-    }
-}
-
-impl<L, S: state::State> Block<super::Plain<L>, S> {
-    fn init(self) -> Ptr<super::Plain<L>, S> {
-        self.initialize();
-        // SAFETY: the complete plain block has been initialized before publication.
-        unsafe { self.base.publish() }
     }
 }
 
@@ -98,7 +87,11 @@ impl<L: Into<pool::Layout>, S: state::State> Block<super::Plain<L>, S> {
     pub(in crate::buffer::pool) fn try_new(
         public: L,
     ) -> Result<Ptr<super::Plain<L>, S>, alloc::Exhausted> {
-        Ok(Self::allocate(super::Shape::new(public))?.init())
+        let block = Self::allocate(super::Shape::new(public))?;
+        // SAFETY: this plain shape owns exactly these uninitialized slots.
+        unsafe { super::Slot::initialize(block.base, block.shape.slots(), ()) };
+        // SAFETY: the complete plain block has been initialized before publication.
+        Ok(unsafe { block.base.publish() })
     }
 }
 
@@ -145,7 +138,6 @@ impl<S: state::State> Block<Accounted, S> {
         limit: u32,
     ) -> Ptr<super::Resident<'d>, S> {
         let slots = self.shape.slots();
-        self.initialize();
         // SAFETY: the caller retains the shape's account count and complete charge.
         let base = unsafe { super::Accounts::initialize(self.base, slots, charge, limit) };
         // SAFETY: all cells are initialized and the transferred charge binds the published domain.
@@ -237,7 +229,7 @@ pub(super) struct Binding<K> {
     pub(super) key: super::Key,
 }
 
-impl<K, S> Ptr<K, S> {
+impl<K: crate::buffer::raw::Backing, S> Ptr<K, S> {
     pub(super) fn is_unique(&self, key: super::Key) -> bool {
         use crate::mem::raw::Edge;
 
@@ -259,7 +251,7 @@ impl<K, S> Ptr<K, S> {
         self.ptr(key).cast()
     }
 
-    pub(super) fn ptr(self, key: super::Key) -> ptr::NonNull<super::Slot> {
+    pub(super) fn ptr(self, key: super::Key) -> ptr::NonNull<super::Slot<K>> {
         // SAFETY: this core retains the published header whose admitted layout
         // owns the Slot array directly after it, and Key is issued from this
         // core and bounded by header.slots.
@@ -270,19 +262,19 @@ impl<K, S> Ptr<K, S> {
         }
     }
 
-    pub(super) fn slot(&self, key: super::Key) -> &super::Slot {
+    pub(super) fn slot(&self, key: super::Key) -> &super::Slot<K> {
         // SAFETY: Key retains the exact list proof and tying the reference to
         // `self` prevents it from escaping the capability borrow.
         unsafe { self.ptr(key).as_ref() }
     }
 }
 
-impl<K> Ptr<K, Any> {
+impl<K: crate::buffer::raw::Backing> Ptr<K, Any> {
     pub(super) unsafe fn from_owner(owner: ptr::NonNull<()>) -> Binding<K> {
-        let slot = owner.cast::<super::Slot>();
+        let slot = owner.cast::<super::Slot<K>>();
         // SAFETY: storage owners are created only from Slot::prefix addresses.
-        let key = unsafe { slot.as_ref() }.key();
-        let offset = size_of::<super::Header>() + key.get() as usize * size_of::<super::Slot>();
+        let key = unsafe { slot.as_ref().key() };
+        let offset = size_of::<super::Header>() + key.get() as usize * size_of::<super::Slot<K>>();
         // SAFETY: the stored slot index reconstructs the allocation base used
         // by Layout without leaving that allocation.
         let raw = unsafe { slot.cast::<u8>().sub(offset).cast() };

@@ -12,28 +12,31 @@ use crate::depot::{
 
 impl<'a, T, G: external::Generation, Tag> Borrowed<'a, T, G, Tag> {
     pub fn key(&self) -> external::Key<G, Tag> {
-        external::Key::new(self.entry.index(), self.entry.value().generation)
+        external::Key::new(
+            self.inner.entry.index(),
+            self.inner.entry.value().generation,
+        )
     }
 
     pub(super) fn try_epoch(self, epoch: G) -> Result<Self, errors::Lookup<G, Tag, ()>> {
-        let actual = self.entry.value().generation;
+        let actual = self.inner.entry.value().generation;
         if actual != epoch {
-            let key = external::Key::new(self.entry.index(), epoch);
+            let key = external::Key::new(self.inner.entry.index(), epoch);
             return Err(errors::Lookup::Generation { key, actual });
         }
         Ok(self)
     }
 
     pub fn take(self) -> T {
-        self.into_native().remove().value
+        self.inner.remove().value
     }
 
     pub fn discard(self) {
-        self.into_native().discard();
+        self.inner.discard();
     }
 
     pub fn get_mut(&mut self) -> &mut T {
-        &mut self.entry.value_mut().value
+        &mut self.inner.entry.value_mut().value
     }
 }
 

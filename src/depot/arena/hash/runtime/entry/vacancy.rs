@@ -13,7 +13,7 @@ use crate::depot::{
 
 /// A vacant value and directory bucket belonging to one exclusive owner.
 pub struct Vacancy<'a, T, Tag> {
-    value: hash::Slot<'a, T, Tag>,
+    value: hash::Vacant<'a, T, Tag>,
     bucket: map::raw::Vacant,
     hash: u64,
 }
@@ -33,7 +33,7 @@ impl<'a, T, Tag> Vacancy<'a, T, Tag> {
     ) -> Option<Self> {
         let (core, bucket, ()) = entry.into_parts();
         Some(Self {
-            value: hash::Slot::new(core)?,
+            value: hash::Vacant::new(core)?,
             bucket,
             hash,
         })

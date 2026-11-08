@@ -106,10 +106,10 @@ fn debits_before_reentry() {
     assert!(matches!(
         ledger.admit_with(|| {
             assert_eq!(ledger.remaining(), 1);
-            ledger.apply(|| {
+            let _ = ledger.admit_with(|| {
                 assert_eq!(ledger.remaining(), 0);
                 assert!(matches!(ledger.take(), quota::Take::Exhausted));
-                quota::Acquire::Empty
+                None::<()>
             });
             assert_eq!(ledger.remaining(), 1);
             assert!(matches!(ledger.take(), quota::Take::Taken));
@@ -118,15 +118,15 @@ fn debits_before_reentry() {
         Admission::Empty
     ));
     assert_eq!(ledger.remaining(), 1);
-    ledger.apply(|| {
+    let _ = ledger.admit_with(|| {
         assert_eq!(ledger.remaining(), 0);
-        quota::Acquire::Item
+        Some(())
     });
     assert_eq!(ledger.remaining(), 0);
     let mut called = false;
-    ledger.apply(|| {
+    let _ = ledger.admit_with(|| {
         called = true;
-        quota::Acquire::Empty
+        None::<()>
     });
     assert!(!called);
 }

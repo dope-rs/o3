@@ -12,6 +12,7 @@ pub use ordinal::Ordinal;
 pub mod set;
 
 mod stored;
+pub(in crate::depot) use stored::Identity;
 pub use stored::Stored;
 
 /// Safe projections of a capability retaining one initialized slot.

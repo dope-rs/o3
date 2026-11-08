@@ -3,14 +3,12 @@ use std::{cell, marker};
 pub(in crate::depot) use moves::StagedMove;
 pub(in crate::depot) use node::StagedNode;
 pub(in crate::depot) use occupied::StagedPhase;
-pub(in crate::depot) use retired::Retired;
 
 use crate::depot::queue::links;
 
 mod moves;
 mod node;
 mod occupied;
-mod retired;
 
 #[repr(C)]
 pub(in crate::depot) struct StagedState<I> {

@@ -24,7 +24,6 @@ use o3::depot::{
     },
     index::Access as _,
     queue::links,
-    raw::Key as _,
 };
 
 #[test]
@@ -175,8 +174,8 @@ fn rejects_unproved_keys() {
         .try_insert(3, 3, |stored, input| stored == input)
         .expect("hash key must own its original vacant slot");
 
-    let outside = (key::Handle::<runtime::Domain>::decode(first.into_raw() | 7))
-        .expect("generation must remain nonzero");
+    let outside =
+        key::Handle::<runtime::Domain>::from_parts(key::Parts::new(7, first.generation()));
     assert!(
         matches!(entry::Live::<_, (), entry::Occupied>::try_new(&mut map, outside), Err(errors::Lookup::Index { key, capacity: 1 }) if key == outside)
     );

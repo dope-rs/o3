@@ -1,4 +1,4 @@
-use std::{cell, mem, pin, ptr};
+use std::{cell, mem, pin};
 
 use crate::{
     alloc::tail,
@@ -43,14 +43,7 @@ impl<T> Store<T> {
         init: impl FnMut(u32) -> T,
     ) -> Result<Self, crate::alloc::Error> {
         Ok(Self {
-            block: pool::Entry::init(
-                tail::Plan::try_new(capacity)?.try_allocate()?,
-                Header {
-                    free: cell::Cell::new(ptr::null_mut()),
-                    context: mem::ManuallyDrop::new(()),
-                },
-                init,
-            ),
+            block: pool::Entry::try_init(capacity, (), init)?,
         })
     }
 

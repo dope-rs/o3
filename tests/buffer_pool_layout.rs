@@ -2,7 +2,7 @@ use o3::buffer::pool::{self, Fixed, Layout};
 
 #[test]
 fn layouts_match() {
-    const INPUTS: [(usize, usize); 7] = [
+    const INPUTS: [(usize, usize); 9] = [
         (0, 1),
         (5, 17),
         (u32::MAX as usize, 1),
@@ -10,6 +10,8 @@ fn layouts_match() {
         (1, 0),
         (0, usize::MAX),
         (u32::MAX as usize, u32::MAX as usize),
+        (2_147_483_644, u32::MAX as usize),
+        (2_147_483_645, u32::MAX as usize),
     ];
     const EXPECTED: [Result<Layout, pool::LayoutError>; INPUTS.len()] = {
         let mut outcomes = [Err(pool::LayoutError::ZeroCapacity); INPUTS.len()];
@@ -24,6 +26,14 @@ fn layouts_match() {
     assert_eq!(EXPECTED[3], Err(pool::LayoutError::SlotsTooLarge));
     assert_eq!(EXPECTED[4], Err(pool::LayoutError::ZeroCapacity));
     assert_eq!(EXPECTED[5], Err(pool::LayoutError::CapacityTooLarge));
+    assert!(EXPECTED[7].is_ok());
+    assert!(matches!(
+        EXPECTED[8],
+        Err(pool::LayoutError::PlainData {
+            slots: 2_147_483_645,
+            capacity: u32::MAX,
+        })
+    ));
     for ((slots, capacity), expected) in INPUTS.into_iter().zip(EXPECTED) {
         assert_eq!(Layout::new(std::hint::black_box(slots), capacity), expected);
     }

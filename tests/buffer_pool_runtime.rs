@@ -116,7 +116,8 @@ fn copies_with_ownership() {
 
 #[test]
 fn returns_after_last_clone() {
-    let pool = (pool::Pool::try_new(1, 16)).expect("the clone-return pool must allocate");
+    let pool = (pool::Pool::try_new(2, 16)).expect("the clone-return pool must allocate");
+    let _first = pool.acquire().expect("the first slot is available");
     let mut lease = pool.acquire().expect("one slot is available");
     lease
         .try_append(b"body")
@@ -128,6 +129,7 @@ fn returns_after_last_clone() {
         assert!(pool.acquire().is_none());
         clone
     };
+    assert_eq!(clone.resident(), 16);
     assert!(pool.acquire().is_none());
     {
         let retained = clone;
@@ -183,8 +185,9 @@ fn builds_from_layout() {
         (pool::Layout::new(2, 32)).expect("the two-slot thirty-two-byte layout must be valid");
     assert_eq!(layout.slots(), 2);
 
-    let first = (pool::Pool::<state::Uninit>::try_from(layout))
-        .expect("the uninitialized pool must allocate from the validated layout");
+    let (first, activity) = Tracker::activity(|| pool::Pool::<state::Uninit>::try_from(layout));
+    let first = first.expect("the uninitialized pool must allocate from the validated layout");
+    assert_eq!((activity.allocations, activity.allocated_bytes), (1, 112));
     let second = (pool::Pool::<state::Initialized>::try_from(layout))
         .expect("the initialized pool must allocate from the validated layout");
     assert_eq!(first.available(), 2);

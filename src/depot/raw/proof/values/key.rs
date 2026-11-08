@@ -1,14 +1,11 @@
-use std::num::NonZero;
-
 use crate::depot::{
-    arena::slab::key::{Handle, Parts},
+    arena::slab::{external, key::Handle},
     index::Stored,
 };
 
 // SAFETY: Parts validates the nonzero generation and retains the exact u64 identity.
 unsafe impl<Tag, const MAX: u32> crate::depot::raw::Key for Handle<Tag, MAX> {
     type Raw = u64;
-    type Live = Self;
 
     const VACANT: Self::Raw = 0;
 
@@ -23,18 +20,11 @@ unsafe impl<Tag, const MAX: u32> crate::depot::raw::Key for Handle<Tag, MAX> {
     fn from_raw(raw: Stored<Self>) -> Self {
         Self::from_stored(raw)
     }
+}
 
-    fn decode(raw: Self::Raw) -> Option<Self> {
-        NonZero::<u64>::new(raw)
-            .and_then(Parts::from_raw)
-            .map(Self::from_parts)
-    }
-
-    fn into_live(self) -> Self::Live {
-        self
-    }
-
-    fn from_live(live: Self::Live) -> Self {
-        live
+// SAFETY: copies retain the complete logical identity and its numeric index.
+unsafe impl<G: external::Generation, Tag> crate::depot::raw::Address for external::Key<G, Tag> {
+    fn index(self) -> usize {
+        self.index() as usize
     }
 }

@@ -10,9 +10,6 @@ pub struct Borrowed<B, Tag = (), const ROOT: bool = true> {
 
 impl<B, Tag, const ROOT: bool> Borrowed<B, Tag, ROOT> {
     pub(in crate::depot::arena::slab) fn into_external(self) -> external::Borrowed<B, Tag, ROOT> {
-        external::Borrowed {
-            entry: self.entry,
-            tag: self.tag,
-        }
+        external::Borrowed { inner: self }
     }
 }

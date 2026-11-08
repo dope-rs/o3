@@ -1,4 +1,4 @@
-use std::{marker, mem};
+use std::{alloc::Layout, marker, mem};
 
 use crate::{
     alloc,
@@ -18,6 +18,11 @@ pub struct Arena<T, Tag = (), const TRACK: bool = true> {
 }
 
 impl<T, Tag, const TRACK: bool> Arena<T, Tag, TRACK> {
+    /// Exact requested node allocation layout.
+    pub fn try_layout(capacity: usize) -> Result<Layout, alloc::Overflow> {
+        Ok(slots::Capacity::<T>::new(capacity)?.bundle().layout())
+    }
+
     pub fn try_new(capacity: usize) -> Result<Self, alloc::Error> {
         let capacity = slots::Capacity::new(capacity)?;
         let bundle = capacity.bundle();
@@ -115,7 +120,7 @@ mod indexed;
 pub(in crate::depot) use indexed::{IndexedBlock, IndexedHook, IndexedMeta, IndexedState};
 
 mod staged;
-pub(in crate::depot) use staged::{Retired, StagedMove, StagedNode, StagedPhase, StagedState};
+pub(in crate::depot) use staged::{StagedMove, StagedNode, StagedPhase, StagedState};
 
 mod owners;
 pub(crate) use owners::SlotOwner;

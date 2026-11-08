@@ -33,10 +33,6 @@ impl Plan {
     pub const fn ceiling(self) -> num::NonZero<u32> {
         self.limit
     }
-
-    pub(super) const fn bounds(self) -> (num::NonZero<u32>, num::NonZero<u32>) {
-        (self.warm, self.limit)
-    }
 }
 
 const _: () = {

@@ -39,32 +39,29 @@ impl crate::alloc::raw::Empty<capacity::Count> {
 
 /// # Safety
 /// Copies and equal identities retain one direct-address index for life.
+/// Equality compares the complete retained identity.
 /// `index` is total and numeric, returning normally without callbacks or storage reentry.
 pub unsafe trait Address: Copy + Eq {
     fn index(self) -> usize;
 }
 
 /// # Safety
-/// Direct-address keys reject `VACANT` and exactly round-trip live identities and indices.
+/// Stored encodings exactly round-trip complete identities and indices.
+/// Live identities exclude `VACANT`.
+/// Equality and conversions return normally without callbacks or storage reentry.
 /// `index` obeys [`Address`]'s projection contract.
 pub unsafe trait Key: Copy + Eq {
     type Raw: Copy + Eq;
-    type Live: Copy + Eq;
     const VACANT: Self::Raw;
     fn index(self) -> usize;
     fn into_raw(self) -> Self::Raw;
-    /// Reconstructs a key from an identity proven emitted by this key domain.
     fn from_raw(raw: Stored<Self>) -> Self;
     /// # Safety
-    /// The retained identity is live in this exact `Self` domain with unchanged logical identity.
-    /// Implementations return that exact destination identity.
+    /// The retained identity is live in this exact destination domain with unchanged identity.
     unsafe fn rebuild<K: Key<Raw = Self::Raw>>(stored: Stored<K>) -> Self {
         // SAFETY: the caller preserves the emitted identity in this destination domain.
         Self::from_raw(unsafe { Stored::new(stored.into_raw()) })
     }
-    fn decode(raw: Self::Raw) -> Option<Self>;
-    fn into_live(self) -> Self::Live;
-    fn from_live(live: Self::Live) -> Self;
 }
 
 /// Stored representation of one external forward link.
@@ -103,7 +100,6 @@ pub unsafe trait Word: Copy + Eq {
 pub(in crate::depot) use hooks::{
     Detach, EndpointHook, EndpointWord, Insert, Neighbor, Pop, Removal, Splice,
 };
-pub(crate) use proof::Slot;
 mod arena;
 pub use arena::Arena;
 mod words;
@@ -319,7 +315,7 @@ pub unsafe trait KeyFinish<const LINKED: bool, P = ()>: Sized {
 /// Shared loans retain the initialized link and plane; escaping values preserve authority and membership.
 /// Neighbor projection returns the exact initialized slot's link without changing or reentering the topology.
 pub unsafe trait KeyOwner<P = ()>: Sized {
-    type Key: Key;
+    type Key: Address;
     type Fifo;
     fn parts(&self) -> (Self::Key, &keyed::Link<Self::Key, P>);
     fn fifo(&self) -> &Self::Fifo;
@@ -336,7 +332,7 @@ pub unsafe trait KeyRoute<P = ()>: KeyOwner<P> {
 /// # Safety
 /// Retaining this source preserves its paired initialized storage, live endpoints and link plane.
 pub unsafe trait KeySource<P = ()> {
-    type Key: Key;
+    type Key: Address;
     fn fifo(&self) -> &keyed::Fifo<Self::Key, P>;
 }
 /// # Safety
@@ -365,7 +361,7 @@ pub unsafe trait KeyJoin<P = ()>: KeySource<P> {
 pub unsafe trait LaneSelect<const N: usize, const L: usize, P = ()>:
     Sized + Project<Index, P> + AsRef<lanes::Fifo<Self::Key, N, P>>
 {
-    type Key: Key;
+    type Key: Address;
     type Slot: KeyOwner<P, Key = Self::Key, Fifo = lanes::Fifo<Self::Key, N, P>>
         + From<Self::Output>;
 }
@@ -426,8 +422,7 @@ pub unsafe trait Reserve<'fifo, 'pool: 'fifo, const TRACK: bool = true>: Sized {
 pub(crate) use arena::{EndsPop, SlotOwner};
 pub(in crate::depot) use arena::{
     IndexedBlock, IndexedHook, IndexedMeta, IndexedState, PoolMutable, PoolPolicy, QueueBlock,
-    QueueSlot, Retired, SlabCapacity, SlabLinks, SlabSlot, StagedMove, StagedNode, StagedPhase,
-    StagedState,
+    QueueSlot, SlabCapacity, SlabLinks, SlabSlot, StagedMove, StagedNode, StagedPhase, StagedState,
 };
 pub(in crate::depot) use hooks::{LaneInit, LaneStore, LaneUndo};
 

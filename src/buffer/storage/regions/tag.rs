@@ -109,7 +109,7 @@ impl<M> Drop for Tag<M> {
         match self.kind() {
             Kind::Vec => {
                 // SAFETY: Drop transfers this exact vector edge once.
-                unsafe { mem::raw::Owner::<Header>::release_raw(pointer.cast()) };
+                drop(unsafe { mem::raw::Owner::<Header>::from_raw(pointer.cast()) });
             }
             Kind::Pool => {
                 // SAFETY: Drop transfers this exact plain pool-slot edge once.
@@ -117,9 +117,9 @@ impl<M> Drop for Tag<M> {
             }
             Kind::Allocation => {
                 // SAFETY: Drop transfers this exact plain allocation edge once.
-                unsafe {
-                    mem::raw::Owner::<crate::buffer::raw::Header<()>>::release_raw(pointer.cast())
-                };
+                drop(unsafe {
+                    mem::raw::Owner::<crate::buffer::raw::Header<()>>::from_raw(pointer.cast())
+                });
             }
         }
     }

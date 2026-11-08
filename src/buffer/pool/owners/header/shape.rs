@@ -39,7 +39,7 @@ impl Shape<owners::Accounted> {
         let capacity = public.capacity().get();
         let count = u128::from(slots);
         let bytes = count * u128::from(capacity);
-        let cells = count * size_of::<owners::Slot>() as u128;
+        let cells = count * size_of::<owners::Slot<owners::Resident<'static>>>() as u128;
         let plain = size_of::<owners::Header>() as u128 + cells;
         let rooted = plain + size_of::<owners::Accounts>() as u128;
         let max = alloc::raw::Layout::<owners::Header>::MAX;
@@ -95,7 +95,7 @@ impl<K> Copy for Shape<K> {}
 const _: () = {
     let count = u32::MAX as u128;
     let rooted = size_of::<owners::Header>() as u128
-        + count * size_of::<owners::Slot>() as u128
+        + count * size_of::<owners::Slot<owners::Resident<'static>>>() as u128
         + size_of::<owners::Accounts>() as u128;
     let items = count * size_of::<owners::Account>() as u128;
     assert!(rooted <= alloc::raw::Layout::<owners::Header>::MAX);

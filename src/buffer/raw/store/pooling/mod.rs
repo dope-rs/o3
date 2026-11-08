@@ -5,6 +5,8 @@ pub(in crate::buffer) use backing::Backing;
 
 // SAFETY: Plain pool allocations contain no resident account table.
 unsafe impl<L> Backing for owners::Plain<L> {
+    type Link = ();
+
     unsafe fn release<S>(core: owners::Ptr<Self, S>) {
         // SAFETY: the caller transfers the terminal plain allocation edge.
         unsafe { core.deallocate() };
@@ -12,6 +14,8 @@ unsafe impl<L> Backing for owners::Plain<L> {
 }
 // SAFETY: Resident preserves the lifetime-bound form of an accounted pool.
 unsafe impl<'d> Backing for owners::Resident<'d> {
+    type Link = std::cell::Cell<u32>;
+
     unsafe fn release<S>(core: owners::Ptr<Self, S>) {
         // SAFETY: the terminal resident edge retains the exact table lifetime.
         unsafe { core.uncharge() };

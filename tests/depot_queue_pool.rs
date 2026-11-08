@@ -6,7 +6,7 @@ use common::{
     alloc::system::Tracker,
     depot::{
         arena::pool::Pinned,
-        model::drops::Tracked,
+        model::drops::{Aligned, Tracked},
         queue::{Error, Source},
     },
 };
@@ -22,6 +22,29 @@ use o3::{
 
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
+
+#[test]
+fn resumes_surviving_lane_suffix() {
+    let mut lanes = pool::Lanes::<u32>::try_new(pool::Plan::new(3, 1).expect("one lane"))
+        .expect("node storage");
+    let mut lane = std::hint::black_box(lanes.try_bind_mut(0).expect("allocated lane"));
+    for value in [10, 20, 30] {
+        lane.push_back(value).expect("available node");
+    }
+    let index = {
+        let mut iter = pool::View::from(&lane).iter();
+        let _ = iter.next();
+        let (index, value) = iter.next_with_index().expect("second node");
+        assert_eq!(*value, 20);
+        index
+    };
+    assert_eq!(lane.pop_front(), Some(10));
+    lane.push_back(40).expect("recycled head slot");
+    // SAFETY: the selected node survives in this exact lane; its fresh borrow retains the suffix.
+    let proof =
+        unsafe { Proof::<_, depot::index::Initialized<()>>::new((pool::View::from(&lane), index)) };
+    assert!(proof.into().copied().eq([20, 30, 40]));
+}
 
 #[test]
 fn move_keeps_address() {
@@ -391,6 +414,21 @@ fn zero_lanes_are_inert() {
 }
 
 #[test]
+fn reports_node_allocation_layout() {
+    for count in [0, 3] {
+        let count = std::hint::black_box(count);
+        let ((layout, _arena), allocated) = Tracker::measure(|| {
+            let layout = depot::raw::Arena::<Aligned<'_>>::try_layout(count)
+                .expect("representable node layout");
+            let arena = depot::raw::Arena::<Aligned<'_>>::try_new(count).expect("node allocation");
+            (layout, arena)
+        });
+        assert_eq!(allocated, [usize::from(count != 0), layout.size(), 0, 0]);
+        assert_eq!(layout.align(), mem::align_of::<Aligned<'_>>());
+    }
+}
+
+#[test]
 fn fifos_share_nodes() {
     const CAPACITY: usize = 4;
     const BYTES: usize = CAPACITY * 32;
@@ -525,6 +563,31 @@ fn detached_fifo_recycles() {
             .push_back([value, 0, 0]);
     }
     assert!(queue.vacant().is_none());
+}
+
+#[test]
+fn detached_front_keeps_address_and_credit() {
+    let drops = [cell::Cell::new(Some(0)), cell::Cell::new(Some(0))];
+    let arena = depot::raw::Arena::<Tracked<'_>>::try_new(2usize).expect("two nodes");
+    let (retained, address) = {
+        let mut queue = arena.fifo();
+        for index in 0..2 {
+            queue
+                .vacant()
+                .expect("unused slot")
+                .push_back(Tracked::try_new(index, &drops).expect("drop counter exists"));
+        }
+        let front = std::hint::black_box(queue.front().expect("nonempty queue"));
+        let address = ptr::from_ref(front.get());
+        let retained = front.detach();
+        assert!(queue.vacant().is_none());
+        (retained, address)
+    };
+    assert_eq!(ptr::from_ref(retained.get()), address);
+    assert_eq!(drops.each_ref().map(cell::Cell::get), [Some(0), Some(1)]);
+    drop(retained);
+    assert_eq!(drops.each_ref().map(cell::Cell::get), [Some(1); 2]);
+    assert_eq!(arena.available(), 2);
 }
 
 #[test]

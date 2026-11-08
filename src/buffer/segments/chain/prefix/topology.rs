@@ -231,12 +231,9 @@ impl<'a, T: buffer::raw::Segment> Topology<'a, T> {
                             ));
                         }
                         (_, source) => {
-                            let claim = handles::descriptors(body.handle).vacant().ok_or(
-                                segments::Error::ChainCapacity(capacity::Shortage {
-                                    requested: NonZero::<usize>::MIN,
-                                    available: 0,
-                                }),
-                            )?;
+                            let claim = handles::descriptors(body.handle)
+                                .vacant()
+                                .ok_or(segments::Error::ChainCapacity(capacity::Shortage::ONE))?;
                             (body, Output::Many { count, claim }, source)
                         }
                     }

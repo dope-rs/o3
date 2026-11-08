@@ -146,6 +146,7 @@ impl<'d> Accounts<'d> {
         Ok(true)
     }
 
+    #[inline(always)]
     pub(super) unsafe fn initialize(
         base: super::Base<super::Accounted>,
         slots: u32,
@@ -155,6 +156,8 @@ impl<'d> Accounts<'d> {
         // SAFETY: the accounted geometry is unchanged; this initialization
         // transfers the exact domain charge into its resident account table.
         let base = unsafe { super::Base::from_raw(base.as_raw().cast()) };
+        // SAFETY: this resident shape reserves exactly these slots, initially unassociated.
+        unsafe { super::Slot::initialize(base, slots, cell::Cell::new(Key::<true>::encode(None))) };
         // SAFETY: the accounted Block reserves its Accounts table immediately
         // after exactly `slots` Slot cells.
         let table = unsafe { base.accounts(slots) };
@@ -251,14 +254,13 @@ impl<'d> Account<'d> {
     ) -> Result<Option<Registered<'d>>, resident::AllocError> {
         let span = lease;
         let entry = span.entry();
-        let link = match entry.association() {
-            Ok(key) => {
-                // SAFETY: this entry's slot link was published after its account activated.
-                let active = Active(unsafe { Accounts::entry(entry, key) });
-                return active.try_retain(*budget);
-            }
-            Err(link) => link,
-        };
+        let link = &entry.slot().link;
+        // SAFETY: the live slot's association is empty or its exact active account key.
+        if let Some(key) = unsafe { Key::<true>::decode(link.get()) } {
+            // SAFETY: this association was published after its account activated.
+            let active = Active(unsafe { Accounts::entry(entry, key) });
+            return active.try_retain(*budget);
+        }
         let Some(claim) = Claim::new(entry) else {
             return Ok(None);
         };
@@ -268,7 +270,7 @@ impl<'d> Account<'d> {
         let entry = entry.try_retain().map_err(resident::AllocError::Retain)?;
         let key = claim.key;
         let owner = claim.activate(entry, charge);
-        link.insert(key);
+        link.set(Key::encode(Some(key)));
         Ok(Some(owner))
     }
 
@@ -306,7 +308,9 @@ unsafe impl crate::mem::raw::Target for Account<'_> {
             // ownership consumes it once before publishing this vacant account.
             unsafe { (*account.resident.get()).assume_init_drop() };
             // SAFETY: this terminal Account is the exact link published in `slot`.
-            unsafe { core.ptr(slot).as_ref().unlink() };
+            unsafe { core.ptr(slot).as_ref() }
+                .link
+                .set(Key::<true>::encode(None));
             // SAFETY: terminal ownership writes this account's vacant successor
             // before the common head publishes its exact key.
             unsafe {

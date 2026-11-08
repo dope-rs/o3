@@ -71,4 +71,20 @@ impl<T, S, const TRACK: bool> Clone for View<'_, T, S, TRACK> {
 
 impl<T, S, const TRACK: bool> Copy for View<'_, T, S, TRACK> {}
 
+mod raw {
+    use super::View;
+    use crate::depot::arena::{linked, linked::slots};
+
+    // SAFETY: the key names a live member of this retained lane's unchanged partition.
+    unsafe impl<'a, T, S, const TRACK: bool> crate::depot::raw::Project<slots::Index>
+        for View<'a, T, S, TRACK>
+    {
+        type Output = linked::Iter<'a, T>;
+
+        unsafe fn project(self, index: slots::Index) -> Self::Output {
+            unsafe { linked::Iter::new(self.store, index) }
+        }
+    }
+}
+
 const _: () = assert!(mem::size_of::<View<'static, u64>>() == 2 * mem::size_of::<usize>());

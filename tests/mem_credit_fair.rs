@@ -9,7 +9,11 @@ use common::{
     alloc::system::Tracker,
     mem::{Attach, Bytes, Lanes, Partition, Reentry},
 };
-use o3::mem::{self, credit::fair, raw::Source as _};
+use o3::mem::{
+    self,
+    credit::fair,
+    raw::{Charge, Source as _},
+};
 
 #[test]
 fn computes_waiting_demand() {
@@ -26,16 +30,12 @@ fn protects_and_shares() {
     let first = accounts.get(0).expect("first lane");
     let second = accounts.get(1).expect("second lane");
     let part = mem::raw::Grant::from(
-        first
-            .try_acquire([3])
-            .expect("credit acquisition must retain its exact amount"),
+        Charge::try_new(first, [3]).expect("credit acquisition must retain its exact amount"),
     );
     let rest = mem::raw::Grant::from(
-        first
-            .try_acquire([3])
-            .expect("credit acquisition must retain its exact amount"),
+        Charge::try_new(first, [3]).expect("credit acquisition must retain its exact amount"),
     );
-    let Err(failure) = first.try_acquire([1]) else {
+    let Err(failure) = Charge::try_new(first, [1]) else {
         panic!("credit request exceeds the available amount");
     };
     assert!(
@@ -50,23 +50,19 @@ fn protects_and_shares() {
             )
     );
     let two = mem::raw::Grant::from(
-        second
-            .try_acquire([2])
-            .expect("credit acquisition must retain its exact amount"),
+        Charge::try_new(second, [2]).expect("credit acquisition must retain its exact amount"),
     );
     assert_eq!([first.held()[0] + second.held()[0]], [8]);
 
     part.release();
     assert_eq!(accounts.shared(), [3]);
     let one = mem::raw::Grant::from(
-        second
-            .try_acquire([1])
-            .expect("credit acquisition must retain its exact amount"),
+        Charge::try_new(second, [1]).expect("credit acquisition must retain its exact amount"),
     );
     assert_eq!(first.held(), [3]);
     assert_eq!(second.held(), [3]);
 
-    let Err(failure) = first.try_acquire([9]) else {
+    let Err(failure) = Charge::try_new(first, [9]) else {
         panic!("credit request exceeds the available amount");
     };
     assert!(
@@ -143,14 +139,10 @@ fn isolates_pool_accounts() {
     let lane1 = second.get(0).expect("second account");
 
     let grant0 = mem::raw::Grant::from(
-        lane0
-            .try_acquire([5])
-            .expect("credit acquisition must retain its exact amount"),
+        Charge::try_new(lane0, [5]).expect("credit acquisition must retain its exact amount"),
     );
     let grant1 = mem::raw::Grant::from(
-        lane1
-            .try_acquire([10])
-            .expect("credit acquisition must retain its exact amount"),
+        Charge::try_new(lane1, [10]).expect("credit acquisition must retain its exact amount"),
     );
     grant0.release();
     assert_eq!(first.shared(), [10]);
@@ -213,7 +205,7 @@ fn rejects_late_axis() {
     let lane = accounts.get(0).expect("first lane");
     let ((), alloc) = Tracker::usage(|| {
         assert!(!lane.can_acquire([6, 61]));
-        let Err(error) = lane.try_acquire([6, 61]) else {
+        let Err(error) = Charge::try_new(lane, [6, 61]) else {
             panic!("second axis exhausted");
         };
         assert_eq!(
@@ -230,14 +222,14 @@ fn rejects_late_axis() {
         assert_eq!(lane.held(), [0, 0]);
         assert_eq!(accounts.shared(), [4, 40]);
         {
-            let charge = lane.try_acquire([6, 60]);
+            let charge = Charge::try_new(lane, [6, 60]);
             assert!(charge.is_ok(), "all credit remains");
             assert_eq!(lane.held(), [6, 60]);
             assert_eq!(accounts.shared(), [0, 0]);
         }
         assert_eq!(lane.held(), [0, 0]);
         assert_eq!(accounts.shared(), [4, 40]);
-        let retry = lane.try_acquire([6, 60]);
+        let retry = Charge::try_new(lane, [6, 60]);
         assert!(retry.is_ok(), "refunded credit can be readmitted");
     });
     assert_eq!(alloc, (0, 0));
@@ -249,10 +241,10 @@ fn overflows_late_axis() {
     let lane = accounts.get(0).expect("configured lane index");
     let ((), alloc) = Tracker::usage(|| {
         {
-            let charge = lane.try_acquire([u32::MAX; 2]);
+            let charge = Charge::try_new(lane, [u32::MAX; 2]);
             assert!(charge.is_ok(), "full width fits");
             assert!(!lane.can_acquire([0, 1]));
-            let Err(error) = lane.try_acquire([0, 1]) else {
+            let Err(error) = Charge::try_new(lane, [0, 1]) else {
                 panic!("second axis overflows");
             };
             assert_eq!(
@@ -282,7 +274,7 @@ fn bound_partition() {
     let bytes = NonZero::<u32>::MIN.saturating_add(9);
     let ((), activity) = Tracker::measure(|| {
         let mut grant =
-            mem::raw::Grant::from(lane.try_acquire([3, 90]).expect("three entries fit"));
+            mem::raw::Grant::from(Charge::try_new(lane, [3, 90]).expect("three entries fit"));
         // SAFETY: [2, 60] leaves exactly one entry and thirty resident units.
         let mut part = unsafe { grant.bind_mut(Partition([2, 60])) }.split(bytes);
         assert_eq!(grant.amount(), [2, 60]);
@@ -307,7 +299,8 @@ fn owned_partition() {
     let lane = accounts.get(0).expect("configured lane index");
     let bytes = NonZero::<u32>::MIN.saturating_add(7);
     let ((), activity) = Tracker::measure(|| {
-        let source = mem::raw::Grant::from(lane.try_acquire([2, 60]).expect("two entries fit"));
+        let source =
+            mem::raw::Grant::from(Charge::try_new(lane, [2, 60]).expect("two entries fit"));
         // SAFETY: this exact source splits into [1, 40] and [1, 20].
         let (rest, part) = unsafe { source.bind(Partition([1, 40])) }.split(bytes);
         // SAFETY: the retained remainder contains exactly one entry.

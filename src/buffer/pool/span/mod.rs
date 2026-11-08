@@ -29,9 +29,7 @@ pub struct Span<K: crate::buffer::raw::Backing = owners::Plain, M = pool::Owned,
 
 impl<K: crate::buffer::raw::Backing, S> Span<K, pool::Owned, S> {
     pub(in crate::buffer::pool) fn acquire(core: owners::Ptr<K, S>) -> Option<Self> {
-        let slots = core;
-        let claim = owners::Claim::new(slots)?;
-        Some(Self::new(claim.take(), pool::Owned))
+        Some(Self::new(owners::Active::acquire(core)?, pool::Owned))
     }
 
     pub(in crate::buffer::pool) fn from_seed(seed: owners::Seed<K, S>) -> Self {
@@ -44,9 +42,10 @@ impl<K: crate::buffer::raw::Backing, S> Span<K, pool::Owned, S> {
 
 impl<'pool, K: crate::buffer::raw::Backing, S> Span<K, pool::Borrowed<'pool>, S> {
     pub(in crate::buffer::pool) fn borrow(core: &'pool owners::Ptr<K, S>) -> Option<Self> {
-        let slots = *core;
-        let claim = owners::Claim::new(slots)?;
-        Some(Self::new(claim.take(), pool::Borrowed(marker::PhantomData)))
+        Some(Self::new(
+            owners::Active::acquire(*core)?,
+            pool::Borrowed(marker::PhantomData),
+        ))
     }
 }
 

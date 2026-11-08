@@ -18,6 +18,11 @@ pub struct Iter<'a, T, Tag = ()> {
 }
 
 impl<'a, T, Tag> Iter<'a, T, Tag> {
+    pub fn next_with_index(&mut self) -> Option<(slots::Index<Tag>, &'a T)> {
+        let index = self.current;
+        self.next().map(|value| (index, value))
+    }
+
     /// # Safety
     /// Reachable nodes form one acyclic live partition of `store`; values remain
     /// shared and initialized and links unchanged for `'a`, even if the store outlives it.

@@ -54,9 +54,10 @@ impl<'input, 'd, R: buffer::Source> Input<'input, 'd, R> {
 impl<'id, 'input, 'd, R: buffer::Cursor> Input<'input, 'd, R, Brand<'id>> {
     pub fn try_prefix<const MAX: u32>(
         &self,
+        start: usize,
         count: num::NonZero<usize>,
     ) -> Result<(Deferred<'input, 'd, R>, End<'id, MAX>), scope::Error> {
-        let (plan, end) = self.source.try_prefix(count)?;
+        let (plan, end) = self.source.try_prefix(start, count)?;
         Ok((
             Deferred {
                 input: (plan, self.budget),

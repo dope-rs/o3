@@ -56,10 +56,6 @@ impl Growing {
         Ok(pool)
     }
 
-    pub fn capacity(&self) -> num::NonZero<u32> {
-        self.plan.capacity()
-    }
-
     /// Returns unclaimed slots, including groups not yet allocated.
     /// Allocating those groups may still exhaust memory.
     pub fn available(&self) -> usize {
@@ -70,6 +66,12 @@ impl Growing {
                 .iter()
                 .map(pool::Pool::available)
                 .sum::<usize>()
+    }
+
+    /// Returns whether every configured slot is already claimed.
+    pub fn is_full(&self) -> bool {
+        self.plan.slots() == self.allocated.get()
+            && self.initialized().iter().all(|pool| pool.available() == 0)
     }
 
     /// Acquires an owned lease, growing only when existing groups are full.
@@ -88,13 +90,6 @@ impl Growing {
             .map(|active| pool::Span::new(active, pool::Borrowed(marker::PhantomData))))
     }
 
-    /// Acquires a writable cursor tied to this pool borrow.
-    pub fn try_view(
-        &self,
-    ) -> Result<Option<pool::Cursor<pool::Layout, pool::Borrowed<'_>>>, alloc::Exhausted> {
-        Ok(self.try_borrow()?.map(pool::Cursor::from))
-    }
-
     fn try_take(
         &self,
     ) -> Result<Option<owners::Active<owners::Plain, state::Uninit>>, alloc::Exhausted> {
@@ -102,16 +97,16 @@ impl Growing {
             let groups = self.initialized();
             let hint = usize::from(self.hint.get());
             if let Some(group) = groups.get(hint)
-                && let Some(claim) = owners::Claim::new(group.core)
+                && let Some(active) = owners::Active::acquire(group.core)
             {
-                return Ok(Some(claim.take()));
+                return Ok(Some(active));
             }
             for (index, group) in groups.iter().enumerate() {
                 if index != hint
-                    && let Some(claim) = owners::Claim::new(group.core)
+                    && let Some(active) = owners::Active::acquire(group.core)
                 {
                     self.hint.set(index as u8);
-                    return Ok(Some(claim.take()));
+                    return Ok(Some(active));
                 }
             }
             let before = self.allocated.get();

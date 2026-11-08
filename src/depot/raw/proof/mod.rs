@@ -129,10 +129,8 @@ const _: () = {
 mod phases;
 pub(in crate::depot) use phases::{Numeric, Sealed};
 
-mod slot;
 mod values;
 pub(in crate::depot) use drain::Drain;
-pub(crate) use slot::Slot;
 
 mod count;
 pub(in crate::depot) use count::ChainCount;

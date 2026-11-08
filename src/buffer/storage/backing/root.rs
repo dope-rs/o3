@@ -20,7 +20,11 @@ impl<'a, 'd> Root<'a, 'd> {
         match self {
             Self::Allocation(owner) => owner.capacity().get() as usize,
             Self::Vec(owner) => owner.capacity(),
-            Self::Pool(owner) => owner.capacity().get() as usize,
+            Self::Pool(owner) => {
+                // SAFETY: the plain Tag retains this exact active slot throughout the borrow.
+                unsafe { owners::capacity_of::<owners::Plain>(ptr::NonNull::from(owner).cast()) }
+                    .get() as usize
+            }
             Self::Resident(owner) => owner.capacity().get() as usize,
             Self::Accounted(owner) => owner.bytes(),
             Self::Provided(owner) => owner.resident(),

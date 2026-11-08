@@ -43,10 +43,9 @@ impl<T: buffer::raw::Segment, H: Handle<T>> Chain<T, H> {
                     }
                     Some(Occupied::Single(previous)) => {
                         let Some(desc) = handles::descriptors(&self.handle).vacant() else {
-                            break 'rejected segments::Error::ChainCapacity(capacity::Shortage {
-                                requested: NonZero::<usize>::MIN,
-                                available: 0,
-                            });
+                            break 'rejected segments::Error::ChainCapacity(
+                                capacity::Shortage::ONE,
+                            );
                         };
                         let mut links = ends::Exclusive::empty();
                         let mut live = node.insert(item);

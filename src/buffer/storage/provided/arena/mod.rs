@@ -37,13 +37,13 @@ pub struct Arena<T, C = (), L = cell::Cell<u32>> {
 
 #[repr(C)]
 struct Header<C> {
-    memory: cell::UnsafeCell<[mem::MaybeUninit<usize>; 5]>,
+    memory: cell::UnsafeCell<mem::MaybeUninit<State<'static>>>,
     context: C,
 }
 
 #[repr(C, align(8))]
 struct Space<T, L> {
-    entry: cell::UnsafeCell<[mem::MaybeUninit<usize>; 8]>,
+    entry: cell::UnsafeCell<mem::MaybeUninit<Entry<'static>>>,
     layout: marker::PhantomData<L>,
     item: cell::UnsafeCell<mem::MaybeUninit<T>>,
 }
@@ -72,12 +72,12 @@ impl<T, C, L> Arena<T, C, L> {
         context: C,
     ) -> Self {
         let header = Header {
-            memory: cell::UnsafeCell::new([mem::MaybeUninit::uninit(); 5]),
+            memory: cell::UnsafeCell::new(mem::MaybeUninit::uninit()),
             context,
         };
         Self {
             entries: memory.repeat_with(header, || Space {
-                entry: cell::UnsafeCell::new([mem::MaybeUninit::uninit(); 8]),
+                entry: cell::UnsafeCell::new(mem::MaybeUninit::uninit()),
                 layout: marker::PhantomData,
                 item: cell::UnsafeCell::new(mem::MaybeUninit::uninit()),
             }),

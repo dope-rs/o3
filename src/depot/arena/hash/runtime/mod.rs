@@ -19,8 +19,12 @@ mod map;
 pub type Registry<T, Tag = ()> = map::Store<T, Tag, ()>;
 
 impl<T, Tag> Registry<T, Tag> {
+    pub fn vacant(&mut self) -> Option<hash::Vacant<'_, T, Tag>> {
+        hash::Vacant::new(&mut self.core)
+    }
+
     pub fn insert(&mut self, value: T) -> Result<Handle<runtime::Domain<Tag>>, T> {
-        let Some(vacant) = hash::Slot::new(&mut self.core) else {
+        let Some(vacant) = self.vacant() else {
             return Err(value);
         };
         Ok(vacant.insert(value).key())

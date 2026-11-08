@@ -22,4 +22,4 @@ impl<K: crate::depot::raw::Key> Stored<K> {
     }
 }
 
-type Identity<K> = marker::PhantomData<(K, fn(K) -> K)>;
+pub(in crate::depot) type Identity<K> = marker::PhantomData<(K, fn(K) -> K)>;

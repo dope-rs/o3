@@ -57,11 +57,8 @@ unsafe impl<'a, T, G: external::Generation, Tag> crate::depot::raw::Project<u32>
 
     unsafe fn project(self, index: u32) -> Self::Output {
         let (_, inner) = self.split();
-        external::Occupied {
-            // SAFETY: the underlying pinned owner retains this same live slot and exclusive loan.
-            entry: unsafe { inner.project(index) },
-            tag: marker::PhantomData,
-        }
+        // SAFETY: the underlying pinned owner retains this same live slot and exclusive loan.
+        unsafe { inner.project(index) }.into()
     }
 }
 

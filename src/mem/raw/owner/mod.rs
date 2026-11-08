@@ -41,18 +41,6 @@ impl<T: crate::mem::raw::Target<W>, W: crate::mem::raw::Counter> Owner<T, W> {
         ManuallyDrop::new(self).pointer
     }
 
-    /// # Safety
-    /// `pointer` transfers one live initialized target edge for release/finalization.
-    /// All borrows relying on it must have ended; never access or release it again.
-    pub unsafe fn release_raw(pointer: ptr::NonNull<T>) {
-        // SAFETY: the caller transfers this exact target's live counted edge.
-        if let rc::Release::Last = unsafe { crate::mem::raw::Edge::<W>::release(pointer.as_ref()) }
-        {
-            // SAFETY: the last edge transfers the exact allocation to its finalizer.
-            unsafe { T::destroy(pointer) };
-        }
-    }
-
     pub fn try_clone(&self) -> Result<Self, rc::Error> {
         let pointer = self.pointer;
         // SAFETY: this owner retains one live edge throughout admission.
@@ -65,6 +53,9 @@ impl<T: crate::mem::raw::Target<W>, W: crate::mem::raw::Counter> Owner<T, W> {
 impl<T: crate::mem::raw::Target<W>, W: crate::mem::raw::Counter> Drop for Owner<T, W> {
     fn drop(&mut self) {
         // SAFETY: Drop consumes this owner's counted edge exactly once.
-        unsafe { Self::release_raw(self.pointer) };
+        if let rc::Release::Last = unsafe { crate::mem::raw::Edge::<W>::release(self.get()) } {
+            // SAFETY: the last edge transfers the exact allocation to its finalizer.
+            unsafe { T::destroy(self.pointer) };
+        }
     }
 }

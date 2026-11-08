@@ -1,5 +1,3 @@
-use std::num::NonZero;
-
 use crate::{
     buffer,
     buffer::{
@@ -43,20 +41,6 @@ impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
             let owner = &mut *nodes.value_ptr(desc.links.head_raw());
             (desc, owner)
         }
-    }
-
-    pub(in crate::buffer::segments::chain::edit) fn consume(
-        mut self,
-        amount: NonZero<usize>,
-    ) -> Option<NonZero<usize>> {
-        let (desc, owner) = self.front();
-        if let Some(tail) = segments::Tail::positive(owner, amount) {
-            tail.commit();
-            desc.len -= amount.get();
-            return None;
-        }
-        let owner = self.take_front().0;
-        NonZero::new(amount.get() - owner.len().get())
     }
 
     #[inline(always)]

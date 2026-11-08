@@ -10,7 +10,7 @@ use crate::{
     depot::arena::linked::slots,
 };
 
-pub(in crate::buffer::segments::chain) struct Shape<'a, T> {
+pub(super) struct Shape<'a, T> {
     pub(in crate::buffer::segments::chain::prefix) source: &'a Pool<T>,
     pub(in crate::buffer::segments::chain::prefix) key: &'a mut Key,
     pub(in crate::buffer::segments::chain::prefix) amount: usize,
@@ -27,7 +27,7 @@ pub(in crate::buffer::segments::chain::prefix) struct Split<'a, T> {
 }
 
 impl<'a, T: buffer::raw::Segment> Shape<'a, T> {
-    pub(in crate::buffer::segments::chain) fn try_new(
+    pub(super) fn try_new(
         sequence: &'a mut Chain<T, Pool<T>>,
         amount: usize,
     ) -> Result<Self, segments::Error> {
@@ -130,18 +130,3 @@ const _: () = {
         size_of::<Option<Split<'static, resident::Shared<'static>>>>() == 6 * size_of::<usize>()
     );
 };
-
-impl<T: buffer::raw::Segment> Shape<'_, T> {
-    pub(in crate::buffer::segments::chain) fn try_take(self) -> Result<Chain<T>, segments::Error> {
-        let mut target = Chain::new(self.source.try_clone().map_err(segments::Error::Retain)?);
-        super::Projection::try_new(&mut target, self)?.try_commit()?;
-        Ok(target)
-    }
-
-    pub(in crate::buffer::segments::chain) fn try_move_to(
-        self,
-        target: &mut Chain<T>,
-    ) -> Result<(), segments::Error> {
-        super::Projection::try_new(target, self)?.try_commit()
-    }
-}

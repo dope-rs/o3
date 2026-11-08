@@ -34,6 +34,16 @@ impl<'fifo, 'pool, T, const TRACK: bool> Front<'fifo, 'pool, T, TRACK> {
     }
 
     pub fn pop(self) -> T {
+        let (store, index) = self.unlink();
+        unsafe { store.take::<_, TRACK>(index) }
+    }
+
+    pub fn detach(self) -> slots::Live<T, slots::Borrow<'pool, T, TRACK>> {
+        let (store, index) = self.unlink();
+        unsafe { slots::Live::detached(slots::Borrow(store), index) }
+    }
+
+    fn unlink(self) -> (&'pool slots::Store<T>, slots::Index) {
         let store = &self.fifo.arena.inner;
         // SAFETY: this capability retains the exact unchanged live FIFO front.
         let index = unsafe {
@@ -41,7 +51,7 @@ impl<'fifo, 'pool, T, const TRACK: bool> Front<'fifo, 'pool, T, TRACK> {
                 .links
                 .detach_store(store, slots::Index::new(self.index.raw()))
         };
-        unsafe { store.take::<_, TRACK>(index) }
+        (store, index)
     }
 
     pub fn take(self) -> Nonempty<'pool, T, TRACK> {

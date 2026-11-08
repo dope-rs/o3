@@ -59,7 +59,11 @@ const _: () = {
     assert!(size_of::<Header<super::Resident<'static>>>() == 32);
     assert!(align_of::<Header>() == 8);
     assert!(align_of::<Header>() >= align_of::<super::Slot>());
+    assert!(align_of::<Header>() >= align_of::<super::Slot<super::Resident<'static>>>());
     assert!(align_of::<Header>() >= align_of::<super::Accounts>());
-    assert!(size_of::<super::Slot>().is_multiple_of(align_of::<super::Accounts>()));
+    assert!(
+        size_of::<super::Slot<super::Resident<'static>>>()
+            .is_multiple_of(align_of::<super::Accounts>())
+    );
     assert!(size_of::<super::Accounts>().is_multiple_of(align_of::<super::Account>()));
 };

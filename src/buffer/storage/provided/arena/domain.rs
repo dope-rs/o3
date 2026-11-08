@@ -24,7 +24,8 @@ impl<'d, T, L> Domain<'d, T, L> {
         context: C,
     ) -> Option<provided::Vacant<'d, T, L, C>> {
         let mut node = self.state.free.take()?;
-        self.state.free.set(node.take_next());
+        // SAFETY: this node was removed from the live free list's head.
+        self.state.free.set(unsafe { node.take_next() });
         Some(provided::Vacant {
             node: crate::mem::Lease::open(node, ()),
             domain: marker::PhantomData,
@@ -35,9 +36,10 @@ impl<'d, T, L> Domain<'d, T, L> {
         &self,
     ) -> Option<arena::Returned<'d, T, L>> {
         let (mut node, tail) = self.state.returned.take()?;
+        // SAFETY: this node was removed from the live returned list's head.
         self.state
             .returned
-            .set(node.take_next().map(|head| (head, tail)));
+            .set(unsafe { node.take_next() }.map(|head| (head, tail)));
         Some(arena::Returned {
             node,
             domain: marker::PhantomData,
@@ -59,11 +61,11 @@ pub(in crate::buffer::storage::provided) struct State<'d> {
 }
 
 impl<'d> State<'d> {
-    const fn new(capacity: num::NonZero<u32>, limit: u32) -> Self {
+    fn new(capacity: num::NonZero<u32>, limit: u32) -> Self {
         Self {
             free: cell::Cell::new(None),
             returned: cell::Cell::new(None),
-            accounted: Counter::new(),
+            accounted: Counter::default(),
             capacity,
             limit,
             brand: marker::PhantomData,
@@ -75,7 +77,9 @@ impl<'d> State<'d> {
     pub(super) fn push_free(&self, node: arena::Empty<'d>) {
         let next = self.free.take();
         // SAFETY: this affine vacancy retains its exact detached slot.
-        unsafe { node.entry.as_ref() }.free.set(next);
+        unsafe { node.entry.as_ref() }
+            .next
+            .set(next.map(|node| node.entry));
         self.free.set(Some(node));
     }
     pub(in crate::buffer::storage::provided) fn has_returned(&self) -> bool {
@@ -86,10 +90,10 @@ impl<'d> State<'d> {
     }
     pub(super) fn finish(&self, node: arena::Ready<'d>) {
         // SAFETY: the node retains its stable slot for the complete scope.
-        let tail = &unsafe { node.entry.as_ref() }.returned;
+        let tail = &unsafe { node.entry.as_ref() }.next;
         let head = match self.returned.take() {
             Some((head, last)) => {
-                last.set(Some(node));
+                last.set(Some(node.entry));
                 head
             }
             None => node,
@@ -100,7 +104,7 @@ impl<'d> State<'d> {
 
 const _: () = assert!(size_of::<State<'_>>() == 5 * size_of::<usize>());
 
-type Queue<'d> = Option<(arena::Ready<'d>, &'d cell::Cell<Option<arena::Ready<'d>>>)>;
+type Queue<'d> = Option<(arena::Ready<'d>, &'d arena::nodes::Link<'d>)>;
 
 const _: () = assert!(size_of::<Queue<'_>>() == 2 * size_of::<usize>());
 

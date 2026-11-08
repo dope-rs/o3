@@ -98,9 +98,7 @@ unsafe impl<P: crate::buffer::raw::Policy> buffer::raw::Prefix for Owned<P> {
 // every construction and write keeps that word within its u32 capacity.
 unsafe impl<P: crate::buffer::raw::Policy> buffer::raw::Exclusive for Owned<P> {
     fn as_mut_ptr(&mut self) -> *mut mem::MaybeUninit<u8> {
-        self.allocation
-            .as_mut()
-            .map_or(ptr::NonNull::dangling().as_ptr(), |heap| heap.as_mut_ptr())
+        buffer::raw::Prefix::prefix(self).0
     }
 
     fn len_mut(&mut self) -> &mut u32 {

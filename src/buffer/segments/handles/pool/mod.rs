@@ -1,8 +1,6 @@
 use crate::{buffer, depot::arena::linked::slots, mem};
 pub(in crate::buffer::segments) mod exact;
 
-use std::num::NonZero;
-
 use crate::{
     buffer::{
         hold::{self, scope},
@@ -131,12 +129,9 @@ impl<T> Pool<T> {
             segments::Kind::One => State::One,
             segments::Kind::Many(count) => State::Many {
                 count,
-                claim: descs.vacant().ok_or(segments::Error::ChainCapacity(
-                    capacity::Shortage {
-                        requested: NonZero::<usize>::MIN,
-                        available: 0,
-                    },
-                ))?,
+                claim: descs
+                    .vacant()
+                    .ok_or(segments::Error::ChainCapacity(capacity::Shortage::ONE))?,
             },
         };
         let handle = self.try_clone().map_err(segments::Error::Retain)?;
@@ -191,10 +186,7 @@ impl<'d> Pool<resident::Shared<'d>> {
         }
         let node = handles::nodes(self)
             .vacant()
-            .ok_or(segments::Error::SegmentCapacity(capacity::Shortage {
-                requested: NonZero::<usize>::MIN,
-                available: 0,
-            }))?;
+            .ok_or(segments::Error::SegmentCapacity(capacity::Shortage::ONE))?;
         let handle = self.try_clone().map_err(segments::Error::Retain)?;
         let owner = source.try_into()?;
         let mut chain = segments::Chain::new(handle);

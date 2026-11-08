@@ -18,7 +18,8 @@ pub struct Cursor<'a, T> {
 
 impl<'a, T: buffer::raw::Segment> Cursor<'a, T> {
     /// # Safety
-    /// The checkpoint belongs to this unchanged source, and offset < source.len().
+    /// The checkpoint is fresh or valid for this exact unchanged source after
+    /// any admitted prefix rebase, and offset < source.len().
     pub(in crate::buffer) unsafe fn resume<H: Handle<T>>(
         source: &'a Chain<T, H>,
         position: &mut scatter::raw::Position,

@@ -10,7 +10,7 @@ use common::{
 use o3::depot::{
     capacity,
     map::direct::{Occupied, Table, Vacant},
-    raw::Key as _,
+    raw::Address as _,
 };
 
 #[global_allocator]

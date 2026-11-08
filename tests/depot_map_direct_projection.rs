@@ -4,7 +4,7 @@ use common::{
     alloc::system::Tracker,
     depot::{index::key::Id, map::Sent},
 };
-use o3::depot::{self, capacity, index::Initialized, map::direct, queue::links, raw::Key as _};
+use o3::depot::{self, capacity, index::Initialized, map::direct, queue::links, raw::Address as _};
 
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;

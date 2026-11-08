@@ -51,8 +51,8 @@ impl<'d, T, L, C: Copy> Vacant<'d, T, L, C> {
 }
 
 const _: () = {
-    assert!(mem::offset_of!(Slot<'_, u8, ()>, item) == usize::BITS as usize);
-    assert!(mem::offset_of!(Slot<'_, u64, cell::Cell<u32>>, item) == usize::BITS as usize);
+    assert!(mem::offset_of!(Slot<'_, u8, ()>, item) == size_of::<arena::Entry<'_>>());
+    assert!(mem::offset_of!(Slot<'_, u64, cell::Cell<u32>>, item) == size_of::<arena::Entry<'_>>());
 };
 
 impl<'d, T> Vacant<'d, T> {
