@@ -37,7 +37,7 @@ impl Tag {
             pointer: owner.into_raw().cast().map_addr(|address| address | 0b010),
         }
     }
-    pub(in crate::buffer) fn pool<L>(owner: owners::Edge<owners::Plain<L>>) -> Option<Self> {
+    pub(in crate::buffer) fn pool<L, M>(owner: owners::Edge<owners::Plain<L>, M>) -> Option<Self> {
         owner.into_raw().map(|pointer| Self {
             pointer: pointer.cast().map_addr(|address| address | 0b100),
         })

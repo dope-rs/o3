@@ -287,23 +287,12 @@ impl From<regions::Shared<crate::buffer::raw::Rc>> for regions::Shared<Option<re
     }
 }
 
-impl<L> From<regions::Shared<owners::Edge<owners::Plain<L>>>>
+impl<L, M> From<regions::Shared<owners::Edge<owners::Plain<L>, M>>>
     for regions::Shared<Option<regions::Tag>>
 {
-    fn from(region: regions::Shared<owners::Edge<owners::Plain<L>>>) -> Self {
+    fn from(region: regions::Shared<owners::Edge<owners::Plain<L>, M>>) -> Self {
         Self {
             owner: regions::Tag::pool(region.owner),
-            bytes: region.bytes,
-        }
-    }
-}
-
-impl<'d, L> From<regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>>
-    for regions::Shared<owners::Edge<owners::Plain<L>>>
-{
-    fn from(region: regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>) -> Self {
-        Self {
-            owner: region.owner.into_owned(),
             bytes: region.bytes,
         }
     }
@@ -347,11 +336,13 @@ impl<'d> From<regions::Shared<crate::buffer::raw::Rc<resident::Budget<'d>>>>
     }
 }
 
-impl<'d, L> From<regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>>
+impl<'pool, 'd, L> From<regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>>>
     for resident::Shared<'d>
 {
-    fn from(region: regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>) -> Self {
-        region.into_owner().into()
+    fn from(
+        region: regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>>,
+    ) -> Self {
+        Shared::<Option<Tag>>::from(region).into()
     }
 }
 

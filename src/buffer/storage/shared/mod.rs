@@ -125,16 +125,9 @@ impl bytes::TryRetain for Shared {
     }
 }
 
-impl<L> storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'_>>> {
-    pub(in crate::buffer) fn into_owner(self) -> storage::Shared<Option<regions::Tag>> {
-        let inner: storage::Shared<owners::Edge<owners::Plain<L>>> = self.into();
-        inner.into()
-    }
-}
-
 impl<L> bytes::TryRetain for storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'_>>> {
     fn try_retain(self) -> Result<storage::Shared, storage::AllocError> {
-        Ok(self.into_owner())
+        Ok(self.into())
     }
 }
 

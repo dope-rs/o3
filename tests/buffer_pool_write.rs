@@ -282,28 +282,29 @@ fn fills_in_place() {
 
 #[test]
 fn retains_beyond_pool() {
-    use o3::buffer::{Cursor as _, write::Sink as _};
+    use o3::buffer::{Cursor as _, hold::raw::Retain, storage};
 
-    let scope;
-    let retained = {
-        let pool =
-            (pool::Pool::try_new(1, 16)).expect("the retention fixture must allocate its slot");
-        let mut cursor = (pool.view()).expect("the fixture owns one free slot");
-        let mut spare = cursor.spare();
-        spare
-            .write_slice(b"payload")
-            .expect("the payload must fit the borrowed slot");
-        spare.commit();
-        let source = cursor.freeze();
-        let pointer = source.as_slice()[1..6].as_ptr();
-        scope = Tracker::begin();
-        let plan = (source.try_get(1..6)).expect("the retained range lies inside the source");
-        let retained = (plan.try_own()).expect("the first independent edge must fit");
-        assert_eq!(retained.as_slice().as_ptr(), pointer);
-        retained
-    };
-    assert!(scope.finish() == Activity::default());
-    let ((), freed) = Tracker::activity(move || assert_eq!(retained.as_slice(), b"ayloa"));
-    assert_eq!(freed.allocations, 0);
-    assert_eq!(freed.deallocations, 1);
+    common::buffer::domain::Capacity(0)
+        .try_scope(|budget| {
+            let scope;
+            let retained = {
+                let pool = pool::Pool::try_new(1, 16).expect("pool");
+                let mut cursor = pool.view().expect("slot");
+                cursor.write_slice(b"payload").expect("payload fits");
+                let source = cursor.freeze();
+                let plan = source.try_get(1..6).expect("range");
+                let pointer = plan.as_slice().as_ptr();
+                scope = Tracker::begin();
+                let retained = <storage::Shared<_> as Retain<'_>>::try_retain(&plan, &budget)
+                    .expect("independent edge");
+                assert_eq!(retained.as_slice().as_ptr(), pointer);
+                retained
+            };
+            assert!(scope.finish() == Activity::default());
+            assert_eq!(budget.resident(), 0);
+            let ((), freed) = Tracker::activity(move || assert_eq!(retained.as_slice(), b"ayloa"));
+            assert_eq!(freed.allocations, 0);
+            assert_eq!(freed.deallocations, 1);
+        })
+        .expect("resident domain");
 }

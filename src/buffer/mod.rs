@@ -3,10 +3,7 @@ use std::{convert, num, ops};
 use storage::{provided, range};
 use write::consume;
 
-use crate::{
-    buffer::{pool::owners, storage::regions},
-    mem::rc,
-};
+use crate::{buffer::pool::owners, mem::rc};
 
 pub mod raw;
 
@@ -119,16 +116,6 @@ impl View<'_, resident::Shared<'_>> {
         Ok(Some(unsafe {
             storage::Shared::assume(self.as_slice(), owner)
         }))
-    }
-}
-
-impl<L> View<'_, storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'_>>>> {
-    /// Retains this range with an independent owner of its pool allocation.
-    pub fn try_own(self) -> Result<storage::Shared, rc::Error> {
-        let Some(view) = regions::NonEmpty::new(&self) else {
-            return Ok(storage::Shared::new());
-        };
-        view.try_own()
     }
 }
 
