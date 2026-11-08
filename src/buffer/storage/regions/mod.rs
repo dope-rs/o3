@@ -62,8 +62,11 @@ pub(in crate::buffer) mod retained {
     }
 
     #[derive(Debug)]
-    #[repr(transparent)]
-    pub struct Retained<'d>(Shared<Owner<'d>>);
+    #[repr(C)]
+    pub struct Retained<'d> {
+        bytes: Extent,
+        owner: Owner<'d>,
+    }
 
     impl<'d> From<storage::Owned<resident::Budget<'d>>> for Retained<'d> {
         #[inline]
@@ -73,27 +76,28 @@ pub(in crate::buffer) mod retained {
                 Some(heap) => Owner::Unique(heap),
                 None => Owner::Shared(resident::State::Slice),
             };
-            Self(Shared { owner, bytes })
+            Self { bytes, owner }
         }
     }
 
     impl<'d> From<resident::Shared<'d>> for Retained<'d> {
         fn from(value: resident::Shared<'d>) -> Self {
             let Shared { owner, bytes } = value.region;
-            Self(Shared {
-                owner: Owner::Shared(owner),
+            Self {
                 bytes,
-            })
+                owner: Owner::Shared(owner),
+            }
         }
     }
 
     impl<'d> Retained<'d> {
         pub fn as_slice(&self) -> &[u8] {
-            self.0.as_slice()
+            // SAFETY: constructors retain this exact immutable extent in owner.
+            unsafe { self.bytes.0.as_ref() }
         }
 
         pub fn into_shared(self) -> resident::Shared<'d> {
-            let Shared { owner, bytes } = self.0;
+            let Self { bytes, owner } = self;
             let owner = match owner {
                 Owner::Unique(heap) => resident::State::Resident(heap.into_shared()),
                 Owner::Shared(owner) => owner,
@@ -107,7 +111,7 @@ pub(in crate::buffer) mod retained {
     impl buffer::Residency for Retained<'_> {
         #[inline]
         fn resident(&self) -> usize {
-            match &self.0.owner {
+            match &self.owner {
                 Owner::Unique(heap) => heap.capacity().get() as usize,
                 Owner::Shared(owner) => owner.resident(),
             }
