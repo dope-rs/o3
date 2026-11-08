@@ -65,14 +65,13 @@ impl<K: crate::depot::raw::Key, V> Table<K, V> {
         // SAFETY: the caller retains this table's exact occupied index.
         let slot = unsafe { entries.get_unchecked_mut(index.get()) };
         *len = capacity::Count::new((len.get() - 1) as u32);
-        slot.key = crate::depot::raw::Slot::vacant();
+        slot.key = K::VACANT;
         &mut slot.value
     }
 
     pub fn get(&self, key: K) -> Option<&V> {
         let slot = self.block.get(key.index())?;
-        (slot.key == crate::depot::raw::Slot::from_key(key))
-            .then(|| unsafe { slot.value.assume_init_ref() })
+        (slot.key == key.into_raw()).then(|| unsafe { slot.value.assume_init_ref() })
     }
 
     pub fn entry_at(&self, index: usize) -> Option<(K, &V)> {
@@ -80,7 +79,7 @@ impl<K: crate::depot::raw::Key, V> Table<K, V> {
     }
 
     pub fn key_at(&self, index: usize) -> Option<K> {
-        self.block.get(index)?.key.present()
+        self.block.get(index)?.read().map(|(key, _)| key)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (K, &V)> {
@@ -94,8 +93,8 @@ impl<K: crate::depot::raw::Key, V> Table<K, V> {
         unsafe {
             live.map(|(read, index)| {
                 let slot = read.block.get_unchecked(index.get());
-                let key = slot.key.live();
-                (slot.value.assume_init_ref(), key)
+                let (key, value) = slot.live();
+                (value, key)
             })
         }
     }
@@ -104,7 +103,7 @@ impl<K: crate::depot::raw::Key, V> Table<K, V> {
 impl<K: crate::depot::raw::Key, V> Table<K, V> {
     pub fn entry(&mut self, key: K) -> Option<direct::Occupied<'_, K, V>> {
         let slot = self.block.get(key.index())?;
-        (slot.key == crate::depot::raw::Slot::from_key(key)).then_some(direct::Occupied {
+        (slot.key == key.into_raw()).then_some(direct::Occupied {
             table: self,
             key,
             plane: marker::PhantomData,
@@ -118,9 +117,7 @@ impl<K: crate::depot::raw::Key, V> Table<K, V> {
             index,
             capacity: self.capacity(),
         })?;
-        if !slot.key.is_vacant() {
-            // SAFETY: initialized table slots contain only stored keys or the vacancy sentinel.
-            let stored = unsafe { slot.key.live() };
+        if let Some((stored, _)) = slot.read() {
             return Err(direct::Error::Occupied { key, stored });
         }
         Ok(direct::Vacant {
@@ -132,7 +129,7 @@ impl<K: crate::depot::raw::Key, V> Table<K, V> {
 
     pub fn vacant(&mut self, key: K) -> Option<direct::Vacant<'_, K, V>> {
         let slot = self.block.get(key.index())?;
-        slot.key.is_vacant().then_some(direct::Vacant {
+        (slot.key == K::VACANT).then_some(direct::Vacant {
             table: self,
             key,
             plane: marker::PhantomData,
@@ -145,7 +142,7 @@ impl<K: crate::depot::raw::Key, V> Table<K, V> {
         }
         for index in 0..self.capacity() {
             // SAFETY: this index belongs to the unchanged backing extent.
-            if unsafe { self.block.get_unchecked(index) }.key.is_vacant() {
+            if unsafe { self.block.get_unchecked(index) }.key == K::VACANT {
                 continue;
             }
             // SAFETY: the live slot retains this exact native index until removal.

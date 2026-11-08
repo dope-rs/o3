@@ -7,12 +7,12 @@ use crate::{
 
 /// Heads embedded in the owner of one exclusive lane plane.
 #[repr(transparent)]
-pub struct Fifo<K: crate::depot::raw::Key, const N: usize, P = ()> {
+pub struct Fifo<K: crate::depot::raw::Address, const N: usize, P = ()> {
     pub(super) heads: [links::Chain<()>; N],
     invariant: Domain<K, P>,
 }
 
-impl<K: crate::depot::raw::Key, const N: usize, P> Fifo<K, N, P> {
+impl<K: crate::depot::raw::Address, const N: usize, P> Fifo<K, N, P> {
     const VALID: () = assert!(N != 0 && N as u64 <= u32::MAX as u64 + 1);
 
     pub const fn try_new(cap: capacity::Count) -> Result<Self, alloc::Overflow> {

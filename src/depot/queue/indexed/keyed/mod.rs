@@ -18,7 +18,7 @@ pub use iter::Iter;
 fn selected<O: raw::KeyOwner<P>, P>(owner: &O) -> (links::Index, &Link<O::Key, P>) {
     let (key, link) = owner.parts();
     // SAFETY: this owner loan retains the exact key/link pair and an index below u32::MAX.
-    let index = unsafe { links::Index::new_usize(raw::Key::index(key)) };
+    let index = unsafe { links::Index::new_usize(raw::Address::index(key)) };
     (index, link)
 }
 

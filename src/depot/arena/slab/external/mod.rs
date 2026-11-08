@@ -212,29 +212,43 @@ impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> Exclusive<T, G, Tag, PA
 }
 
 impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> OccupiedSlot<'a, T, G, Tag, PARTITIONS> {
+    pub fn from_live<C, P>(
+        live: Live<'a, T, G, Tag, C, P, PARTITIONS>,
+    ) -> (OccupiedSlot<'a, T, G, Tag, PARTITIONS, P>, C) {
+        // SAFETY: the consumed proof retains this exact physical owner and context.
+        let live =
+            unsafe { live.map(|((owner, context), index)| ((&mut owner.inner, context), index)) };
+        let (inner, context) = slab::Occupied::from_live(live);
+        (inner.into(), context)
+    }
+}
+
+impl<'a, T, G: Generation, Tag, const PARTITIONS: usize, P>
+    OccupiedSlot<'a, T, G, Tag, PARTITIONS, P>
+{
     pub fn key(&self) -> Key<G, Tag> {
-        Key::new(self.entry.index(), self.entry.value().generation)
+        Key::new(self.inner.key().index(), self.inner.get().generation)
     }
 
     pub fn get(&self) -> &T {
-        &self.entry.value().value
+        &self.inner.get().value
     }
 
     pub fn get_mut(&mut self) -> &mut T {
-        &mut self.entry.value_mut().value
+        &mut self.inner.get_mut().value
     }
 
     fn into_mut(self) -> &'a mut T {
-        &mut self.entry.into_mut().value
+        &mut self.inner.into_mut().value
     }
 
     pub fn remove(self) -> T {
-        self.into_native().remove().value
+        self.inner.remove().value
     }
 
     /// Destroys the resident value and retires its physical identity.
     pub fn discard(self) {
-        self.into_native().discard();
+        self.inner.discard();
     }
 
     /// Retires the value or restores its exact physical and logical identity.
@@ -248,7 +262,7 @@ impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> OccupiedSlot<'a, T, G, 
                 generation: epoch,
                 value,
             },
-        ) = self.into_native().take();
+        ) = self.inner.take();
         match take(value) {
             Ok(result) => Ok(result),
             Err((value, error)) => Err((
@@ -262,6 +276,15 @@ impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> OccupiedSlot<'a, T, G, 
             )),
         }
     }
+
+    pub fn project<Q>(
+        live: crate::depot::raw::Proof<(&Self, links::Index), Initialized<Q>>,
+    ) -> (Key<G, Tag>, &T) {
+        // SAFETY: the logical phase retains the native root's exact exclusive loan.
+        let live = unsafe { live.map(|(owner, index)| (&owner.inner, index)) };
+        let (key, stamp) = slab::Occupied::project(live);
+        (Key::new(key.index(), stamp.generation), &stamp.value)
+    }
 }
 
 impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> VacantSlot<'a, T, G, Tag, PARTITIONS> {
@@ -270,19 +293,22 @@ impl<'a, T, G: Generation, Tag, const PARTITIONS: usize> VacantSlot<'a, T, G, Ta
     }
 
     pub fn commit(self, value: T) {
-        let epoch = self.state;
-        self.into_native().commit(Stamped {
-            generation: epoch,
-            value,
-        });
+        self.stage(value).publish();
     }
 
     pub fn stage(self, value: T) -> StagedSlot<'a, T, G, Tag, PARTITIONS> {
+        self.stage_with(|_| value)
+    }
+
+    pub fn stage_with(
+        self,
+        build: impl FnOnce(links::Index) -> T,
+    ) -> StagedSlot<'a, T, G, Tag, PARTITIONS> {
         let epoch = self.state;
         self.into_native()
-            .stage(Stamped {
+            .stage_with(|index| Stamped {
                 generation: epoch,
-                value,
+                value: build(index),
             })
             .into_external()
     }
@@ -332,12 +358,14 @@ mod vacant;
 pub use self::{borrowed::Borrowed, occupied::Occupied, staged::Staged, vacant::Vacant};
 
 /// Exclusive physical phases retain the exact stamped payload and partition domain.
-type Busy<'a, T, G, const N: usize> =
-    entries::Busy<'a, Stamped<T, G>, 1, entries::Exclusive<true>, N>;
+type Live<'a, T, G, Tag, C, P, const N: usize> =
+    crate::depot::raw::Live<(&'a mut Exclusive<T, G, Tag, N>, C), links::Index, P>;
+type Busy<'a, T, G, const N: usize, P = ()> =
+    entries::Busy<'a, Stamped<T, G>, 1, entries::Exclusive<true>, N, P>;
 type Pending<'a, T, G, const N: usize> =
     entries::Pending<'a, Stamped<T, G>, 1, entries::Exclusive<true>, N>;
-pub type OccupiedSlot<'a, T, G, Tag = (), const N: usize = 1> =
-    Occupied<Busy<'a, T, G, N>, Tag, true>;
+pub type OccupiedSlot<'a, T, G, Tag = (), const N: usize = 1, P = ()> =
+    Occupied<slab::Occupied<Busy<'a, T, G, N, P>, Tag>>;
 pub type VacantSlot<'a, T, G, Tag = (), const N: usize = 1> =
     Vacant<Pending<'a, T, G, N>, Tag, true, G>;
 pub type StagedSlot<'a, T, G, Tag = (), const N: usize = 1> =

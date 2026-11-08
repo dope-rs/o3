@@ -28,13 +28,12 @@ unsafe impl depot::raw::Compact for Zero {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Id(NonZero<u64>);
+#[repr(C)]
+pub struct Id(NonZero<u32>, u32);
 
 impl Id {
     pub fn new(index: u32, epoch: NonZero<u32>) -> Self {
-        let raw = u64::from(epoch.get()) << 32 | u64::from(index);
-        // SAFETY: a nonzero generation occupies the high half of `raw`.
-        Self(unsafe { NonZero::<u64>::new_unchecked(raw) })
+        Self(epoch, index)
     }
 }
 
@@ -44,21 +43,20 @@ unsafe impl depot::raw::Key for Id {
     const VACANT: Self::Raw = 0;
 
     fn index(self) -> usize {
-        self.0.get() as u32 as usize
+        self.1 as usize
     }
 
     fn into_raw(self) -> Self::Raw {
-        self.0.get()
+        (u64::from(self.0.get()) << 32) | u64::from(self.1)
     }
 
     fn from_raw(raw: Stored<Self>) -> Self {
         let raw = raw.into_raw();
-        // SAFETY: Stored retains a live Id representation with a nonzero generation.
-        Self(unsafe { NonZero::<u64>::new_unchecked(raw) })
-    }
-
-    fn decode(raw: Self::Raw) -> Option<Self> {
-        NonZero::<u64>::new(raw).map(Self)
+        // SAFETY: Stored retains this exact domain's nonzero high-half generation.
+        Self(
+            unsafe { NonZero::<u32>::new_unchecked((raw >> 32) as u32) },
+            raw as u32,
+        )
     }
 }
 

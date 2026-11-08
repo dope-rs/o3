@@ -10,7 +10,7 @@ use o3::depot::{
     self,
     capacity::Count,
     queue::indexed::keyed,
-    raw::{Key as _, KeySource as _},
+    raw::{Address as _, KeySource as _},
 };
 
 #[test]

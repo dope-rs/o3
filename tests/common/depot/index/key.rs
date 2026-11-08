@@ -33,9 +33,7 @@ impl Id<'_> {
     }
 }
 
-// SAFETY: `try_new` reserves zero, confines the index to the low 16 bits, and
-// preserves the remaining nonzero bits as the logical generation. Callers of
-// decoding maps only the reserved raw identity to vacancy.
+// SAFETY: try_new fixes the numeric index and complete identity for every copy.
 unsafe impl depot::raw::Key for Id<'_> {
     type Raw = u64;
 
@@ -50,15 +48,10 @@ unsafe impl depot::raw::Key for Id<'_> {
     }
 
     fn from_raw(raw: Stored<Self>) -> Self {
-        // SAFETY: Stored proves this raw was emitted by the exact Id domain,
-        // whose complete live representation is NonZero<u64>.
+        // SAFETY: Stored retains this domain's emitted nonzero identity.
         Self(
             unsafe { num::NonZero::<u64>::new_unchecked(raw.into_raw()) },
             marker::PhantomData,
         )
-    }
-
-    fn decode(raw: Self::Raw) -> Option<Self> {
-        num::NonZero::<u64>::new(raw).map(|raw| Self(raw, marker::PhantomData))
     }
 }

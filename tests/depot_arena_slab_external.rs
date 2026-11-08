@@ -550,3 +550,30 @@ fn cancel_keeps_generation() {
     assert_eq!(fresh.generation().get(), 1);
     assert_eq!(slab.try_get(fresh).ok(), Some(&7));
 }
+
+#[test]
+fn projects_logical_neighbors() {
+    let mut slots =
+        Exclusive::<_, o3::base::num::Epoch>::try_new(Count::new(2)).expect("two slots");
+    let [first, second] = [11, 22].map(|value| {
+        let entry = slots
+            .try_grant()
+            .expect("logical identity")
+            .reserve()
+            .stage_with(|index| (index, value))
+            .commit();
+        (entry.key(), entry.get().0)
+    });
+    let mut context = 0;
+    // SAFETY: both entries remain initialized in this exact exclusively borrowed owner.
+    let live =
+        unsafe { Proof::<_, Initialized<Short>>::new(((&mut slots, &mut context), first.1)) };
+    let (entry, context) = external::OccupiedSlot::from_live(live);
+    *context = 7;
+    // SAFETY: the retained root still owns the other initialized slot.
+    let neighbor = unsafe { Proof::<_, Initialized<()>>::new((&entry, second.1)) };
+    let (key, value) = external::OccupiedSlot::project(neighbor);
+    assert_eq!((entry.key(), key, value.1), (first.0, second.0, 22));
+    assert_eq!((*context, entry.remove().1), (7, 11));
+    assert_eq!(slots.get(second.0).map(|value| value.1), Some(22));
+}

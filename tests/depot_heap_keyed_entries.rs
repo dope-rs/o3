@@ -10,7 +10,7 @@ use o3::depot::{
         self,
         keyed::{self, Entry},
     },
-    raw::Key,
+    raw::Address,
 };
 
 const COMPACT_CAPACITY_257_BYTES: usize = 4_632;

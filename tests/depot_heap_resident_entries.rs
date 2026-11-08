@@ -17,7 +17,7 @@ use o3::depot::{
         resident::{self, Entry},
     },
     index::Position,
-    raw::{self, Key as _},
+    raw::{self, Address as _},
 };
 
 type Heap = resident::Min<Id<'static>, u64, u64, u16>;

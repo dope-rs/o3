@@ -19,10 +19,8 @@ pub type Anchor<'a, T, G, Tag = ()> = external::grant::Reservation<
     G,
 >;
 
-pub type Anchored<'a, T, G, Tag = ()> = external::Occupied<
-    slab::Anchored<'a, external::Stamped<T, G>, Tag, 1, true, 1, storage::Lazy>,
-    Tag,
->;
+pub type Anchored<'a, T, G, Tag = ()> =
+    external::Occupied<slab::Anchored<'a, external::Stamped<T, G>, Tag, 1, true, 1, storage::Lazy>>;
 
 impl<T, G: external::Generation, Tag> Pinned<T, G, Tag> {
     pub fn try_new(cap: capacity::Count) -> Result<Self, crate::alloc::Error> {
@@ -57,13 +55,11 @@ impl<T, G: external::Generation, Tag> Pinned<T, G, Tag> {
         if actual != key.generation() {
             return Err(external::errors::Lookup::Generation { key, actual });
         }
-        Ok(external::Occupied {
-            entry: slab::Anchored {
-                entry,
-                tag: marker::PhantomData,
-            },
+        Ok(slab::Anchored {
+            entry,
             tag: marker::PhantomData,
-        })
+        }
+        .into())
     }
 }
 
@@ -82,14 +78,14 @@ impl<'a, T, G: external::Generation, Tag> Anchor<'a, T, G, Tag> {
 
 impl<'a, T, G: external::Generation, Tag> Anchored<'a, T, G, Tag> {
     pub fn value(&mut self) -> Pin<&mut T> {
-        self.entry.value().pinned()
+        self.inner.value().pinned()
     }
 
     pub fn into_value(self) -> Pin<&'a mut T> {
-        self.entry.into_value().pinned()
+        self.inner.into_value().pinned()
     }
 
     pub fn discard(self) {
-        self.entry.discard();
+        self.inner.discard();
     }
 }
