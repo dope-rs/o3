@@ -18,8 +18,6 @@ pub enum Error<C = capacity::Count> {
 const _: () = assert!(size_of::<Error<std::num::NonZero<u32>>>() <= size_of::<Error>());
 
 mod linked;
-mod position;
 mod vacant;
 pub use linked::Linked;
-pub use position::Position;
 pub use vacant::Vacant;

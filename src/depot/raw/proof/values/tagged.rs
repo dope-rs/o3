@@ -20,37 +20,6 @@ unsafe impl<S: crate::depot::raw::TagStore> crate::depot::raw::TagEntry
     }
 }
 
-// SAFETY: the position owns the entry unchanged; it cannot select a different store.
-unsafe impl<E: crate::depot::raw::TagEntry, const N: usize> crate::depot::raw::TagEntry
-    for tagged::Position<E, N>
-{
-    const INITIALIZED: bool = E::INITIALIZED;
-    type Store = E::Store;
-
-    fn store(&self) -> &Self::Store {
-        self.entry().store()
-    }
-
-    fn hook(&self) -> &tagged::Hook {
-        self.entry().hook()
-    }
-
-    fn index(&self) -> links::Index {
-        self.entry().index()
-    }
-}
-
-// SAFETY: the selected Index<N> and the entry owner's head array share N in this bound.
-unsafe impl<E: crate::depot::raw::TagEntry, const N: usize> crate::depot::raw::TagTarget
-    for tagged::Position<E, N>
-where
-    E::Store: crate::depot::raw::TagStore<Heads = [links::Chain; N]>,
-{
-    fn lane(&self) -> tagged::Endpoint<&Self::Store> {
-        self.destination()
-    }
-}
-
 // SAFETY: a keyed lane is created only from its exact admitted node and unique owner.
 unsafe impl<S: crate::depot::raw::TagStore, const INITIALIZED: bool> crate::depot::raw::TagEntry
     for tagged::Endpoint<&mut S, links::Index, INITIALIZED>

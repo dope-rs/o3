@@ -77,29 +77,12 @@ impl<
 
     pub fn remove(self) -> Slot<O, P, false> {
         let (index, link) = keyed::selected::<_, P>(&self.owner);
-        let before = link.raw.prev_index();
-        let after = link.raw.next_index();
-        let resolve = |index: Option<links::Index>| {
-            index.map(|index| {
-                // SAFETY: this member retains its live neighbor in the same owner and plane.
-                let link = O::link(unsafe { raw::Proof::new((&self.owner, index)) });
-                raw::EndpointHook::from(&link.raw)
-            })
-        };
-        let previous = resolve(before);
-        let next = resolve(after);
-        let fifo = &self.owner.fifo().raw;
-        let neighbor = |index, hook| match hook {
-            Some(hook) => raw::Neighbor::node(links::Index::encode(index), hook),
-            None => raw::Neighbor::head(links::Index::END, fifo),
-        };
         // SAFETY: both neighbors retain this exact member until reciprocal repair and vacancy.
         unsafe {
-            raw::EndpointHook::from(&link.raw).detach(
-                index,
-                neighbor(before, previous),
-                neighbor(after, next),
-            )
+            raw::EndpointHook::from(&link.raw).unlink(index, &self.owner.fifo().raw, |index| {
+                let link = O::link(raw::Proof::new((&self.owner, index)));
+                raw::EndpointHook::from(&link.raw)
+            })
         };
         // SAFETY: the consuming detach committed vacancy in this exact owner.
         Slot::from_source(unsafe { crate::depot::raw::Proof::new(self.owner) })

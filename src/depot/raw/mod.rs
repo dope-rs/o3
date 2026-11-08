@@ -313,7 +313,8 @@ pub unsafe trait KeyFinish<const LINKED: bool, P = ()>: Sized {
 /// This exclusive root retains its selected slot authority, exact key/link pair and FIFO.
 /// The key index is below `u32::MAX` and excludes the FIFO's endpoint tags.
 /// Shared loans retain the initialized link and plane; escaping values preserve authority and membership.
-/// Neighbor projection returns the exact initialized slot's link without changing or reentering the topology.
+/// All projections preserve topology without reentry or mutation.
+/// Neighbor projection returns the exact initialized slot's link.
 pub unsafe trait KeyOwner<P = ()>: Sized {
     type Key: Address;
     type Fifo;

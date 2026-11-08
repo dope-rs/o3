@@ -100,21 +100,12 @@ impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
         value: T,
         lane: Index<N>,
     ) -> Slot<'a, T, Tag, MAX, tagged::Hook, N, C> {
-        let mut entry = self.write(value);
-        entry.link::<FRONT>(lane);
-        entry.into_phase(phase::Occupied)
-    }
-}
-
-impl<T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
-    Vacant<'_, T, Tag, MAX, tagged::Hook, N, C, phase::Metadata>
-{
-    fn link<const FRONT: bool>(&mut self, lane: Index<N>) {
-        let index = self.index;
-        let endpoint = tagged::Endpoint::indexed(&mut *self.core, lane);
+        let entry = self.write(value);
         // SAFETY: the initialized reservation retains its exact detached slot.
-        let vacant = unsafe { tagged::Vacant::new(endpoint.at::<true>(index)) };
-        vacant.push::<FRONT>();
+        unsafe { tagged::Vacant::new(entry) }
+            .push_at::<FRONT, N>(lane)
+            .into_inner()
+            .into_phase(phase::Occupied)
     }
 }
 
@@ -141,9 +132,7 @@ impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
 {
     pub fn restore(self, value: T) {
         let lane = self.phase.0;
-        self.into_phase(phase::Vacant)
-            .write(value)
-            .link::<true>(lane);
+        drop(self.into_phase(phase::Vacant).publish::<true>(value, lane));
     }
 }
 

@@ -5,7 +5,7 @@ mod error;
 mod hook;
 pub mod lane;
 pub mod raw;
-pub use entry::{Linked, Position, Vacant};
+pub use entry::{Linked, Vacant};
 pub use hook::Hook;
 pub use lane::Endpoint;
 pub use shape::Domain;

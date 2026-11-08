@@ -104,20 +104,8 @@ pub unsafe trait Hooks {
         let domain = &*self;
         // SAFETY: the contract retains this linked hook and its exact reciprocal list.
         let hook = unsafe { domain.hook_raw(index) };
-        let prev = hook.previous.get();
-        let next = hook.next.get();
-        let prior = match links::Index::decode(prev) {
-            // SAFETY: this original previous edge is live in the retained plane.
-            Some(key) => Neighbor::node(prev, unsafe { domain.hook_raw(key) }.into()),
-            None => Neighbor::head(prev, list),
-        };
-        let after = match links::Index::decode(next) {
-            // SAFETY: this original next edge is live in the retained plane.
-            Some(key) => Neighbor::node(next, unsafe { domain.hook_raw(key) }.into()),
-            None => Neighbor::head(next, list),
-        };
         // SAFETY: the original neighbors retain this exact member until this commit.
-        unsafe { EndpointHook::from(hook).detach(index, prior, after) };
+        unsafe { EndpointHook::from(hook).unlink(index, list, |key| domain.hook_raw(key).into()) };
     }
 }
 

@@ -171,8 +171,7 @@ impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
         // SAFETY: the occupied slot retains this owner's exact live membership.
         unsafe { tagged::Linked::new(self.into_phase(phase::Metadata)) }
             .unlink()
-            .select(lane)
-            .push::<false>();
+            .push_at::<false, N>(lane);
     }
 
     pub fn take(
