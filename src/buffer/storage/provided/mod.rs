@@ -3,7 +3,6 @@
 
 use std::{mem, num::NonZero, ops};
 
-pub(in crate::buffer) use arena::charge::Charge;
 pub use arena::{Arena, account::Account, owner::Owner, root::Root, vacant::Vacant};
 
 use crate::{

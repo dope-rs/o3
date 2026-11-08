@@ -219,11 +219,12 @@ pub unsafe trait Edge<W: Counter = u32> {
 
     /// Adds one owner or leaves the exhausted domain unchanged.
     /// # Safety
-    /// The caller already owns one live edge in this exact domain.
+    /// Retain this exact initialized domain with a nonzero count throughout the call.
+    /// No edge may be released meanwhile; success transfers one new edge to the caller.
     #[inline]
     unsafe fn try_retain(&self) -> Result<(), rc::Error> {
         let count = self.count();
-        // SAFETY: this exact domain is retained by the caller's live edge.
+        // SAFETY: the retained domain's count is proved nonzero throughout admission.
         let current = unsafe { Live::new(count.value.get()) };
         count.value.set(current.try_retain()?.get());
         Ok(())
@@ -450,7 +451,6 @@ pub trait Counter: Word {
 
     const ONE: Self;
     const TWO: Self;
-    const LIVE: Self::NonZero;
 
     /// # Safety
     /// The value is nonzero.
@@ -464,7 +464,6 @@ impl Counter for u32 {
 
     const ONE: Self = 1;
     const TWO: Self = 2;
-    const LIVE: Self::NonZero = NonZero::<Self>::MIN;
 
     unsafe fn nonzero(self) -> Self::NonZero {
         // SAFETY: the caller proves the count is nonzero.
@@ -481,7 +480,6 @@ impl Counter for usize {
 
     const ONE: Self = 1;
     const TWO: Self = 2;
-    const LIVE: Self::NonZero = NonZero::<Self>::MIN;
 
     unsafe fn nonzero(self) -> Self::NonZero {
         // SAFETY: the caller proves the count is nonzero.

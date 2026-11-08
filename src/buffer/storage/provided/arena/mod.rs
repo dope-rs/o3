@@ -1,5 +1,3 @@
-use charge::Charge;
-
 use crate::{buffer, buffer::storage::provided::arena};
 
 pub(in crate::buffer::storage::provided) mod account;
@@ -7,7 +5,6 @@ pub(in crate::buffer::storage::provided) mod owner;
 pub(in crate::buffer::storage::provided) mod root;
 pub(in crate::buffer::storage::provided) mod vacant;
 
-pub(in crate::buffer::storage::provided) mod charge;
 mod domain;
 mod entry;
 mod nodes;
@@ -15,7 +12,7 @@ mod nodes;
 use std::{cell, marker, mem, num, ops, pin, ptr, slice};
 
 pub(in crate::buffer::storage::provided) use domain::{Domain, State};
-pub(in crate::buffer::storage::provided) use entry::Entry;
+pub(in crate::buffer::storage::provided) use entry::{Entry, Registration};
 pub(in crate::buffer::storage::provided) use nodes::{Empty, Ready};
 use root::Root;
 

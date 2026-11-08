@@ -1,8 +1,6 @@
 use std::ptr;
 
-use storage::provided;
-
-use crate::buffer::{pool::owners, resident, storage, storage::regions};
+use crate::buffer::{pool::owners, resident, storage::regions};
 
 /// The exact backing registration borrowed from a live owner.
 #[derive(Clone, Copy)]
@@ -12,7 +10,7 @@ pub(in crate::buffer) enum Root<'a, 'd> {
     Pool(&'a owners::Slot),
     Resident(&'a crate::buffer::raw::Header<resident::Budget<'d>>),
     Accounted(&'a owners::Account<'d>),
-    Provided(&'a provided::Charge<'d>),
+    Provided(&'a resident::Charge<'d>),
 }
 
 impl<'a, 'd> Root<'a, 'd> {
@@ -27,7 +25,7 @@ impl<'a, 'd> Root<'a, 'd> {
             }
             Self::Resident(owner) => owner.capacity().get() as usize,
             Self::Accounted(owner) => owner.bytes(),
-            Self::Provided(owner) => owner.resident(),
+            Self::Provided(owner) => owner.capacity(),
         }
     }
 }

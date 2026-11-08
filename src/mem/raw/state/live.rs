@@ -6,10 +6,8 @@ use crate::mem::{self, rc};
 pub(crate) struct Live<W: mem::raw::Counter = u32>(W::NonZero);
 
 impl<W: mem::raw::Counter> Live<W> {
-    pub(crate) const ONE: Self = Self(W::LIVE);
-
     /// # Safety
-    /// The caller already owns a live edge, so value is nonzero.
+    /// `value` is the nonzero count of an admitted live domain.
     pub(in crate::mem::raw) unsafe fn new(value: W) -> Self {
         // SAFETY: the caller's live edge proves this exact count is nonzero.
         Self(unsafe { value.nonzero() })

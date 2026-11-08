@@ -1,5 +1,3 @@
-use std::ptr;
-
 use storage::{backing, provided};
 
 use crate::{
@@ -8,49 +6,24 @@ use crate::{
         storage,
         storage::{provided::arena, regions},
     },
-    mem::rc,
+    mem::{raw, rc},
 };
 
 /// One edge retaining its concrete initialized registration and scope.
 #[derive(Debug)]
 pub struct Account<'d> {
-    pub(super) charge: ptr::NonNull<arena::Charge<'d>>,
+    pub(super) registration: raw::Owner<arena::Registration<'d>>,
 }
 
 impl<'d> Account<'d> {
-    pub(super) fn new(charge: &'d arena::Charge<'d>) -> Self {
-        // SAFETY: Entry inserted this concrete registration into its own stable
-        // slot. Preserve that slot's provenance across every Cell mutation;
-        // the typed projection supplies only this registration's address.
-        Self {
-            charge: charge
-                .entry()
-                .with_addr(ptr::NonNull::from(charge).addr())
-                .cast(),
-        }
-    }
     pub(in crate::buffer) fn try_clone(&self) -> Result<Self, rc::Error> {
-        let charge = self.charge;
-        self.charge().try_retain()?;
-        Ok(Self { charge })
+        Ok(Self {
+            registration: self.registration.try_clone()?,
+        })
     }
-    pub(in crate::buffer) fn charge(&self) -> &arena::Charge<'d> {
+    pub(in crate::buffer) fn charge(&self) -> &buffer::resident::Charge<'d> {
         // SAFETY: the owner borrow retains this exact initialized registration.
-        unsafe { self.charge.as_ref() }
-    }
-}
-
-impl Drop for Account<'_> {
-    fn drop(&mut self) {
-        let charge = self.charge();
-        if let Some(next) = charge.count.get().release() {
-            charge.count.set(next);
-        } else {
-            // SAFETY: the last edge consumes this registration; unregister
-            // retires its storage before refunding both original debits.
-            let charge = unsafe { self.charge.as_ptr().read() };
-            arena::Entry::unregister(charge);
-        }
+        unsafe { (*self.registration.get().value.get()).assume_init_ref() }
     }
 }
 
@@ -81,6 +54,6 @@ impl<'d> backing::Owner<'d> for Account<'d> {
 
 impl buffer::Residency for Option<provided::Account<'_>> {
     fn resident(&self) -> usize {
-        self.as_ref().map_or(0, |owner| owner.charge().resident())
+        self.as_ref().map_or(0, |owner| owner.charge().capacity())
     }
 }
