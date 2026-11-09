@@ -79,8 +79,7 @@ unsafe impl<'a, T, const N: usize> depot::raw::Input<T> for Source<'a, T, N> {
 
 unsafe impl<T, const N: usize> depot::raw::Start<T> for Source<'_, T, N> {
     fn start(self) -> (impl depot::raw::Exact<Item = T, Output = Self::Output>, ()) {
-        self.started
-            .set(self.started.get().and_then(|count| count.checked_add(1)));
+        crate::common::bump(self.started);
         (Iter(self.items.into_iter()), ())
     }
 }

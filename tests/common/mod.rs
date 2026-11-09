@@ -28,7 +28,10 @@ pub struct Counted<C: Borrow<Cell<Option<usize>>>>(pub C);
 
 impl<C: Borrow<Cell<Option<usize>>>> Drop for Counted<C> {
     fn drop(&mut self) {
-        let count = self.0.borrow();
-        count.set(count.get().and_then(|value| value.checked_add(1)));
+        bump(self.0.borrow());
     }
+}
+
+pub fn bump(cell: &Cell<Option<usize>>) {
+    cell.set(cell.get().and_then(|value| value.checked_add(1)));
 }

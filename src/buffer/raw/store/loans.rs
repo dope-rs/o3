@@ -10,13 +10,6 @@ use crate::{
     mem::rc,
 };
 
-// SAFETY: view retains the exclusive initialized range paired with this owner.
-unsafe impl buffer::raw::Consume for Unique<'_> {
-    fn consume<const MAX: u32>(prefix: buffer::raw::Consumed<'_, '_, Self, MAX>) {
-        prefix.consume::<&mut [u8]>();
-    }
-}
-
 // SAFETY: the projection reborrows the same exclusive view without changing its owner.
 unsafe impl buffer::raw::Mutable for Unique<'_> {}
 

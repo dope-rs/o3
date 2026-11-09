@@ -7,7 +7,6 @@ use o3::depot::{
 
 pub mod capacity;
 pub mod key;
-pub mod width;
 
 /// The singleton numeric domain containing only offset zero.
 #[derive(Clone, Copy, Debug)]

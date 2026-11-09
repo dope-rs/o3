@@ -1,6 +1,6 @@
 use std::{array, cell, fmt::Debug, mem::MaybeUninit, num::NonZero, ops, ptr};
 
-pub(crate) use state::{Account, Live};
+pub(crate) use state::Account;
 
 use crate::{
     base::marker::ThreadBound,
@@ -225,8 +225,13 @@ pub unsafe trait Edge<W: Counter = u32> {
     unsafe fn try_retain(&self) -> Result<(), rc::Error> {
         let count = self.count();
         // SAFETY: the retained domain's count is proved nonzero throughout admission.
-        let current = unsafe { Live::new(count.value.get()) };
-        count.value.set(current.try_retain()?.get());
+        let current = unsafe { count.value.get().nonzero() };
+        let next = W::get(current)
+            .checked_add(W::ONE)
+            .ok_or(rc::Error::Exhausted)?;
+        // SAFETY: checked addition to this nonzero count preserves its nonzero domain.
+        let next = unsafe { next.nonzero() };
+        count.value.set(W::get(next));
         Ok(())
     }
 
@@ -237,9 +242,14 @@ pub unsafe trait Edge<W: Counter = u32> {
     unsafe fn release(&self) -> rc::Release {
         let count = self.count();
         // SAFETY: the caller transfers one live edge from this exact domain.
-        let (next, release) = match unsafe { Live::new(count.value.get()) }.release() {
-            None => (W::ZERO, rc::Release::Last),
-            Some(next) => (next.get(), rc::Release::Shared),
+        let current = unsafe { count.value.get().nonzero() };
+        let next = W::get(current) - W::ONE;
+        let (next, release) = if next == W::ZERO {
+            (W::ZERO, rc::Release::Last)
+        } else {
+            // SAFETY: the last-owner zero case was excluded.
+            let next = unsafe { next.nonzero() };
+            (W::get(next), rc::Release::Shared)
         };
         count.value.set(next);
         release

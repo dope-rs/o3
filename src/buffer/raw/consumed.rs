@@ -16,18 +16,6 @@ pub struct Consumed<'a, 'id, R: ?Sized, const MAX: u32> {
 }
 
 impl<'a, 'id, R: ?Sized, const MAX: u32> Consumed<'a, 'id, R, MAX> {
-    /// Consumes this admitted prefix through an exact storage adapter.
-    pub fn consume<S: buffer::raw::Consume + ?Sized>(self)
-    where
-        R: buffer::raw::Project<S>,
-    {
-        S::consume(Consumed {
-            // SAFETY: consumption only restricts the adapter's exact inner extent.
-            source: unsafe { self.source.as_inner_mut() },
-            end: self.end,
-        });
-    }
-
     pub(in crate::buffer) fn new(source: &'a mut R, end: scope::End<'id, MAX>) -> Self {
         Self { source, end }
     }

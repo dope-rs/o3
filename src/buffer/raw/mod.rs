@@ -8,7 +8,6 @@ use crate::{
     base::num,
     buffer,
     buffer::{
-        bytes::bounded,
         pool::{self, owners, state},
         resident, segments,
         storage::provided,
@@ -268,26 +267,6 @@ impl<'a, L> Output<'a, L> {
 }
 
 const _: () = assert!(size_of::<Output<'_>>() == size_of::<usize>());
-
-/// An adapter exposing its complete unchanged byte extent through one inner owner.
-/// # Safety
-/// Projections retain the exact backing, lifetime, bytes, and restriction invariants.
-pub unsafe trait Project<T: ?Sized>: AsRef<[u8]> {
-    fn as_inner(&self) -> &T;
-    /// # Safety
-    /// Only restrict the extent, preserving its nonempty owner and empty policy.
-    unsafe fn as_inner_mut(&mut self) -> &mut T;
-}
-
-// SAFETY: the transparent bound exposes the unchanged extent of its original owner.
-unsafe impl<T: AsRef<[u8]>> Project<T> for bounded::Value<T> {
-    fn as_inner(&self) -> &T {
-        &self.0
-    }
-    unsafe fn as_inner_mut(&mut self) -> &mut T {
-        &mut self.0
-    }
-}
 
 /// # Safety
 /// Shared access preserves its exact backing, range, and contents until exclusive mutation.

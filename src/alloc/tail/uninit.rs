@@ -11,8 +11,8 @@ pub struct Uninit<H, T, N: alloc::raw::TailExtent = usize> {
 
 impl<H, T, N: alloc::raw::TailExtent> Uninit<H, T, N> {
     pub fn fill(self, header: H, mut init: impl FnMut(&H, N::Index) -> T) -> tail::Block<H, T, N> {
+        let indices = self.layout.extent().indices();
         let mut block = self.init(header);
-        let indices = block.extent().indices();
         let (header, tail) = block.parts_mut();
         let header: &H = header;
         for (index, slot) in indices.zip(tail) {

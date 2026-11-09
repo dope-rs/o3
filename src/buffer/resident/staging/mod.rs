@@ -8,7 +8,6 @@ pub(in crate::buffer) use buf::Reserve;
 pub use layout::Layout;
 pub use plan::Plan;
 pub use pool::Pool;
-pub(in crate::buffer) use slot::Slot;
 
 use crate::buffer::pool::LayoutError;
 
@@ -49,7 +48,6 @@ pub enum Error {
 
 mod buf;
 mod pool;
-mod slot;
 
 #[derive(Clone, Copy)]
 pub(in crate::buffer::resident) enum Mode {

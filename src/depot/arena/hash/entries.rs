@@ -18,7 +18,6 @@ use crate::{
 pub struct Live<'a, T, Tag = (), P = ()> {
     pub(super) core: &'a mut hash::Core<T, Tag>,
     pub(super) index: bounded::U32<0, { u32::MAX - 1 }>,
-    len: num::NonZero<u32>,
     phase: marker::PhantomData<fn(P) -> P>,
 }
 
@@ -45,8 +44,6 @@ impl<'a, T, Tag> Live<'a, T, Tag> {
         index: bounded::U32<0, { u32::MAX - 1 }>,
     ) -> Self {
         Self {
-            // SAFETY: a live hash core retains a nonzero entry count.
-            len: unsafe { num::NonZero::<u32>::new_unchecked(core.len) },
             core,
             index,
             phase: marker::PhantomData,
@@ -73,8 +70,10 @@ impl<'a, T, Tag> Live<'a, T, Tag> {
 impl<T, Tag> Live<'_, T, Tag, entry::Staged> {
     pub(super) fn vacate(owner: &mut Self) {
         let position = unsafe { owner.core.meta(owner.index) }.slot;
-        owner.core.len = owner.len.get() - 1;
-        let last = owner.core.len;
+        // SAFETY: this exclusively borrowed live entry retains a nonzero core count.
+        let len = unsafe { num::NonZero::<u32>::new_unchecked(owner.core.len) };
+        let last = len.get() - 1;
+        owner.core.len = last;
         if position != last {
             let moved = unsafe { *owner.core.dense.as_ptr().add(last as usize) };
             unsafe {
@@ -166,7 +165,6 @@ impl<'a, T, Tag, P> Live<'a, T, Tag, P> {
         entry::Live {
             core: self.core,
             index: self.index,
-            len: self.len,
             phase: marker::PhantomData,
         }
     }

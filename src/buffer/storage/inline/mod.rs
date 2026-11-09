@@ -75,9 +75,7 @@ impl<const CAP: usize, L: crate::buffer::raw::Length> Bytes<CAP, L> {
     }
 
     pub fn from_slice(bytes: &[u8]) -> Result<Self, Error> {
-        let mut inline = Self::new();
-        write::Sink::write_slice(&mut inline, bytes)?;
-        Ok(inline)
+        Ok(Self::from(bytes::Prefix::<CAP>::try_new(bytes)?))
     }
 
     /// Reserves an exact region or returns its precise capacity shortfall.

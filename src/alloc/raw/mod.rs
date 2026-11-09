@@ -328,25 +328,22 @@ impl Bundle<()> {
         len: usize,
         tail_len: usize,
     ) -> Result<alloc::Layout, Overflow> {
-        let fields = [
-            Layout::<S::Root>::try_layout(len),
-            Layout::<S::Tail>::try_layout(tail_len),
-            Layout::<S::Extra>::try_layout(len),
-            Layout::<S::Last>::try_layout(len),
-        ];
-        let mut layout = alloc::Layout::new::<()>();
-        let mut index = 0;
-        while index < fields.len() {
-            let field = match fields[index] {
-                Ok(field) => field,
-                Err(error) => return Err(error),
-            };
-            layout = match layout.extend(field) {
-                Ok((layout, _)) => layout,
-                Err(_) => return Err(Overflow),
-            };
-            index += 1;
-        }
+        let layout = match Layout::<S::Root>::try_layout(len) {
+            Ok(layout) => layout,
+            Err(error) => return Err(error),
+        };
+        let layout = match Layout::<S::Tail>::try_extend(layout, tail_len) {
+            Ok((layout, _)) => layout,
+            Err(error) => return Err(error),
+        };
+        let layout = match Layout::<S::Extra>::try_extend(layout, len) {
+            Ok((layout, _)) => layout,
+            Err(error) => return Err(error),
+        };
+        let layout = match Layout::<S::Last>::try_extend(layout, len) {
+            Ok((layout, _)) => layout,
+            Err(error) => return Err(error),
+        };
         Ok(layout.pad_to_align())
     }
 

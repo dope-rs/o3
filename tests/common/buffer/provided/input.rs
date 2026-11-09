@@ -21,8 +21,7 @@ unsafe impl<'a> buffer::raw::Input<Item<'a>> for Input<'a> {
         Item<'a>,
         impl for<'b> FnOnce(&'b mut Item<'a>) -> &'b mut [u8],
     ) {
-        self.converted
-            .set(self.converted.get().and_then(|count| count.checked_add(1)));
+        crate::common::bump(self.converted);
         (self.buffer, Item::bytes_mut)
     }
 }

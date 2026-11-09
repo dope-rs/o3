@@ -1,16 +1,21 @@
 pub mod common;
 
-use std::{collections::BTreeSet, mem};
+use std::{collections::BTreeSet, mem, num::NonZero};
 
-use common::depot::index::{Bitmap, width::Inline};
+use common::depot::index::Bitmap;
 use o3::depot::index::bitmap::{self, Access as _, entry::Row};
 
 #[test]
 fn retains_membership() {
-    let mut compact = Inline::<255>::default();
+    let mut compact = Bitmap::try_new(
+        bitmap::Shape::<NonZero<u32>, u32>::new(NonZero::new(255).expect("bits")),
+        bitmap::Fill::Empty,
+    )
+    .expect("compact fixture");
     let mut flat =
         Bitmap::try_new(bitmap::Shape::<u32>::new(255), bitmap::Fill::Empty).expect("flat fixture");
     let mut model = BTreeSet::new();
+    let mut cursor = 0u8;
     for step in 0usize..4096 {
         let index = step.wrapping_mul(73).wrapping_add(step / 7) % 255;
         if step % 3 != 0 {
@@ -22,7 +27,7 @@ fn retains_membership() {
                 .update::<true>(());
             model.insert(index);
         } else {
-            let start = usize::from(compact.cursor);
+            let start = usize::from(cursor);
             let expected = model
                 .range(start % 255..)
                 .next()
@@ -36,7 +41,7 @@ fn retains_membership() {
             );
             if let Some(index) = expected {
                 model.remove(&index);
-                compact.cursor = (index as u8).wrapping_add(1);
+                cursor = (index as u8).wrapping_add(1);
             }
         }
         assert_eq!(compact.is_empty(()), model.is_empty());
@@ -68,16 +73,20 @@ fn retains_membership() {
 
 #[test]
 fn wraps_domain() {
-    let mut owner = Inline::<256>::default();
+    let mut owner = Bitmap::try_new(
+        bitmap::Shape::<NonZero<u32>, u32>::new(NonZero::new(256).expect("bits")),
+        bitmap::Fill::Empty,
+    )
+    .expect("compact fixture");
     for index in [0, 63, 64, 127, 128, 191, 192, 255] {
         Row::clamp(&owner, index).update::<true>(());
     }
-    owner.cursor = 255;
+    let mut cursor = 255u8;
     for expected in [255, 0, 63, 64, 127, 128, 191, 192] {
-        let start = usize::from(owner.cursor);
+        let start = usize::from(cursor);
         let removed = (&mut owner).pop_from((), start).expect("cyclic member");
         assert_eq!(removed.index(), expected);
-        owner.cursor = (expected as u8).wrapping_add(1);
+        cursor = (expected as u8).wrapping_add(1);
     }
     assert!(owner.is_empty(()));
 }

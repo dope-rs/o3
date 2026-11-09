@@ -45,8 +45,7 @@ pub struct Pinned {
 
 impl Drop for Releases<'_> {
     fn drop(&mut self) {
-        self.closed
-            .set(self.closed.get().and_then(|count| count.checked_add(1)));
+        crate::common::bump(self.closed);
     }
 }
 
@@ -62,8 +61,7 @@ impl<'owner, 'a: 'owner> release::Context<'owner, Value<'a>> for Releases<'a> {
 
 impl Drop for Reentry {
     fn drop(&mut self) {
-        self.closed
-            .set(self.closed.get().and_then(|count| count.checked_add(1)));
+        crate::common::bump(&self.closed);
         self.status.set(
             self.status
                 .get()
@@ -131,8 +129,7 @@ impl<'a> recycle::Recycle for Value<'a> {
     fn recycle(self: pin::Pin<&mut Self>) -> bool {
         let (stored, current) = self.as_ref().bind();
         let this = self.as_ref().get_ref();
-        this.resets
-            .set(this.resets.get().and_then(|count| count.checked_add(1)));
+        crate::common::bump(this.resets);
         this.value.set(0);
         stored == current
     }

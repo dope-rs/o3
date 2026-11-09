@@ -154,13 +154,12 @@ impl pool::Span<owners::Plain<pool::Layout>, pool::Owned, state::Uninit> {
 /// One acquired resident-pool backing without a duplicate pool owner.
 impl<'d> pool::Span<owners::Resident<'d>> {
     pub(in crate::buffer) fn try_extend<'a, I: buffer::raw::SliceExt>(
-        slot: staging::Slot<'a, 'd>,
+        (cursor, head): (&'a mut Self, &'a mut u32),
         slab: Option<&pool::Pool<state::Uninit, owners::Resident<'d>>>,
         input: &owners::Measured<I>,
     ) -> Result<(), Cause> {
         let added = input.len();
         let src = input.input();
-        let (cursor, head) = slot.into_parts();
         let capacity = cursor.capacity().get() as usize;
         let tail = match consume::Error::check(added, capacity - cursor.len()) {
             Ok(()) => {

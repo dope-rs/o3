@@ -177,8 +177,7 @@ impl buffer::Cursor for Counted {
 
 impl AsRef<[u8]> for Counted {
     fn as_ref(&self) -> &[u8] {
-        self.reads
-            .set(self.reads.get().and_then(|count| count.checked_add(1)));
+        crate::common::bump(&self.reads);
         &self.bytes
     }
 }

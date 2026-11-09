@@ -94,10 +94,12 @@ impl<'a, 'd> Active<'a, 'd> {
 
 impl<'d> Accounts<'d> {
     pub(in crate::buffer) fn try_grow<I: buffer::raw::SliceExt>(
-        reserve: staging::Reserve<staging::Slot<'_, 'd>, &super::Measured<I>>,
+        reserve: staging::Reserve<
+            (&mut pool::Span<super::Resident<'d>>, &mut u32),
+            &super::Measured<I>,
+        >,
     ) -> Result<bool, resident::AllocError> {
-        let (slot, capacity, input) = reserve.into_parts();
-        let (span, head) = slot.into_parts();
+        let ((span, head), capacity, input) = reserve.into_parts();
         let entry = span.entry();
         let core = entry.core();
         let header = core.header();

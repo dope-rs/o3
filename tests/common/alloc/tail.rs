@@ -26,7 +26,7 @@ impl Entry<'_> {
 impl Drop for Entry<'_> {
     fn drop(&mut self) {
         if let Some(drops) = self.drops.get() {
-            drops.set(drops.get().and_then(|count| count.checked_add(1)));
+            crate::common::bump(drops);
         }
     }
 }
@@ -34,7 +34,6 @@ impl Drop for Entry<'_> {
 impl Drop for Header<'_> {
     fn drop(&mut self) {
         self.observed.set(Some(self.drops.get()));
-        self.drops
-            .set(self.drops.get().and_then(|count| count.checked_add(1)));
+        crate::common::bump(self.drops);
     }
 }

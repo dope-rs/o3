@@ -122,20 +122,20 @@ impl Unix<Nanos> {
         let Some(ticks) = Self::nanos(duration) else {
             return Err(Add::Scale { at: self, duration });
         };
-        if self.0 > u64::MAX - ticks {
-            return Err(Add::Range { at: self, duration });
+        match self.0.checked_add(ticks) {
+            Some(ticks) => Ok(Self::new(ticks)),
+            None => Err(Add::Range { at: self, duration }),
         }
-        Ok(Self::new(self.0 + ticks))
     }
 
     pub fn try_sub(self, duration: time::Duration) -> Result<Self, Sub> {
         let Some(ticks) = Self::nanos(duration) else {
             return Err(Sub::Scale { at: self, duration });
         };
-        if ticks > self.0 {
-            return Err(Sub::Range { at: self, duration });
+        match self.0.checked_sub(ticks) {
+            Some(ticks) => Ok(Self::new(ticks)),
+            None => Err(Sub::Range { at: self, duration }),
         }
-        Ok(Self::new(self.0 - ticks))
     }
 
     fn nanos(duration: time::Duration) -> Option<u64> {

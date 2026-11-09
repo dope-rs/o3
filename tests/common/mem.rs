@@ -115,8 +115,7 @@ impl Return for RefSink<'_> {
     type Item = ();
 
     fn return_item(self, (): ()) {
-        self.0
-            .set(self.0.get().and_then(|count| count.checked_add(1)));
+        crate::common::bump(self.0);
     }
 }
 
@@ -152,9 +151,7 @@ unsafe impl<W: mem::raw::Counter> mem::raw::Target<W> for Target<'_, W> {
     unsafe fn destroy(pointer: ptr::NonNull<Self>) {
         // SAFETY: the terminal edge transfers the complete boxed allocation.
         let target = unsafe { Box::from_raw(pointer.as_ptr()) };
-        target
-            .finished
-            .set(target.finished.get().and_then(|count| count.checked_add(1)));
+        crate::common::bump(target.finished);
     }
 }
 

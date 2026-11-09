@@ -92,8 +92,7 @@ unsafe impl buffer::raw::Initializer for Source<'_> {
     }
 
     unsafe fn initialize(&self, target: *mut MaybeUninit<u8>) {
-        self.1
-            .set(self.1.get().and_then(|count| count.checked_add(1)));
+        crate::common::bump(self.1);
         // SAFETY: the caller admits this exact length in a disjoint destination.
         unsafe {
             target

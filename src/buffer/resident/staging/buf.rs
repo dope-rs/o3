@@ -10,7 +10,7 @@ use crate::{
         hold, pool,
         pool::owners,
         resident,
-        resident::staging::{Backing, Plan, Pool, Slot, reserve},
+        resident::staging::{Backing, Plan, Pool, reserve},
         storage,
         storage::regions,
         write::{self, consume, consume::Consume},
@@ -147,10 +147,7 @@ impl<I: buffer::raw::SliceExt> Reserve<&mut Buf<'_>, owners::Measured<I>> {
             State::Live(Backing::Warm(cursor) | Backing::Accounted(cursor)) => {
                 let source = if APPEND {
                     match pool::Span::try_extend(
-                        Slot {
-                            cursor: &mut *cursor,
-                            head: &mut buf.head,
-                        },
+                        (&mut *cursor, &mut buf.head),
                         warm.then_some(buf.pool.warm()),
                         &src,
                     ) {
@@ -166,10 +163,7 @@ impl<I: buffer::raw::SliceExt> Reserve<&mut Buf<'_>, owners::Measured<I>> {
                 };
                 if !warm
                     && owners::Accounts::try_grow(Reserve {
-                        buf: Slot {
-                            cursor: &mut *cursor,
-                            head: &mut buf.head,
-                        },
+                        buf: (&mut *cursor, &mut buf.head),
                         target,
                         source: &src,
                     })

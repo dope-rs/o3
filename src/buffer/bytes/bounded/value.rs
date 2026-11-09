@@ -358,7 +358,8 @@ impl<O: Unpin> buffer::Complete for Value<storage::Shared<O>> {
 // SAFETY: consuming an exact prefix cannot enlarge the admitted range.
 unsafe impl<T: buffer::raw::Consume> buffer::raw::Consume for Value<T> {
     fn consume<const MAX: u32>(prefix: buffer::raw::Consumed<'_, '_, Self, MAX>) {
-        prefix.consume::<T>();
+        // SAFETY: the transparent bound retains its exact inner owner's byte extent.
+        T::consume(unsafe { prefix.map(|source| &mut source.0) });
     }
 }
 

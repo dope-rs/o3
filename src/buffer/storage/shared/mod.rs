@@ -29,9 +29,8 @@ impl<O> Shared<O> {
     /// # Safety
     /// `owner` must keep `bytes` initialized, live, and immutable while the buffer exists.
     pub(in crate::buffer) unsafe fn assume(bytes: &[u8], owner: O) -> Self {
-        let ptr = ptr::NonNull::from(bytes).cast();
         // SAFETY: the caller proves that owner retains this initialized slice.
-        unsafe { Self::from_raw(ptr, bytes.len(), owner) }
+        unsafe { Self::from_extent(owner, regions::Extent::from_bytes(bytes)) }
     }
 
     pub fn try_split<const N: usize>(mut self) -> Result<([u8; N], Self), consume::Error>

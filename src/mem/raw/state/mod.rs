@@ -1,9 +1,7 @@
 use std::{cell, marker};
 
 mod account;
-mod live;
 pub(crate) use account::Account;
-pub(crate) use live::Live;
 
 /// One structural lane's protected reserve and current holdings.
 pub struct State<const N: usize = 1, Tag = (), W: crate::mem::raw::Word = usize> {

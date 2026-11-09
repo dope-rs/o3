@@ -79,7 +79,7 @@ impl Drop for Deferred<'_> {
     fn drop(&mut self) {
         CALLS.with(|calls| {
             let drops = self.0.get().unwrap_or(calls);
-            drops.set(drops.get().and_then(|count| count.checked_add(1)));
+            crate::common::bump(drops);
         });
     }
 }
@@ -96,7 +96,7 @@ pub struct Seed;
 
 impl Default for Seed {
     fn default() -> Self {
-        CALLS.with(|calls| calls.set(calls.get().and_then(|count| count.checked_add(1))));
+        CALLS.with(crate::common::bump);
         Self
     }
 }

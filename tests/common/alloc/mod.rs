@@ -1,8 +1,4 @@
-use std::{
-    alloc::{Layout, LayoutError},
-    array::from_fn,
-    marker, mem,
-};
+use std::{array::from_fn, marker, mem};
 
 use o3::alloc::{self, array};
 
@@ -26,22 +22,15 @@ pub struct Header(pub u32);
 pub struct Plan<R, T, E = ()> {
     roots: usize,
     tails: usize,
-    offset: usize,
-    layout: Layout,
     value: marker::PhantomData<(R, T, E)>,
 }
 
 impl<R, T, E> Plan<R, T, E> {
-    pub fn try_new(roots: usize, tails: usize) -> Result<Self, LayoutError> {
-        let root = Layout::array::<R>(roots)?;
-        let tail = Layout::array::<T>(tails)?;
-        let (layout, offset) = root.extend(tail)?;
-        let (layout, _) = layout.extend(Layout::array::<E>(roots)?)?;
+    pub fn try_new(roots: usize, tails: usize) -> Result<Self, alloc::Overflow> {
+        alloc::raw::Bundle::try_layout::<Self>(roots, tails)?;
         Ok(Self {
             roots,
             tails,
-            offset,
-            layout: layout.pad_to_align(),
             value: marker::PhantomData,
         })
     }
@@ -61,14 +50,6 @@ unsafe impl<R, T, E> alloc::raw::Shape for Plan<R, T, E> {
 
     fn tail_len(&self) -> usize {
         self.tails
-    }
-
-    fn offset(&self) -> usize {
-        self.offset
-    }
-
-    fn layout(&self) -> Layout {
-        self.layout
     }
 }
 

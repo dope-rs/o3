@@ -102,14 +102,13 @@ impl<'d> Unique<'d> {
     }
 }
 
-// SAFETY: Unique retains the view's exact exclusive extent and its provided owner.
-unsafe impl<'d> buffer::raw::Project<&'d mut [u8]> for Unique<'d> {
-    fn as_inner(&self) -> &&'d mut [u8] {
-        &self.view
-    }
-
-    unsafe fn as_inner_mut(&mut self) -> &mut &'d mut [u8] {
-        &mut self.view
+// SAFETY: Unique retains the exact exclusive slice and its provided owner.
+unsafe impl buffer::raw::Consume for Unique<'_> {
+    fn consume<const MAX: u32>(prefix: buffer::raw::Consumed<'_, '_, Self, MAX>) {
+        // SAFETY: projection retains this owner's unchanged exclusive byte extent.
+        <&mut [u8] as buffer::raw::Consume>::consume(unsafe {
+            prefix.map(|source| &mut source.view)
+        });
     }
 }
 
