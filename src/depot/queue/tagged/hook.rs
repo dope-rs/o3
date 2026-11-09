@@ -110,8 +110,8 @@ impl<E: crate::depot::raw::TagEntry> tagged::Linked<E> {
         let store = entry.store();
         let hook = entry.hook();
         let index = entry.index();
-        let previous = entry.hook().previous.get();
-        let next = entry.hook().next.get();
+        let previous = hook.previous.get();
+        let next = hook.next.get();
         let previous = previous.resolve(store);
         let next = next.resolve(store);
         // SAFETY: the retained linked entry owns these exact reciprocal neighbors.
@@ -127,8 +127,7 @@ impl<E: crate::depot::raw::TagEntry> tagged::Linked<E> {
         let store = entry.store();
         let hook = entry.hook();
         let index = entry.index();
-        let _previous = entry.hook().previous.get();
-        let next = entry.hook().next.get();
+        let next = hook.next.get();
         // SAFETY: the retained front belongs to this endpoint in its exact owner.
         let lane = unsafe { tagged::Endpoint::new(store, endpoint) };
         let head = lane.head();

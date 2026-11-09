@@ -72,7 +72,7 @@ impl Cycle {
         } else {
             let first = unsafe { hooks.hook_raw(first) };
             if first.prev_index() != Some(index) {
-                unsafe { self.unlink_key(hooks, index) };
+                unsafe { self.remove(hooks, index, false) };
                 unsafe { self.push(hooks, index) };
             }
         }

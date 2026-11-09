@@ -7,6 +7,7 @@ use std::{
 use runtime::entry;
 
 use crate::{
+    alloc,
     base::{marker::ThreadBound, num::bounded},
     depot::{
         arena::{
@@ -194,7 +195,9 @@ unsafe impl<T, Tag> map::raw::Mutation for &mut Core<T, Tag> {
 
 impl<T, Tag> Drop for Core<T, Tag> {
     fn drop(&mut self) {
-        let layout = hash::Parts::from(self.shape);
+        let recipe = hash::Parts::<T>::recipe(self.shape.table.layout(), self.shape.capacity());
+        // SAFETY: the value-bound layout proves this exact extension.
+        let layout = unsafe { alloc::raw::Recipe::build(recipe) };
         let pointer = self.directory.base();
         if needs_drop::<T>() {
             for position in (0..self.len as usize).rev() {
@@ -208,7 +211,7 @@ impl<T, Tag> Drop for Core<T, Tag> {
         }
         // SAFETY: this exclusive owner reconstructs the recipe-bound bundle and
         // releases the allocation once, after every initialized value is cleared.
-        unsafe { layout.bundle.deallocate(pointer) };
+        unsafe { layout.deallocate(pointer) };
     }
 }
 

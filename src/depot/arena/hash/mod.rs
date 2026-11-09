@@ -62,19 +62,6 @@ impl<T> Parts<T> {
         })
     }
 
-    pub(in crate::depot) fn from(layout: Layout<T>) -> Self {
-        let cap = layout.capacity();
-        let dir = layout.table.layout();
-        let buckets = dir.buckets();
-        // SAFETY: the value-bound layout proves this exact extension.
-        let bundle = unsafe { alloc::raw::Recipe::build(Self::recipe(dir, cap)) };
-        Self {
-            bundle,
-            buckets,
-            shape: layout,
-        }
-    }
-
     fn recipe(
         table: map::raw::Layout<bounded::U32<0, { u32::MAX - 1 }>>,
         capacity: usize,
