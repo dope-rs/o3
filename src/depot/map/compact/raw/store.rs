@@ -65,7 +65,7 @@ impl<'id, Q: compact::raw::Read> Store<'id, Q> {
     }
 
     fn read(&self, resident: Resident<'id>) -> Entry<'id> {
-        let bucket = resident.bucket;
+        let bucket = resident.0.bucket;
         let width = compact::Width::new(self.layout.domain);
         let start = self.layout.plane() + bucket.index * width as usize;
         let bytes = unsafe { self.owner.bytes().as_ptr().add(start) };
@@ -134,7 +134,7 @@ impl<Q: compact::raw::Insert> Store<'_, Q> {
                 self.write(bucket, control, payload);
                 return unsafe { self.owner.inserted() };
             };
-            let current = resident.control;
+            let current = resident.0.value;
             let stored = self.read(resident).payload;
             let origin = self.bucket(Q::hash(self.value(stored)) as usize);
             if (bucket.index.wrapping_sub(home.index) & (self.buckets.get() as usize - 1))
@@ -195,7 +195,7 @@ impl<'id, Q: compact::raw::Remove> Store<'id, Q> {
     fn erase(mut self, mut hole: Bucket<'id>, payload: Payload<'id>) -> Q::Output {
         let mut next = self.bucket(hole.index + 1);
         while let Some(resident) = self.control(next).occupied() {
-            let control = resident.control;
+            let control = resident.0.value;
             let payload = self.read(resident).payload;
             let home = self.bucket(Q::hash(self.value(payload)) as usize);
             if next.index == home.index {
@@ -225,10 +225,7 @@ struct Payload<'id> {
     brand: marker::PhantomData<fn(&'id ()) -> &'id ()>,
 }
 
-struct Resident<'id> {
-    bucket: Bucket<'id>,
-    control: u8,
-}
+struct Resident<'id>(Control<'id>);
 
 struct Control<'id> {
     bucket: Bucket<'id>,
@@ -240,20 +237,14 @@ impl<'id> Control<'id> {
         if self.value == compact::EMPTY {
             return None;
         }
-        Some(Resident {
-            bucket: self.bucket,
-            control: self.value,
-        })
+        Some(Resident(self))
     }
 
     fn matching(self, hash: u64) -> Option<Resident<'id>> {
         if self.value != (hash >> 57) as u8 {
             return None;
         }
-        Some(Resident {
-            bucket: self.bucket,
-            control: self.value,
-        })
+        Some(Resident(self))
     }
 }
 
@@ -361,7 +352,7 @@ impl<'id, Q: compact::raw::Query> Store<'id, Q> {
         let mut bucket = store.bucket(hash as usize);
         loop {
             let resident = store.control(bucket).occupied()?;
-            if resident.control == tag {
+            if resident.0.value == tag {
                 let entry = store.read(resident);
                 let payload = entry.payload;
                 if Q::hash(store.value(payload)) == hash && Q::get(store.value(payload)) == *key {

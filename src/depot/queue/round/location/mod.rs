@@ -119,12 +119,10 @@ impl<'a, T, const G: usize, const N: usize> Location<&'a round::Lanes<T, G, N>, 
         source: crate::depot::raw::Proof<Self, phase::Active>,
     ) -> &'a T {
         let entry = source.into_inner();
-        // SAFETY: the source retains this exact active-ring front and its
-        // admitted nonempty FIFO without callbacks between admission and removal.
-        round::Join::active::<true>(unsafe {
-            crate::depot::raw::Proof::new(entry.owner.join(entry.position.lane))
-        })
-        .idle();
+        // SAFETY: the source retains this admitted lane and both exact fronts
+        // without callbacks between admission and removal.
+        let lane = unsafe { entry.owner.join(entry.position.lane) };
+        unsafe { lane.remove_front::<true, true>(entry.position.index) }.idle();
         entry.get()
     }
 }

@@ -45,7 +45,7 @@ impl<
                 unsafe {
                     core.block.metadata.add(index as usize).as_ptr().write(
                         crate::depot::raw::IndexedMeta {
-                            generation: core.block.generation.min(),
+                            generation: crate::depot::arena::slab::key::Generation::MIN,
                             hook: H::new(links::Index::new_raw(index), None),
                         },
                     );

@@ -48,7 +48,6 @@ pub(in crate::depot) struct IndexedBlock<
     allocation: ptr::NonNull<IndexedState>,
     pub(in crate::depot) metadata: ptr::NonNull<IndexedMeta<MAX, H>>,
     pub(in crate::depot) shape: tagged::Domain<[H::Head; N], C>,
-    pub(in crate::depot) generation: key::Limit<MAX>,
     marker: marker::PhantomData<(*mut Tag, T)>,
 }
 
@@ -58,6 +57,7 @@ impl<T, Tag, const MAX: u32, H: IndexedHook, const N: usize, C: crate::depot::ra
     pub(in crate::depot) fn try_new(
         shape: tagged::Domain<[H::Head; N], C>,
     ) -> Result<Self, crate::alloc::Error> {
+        let _ = key::Generation::<MAX>::MIN;
         let plan = crate::alloc::raw::Recipe::try_build(IndexedState::recipe::<T, MAX, H, N>(
             shape.capacity().count().get(),
         ))?;
@@ -66,7 +66,6 @@ impl<T, Tag, const MAX: u32, H: IndexedHook, const N: usize, C: crate::depot::ra
                 allocation: ptr::NonNull::from(&EMPTY),
                 metadata: ptr::NonNull::dangling(),
                 shape,
-                generation: key::Limit::NEW,
                 marker: marker::PhantomData,
             });
         }
@@ -78,7 +77,6 @@ impl<T, Tag, const MAX: u32, H: IndexedHook, const N: usize, C: crate::depot::ra
             allocation: state,
             metadata,
             shape,
-            generation: key::Limit::NEW,
             marker: marker::PhantomData,
         };
         // SAFETY: allocation uniquely owns the exact uninitialized IndexedState,

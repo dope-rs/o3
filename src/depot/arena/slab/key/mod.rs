@@ -37,24 +37,13 @@ pub struct Parts<const MAX: u32 = { u32::MAX }> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct Generation<const MAX: u32 = { u32::MAX }>(NonZero<u32>, Limit<MAX>);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Limit<const MAX: u32>(marker::PhantomData<()>);
-
-impl<const MAX: u32> Limit<MAX> {
-    pub(crate) const NEW: Self = {
-        assert!(MAX != 0, "generation limit must be nonzero");
-        Self(marker::PhantomData)
-    };
-
-    pub(crate) const fn min(self) -> Generation<MAX> {
-        Generation(NonZero::<u32>::MIN, self)
-    }
-}
+pub struct Generation<const MAX: u32 = { u32::MAX }>(NonZero<u32>);
 
 impl<const MAX: u32> Generation<MAX> {
-    pub const MIN: Self = Limit::NEW.min();
+    pub const MIN: Self = {
+        assert!(MAX != 0, "generation limit must be nonzero");
+        Self(NonZero::<u32>::MIN)
+    };
 
     pub const fn get(self) -> u32 {
         self.0.get()
@@ -68,7 +57,7 @@ impl<const MAX: u32> Generation<MAX> {
     #[must_use]
     pub const fn checked_add(self, value: u32) -> Option<Self> {
         match self.0.checked_add(value) {
-            Some(next) if next.get() <= MAX => Some(Self(next, self.1)),
+            Some(next) if next.get() <= MAX => Some(Self(next)),
             _ => None,
         }
     }
@@ -97,7 +86,7 @@ impl<const MAX: u32> Parts<MAX> {
         if epoch == 0 || epoch > MAX {
             return None;
         }
-        let _ = Limit::<MAX>::NEW;
+        let _ = Generation::<MAX>::MIN;
         Some(Self { raw })
     }
 
@@ -116,10 +105,10 @@ impl<const MAX: u32> Parts<MAX> {
     }
 
     pub const fn generation(self) -> Generation<MAX> {
+        let _ = Generation::<MAX>::MIN;
         Generation(
             // SAFETY: the packed word retains a nonzero generation in its high half.
             unsafe { NonZero::<u32>::new_unchecked((self.raw.get() >> 32) as u32) },
-            Limit::NEW,
         )
     }
 }
@@ -179,7 +168,6 @@ impl<Tag, const MAX: u32> PartialEq for Handle<Tag, MAX> {
 impl<Tag, const MAX: u32> Eq for Handle<Tag, MAX> {}
 
 const _: () = {
-    assert!(mem::size_of::<Limit<{ u32::MAX }>>() == 0);
     assert!(mem::size_of::<Generation>() == mem::size_of::<u32>());
     assert!(mem::size_of::<Option<Generation>>() == mem::size_of::<Generation>());
     assert!(mem::size_of::<Parts>() == mem::size_of::<u64>());

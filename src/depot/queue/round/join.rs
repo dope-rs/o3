@@ -86,7 +86,7 @@ impl<'a, H: depot::raw::Hooks + ?Sized, L: depot::raw::Hooks + ?Sized> Join<'a, 
     /// # Safety
     /// The resident is this FIFO's front. ACTIVE proves the active-ring front.
     /// ROTATE advances the selected lane only if removal leaves the FIFO nonempty.
-    unsafe fn remove_front<const ACTIVE: bool, const ROTATE: bool>(
+    pub(super) unsafe fn remove_front<const ACTIVE: bool, const ROTATE: bool>(
         self,
         index: links::Index,
     ) -> links::Detached<'a> {
