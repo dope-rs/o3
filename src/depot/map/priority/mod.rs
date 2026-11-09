@@ -1,6 +1,5 @@
 use std::{cmp, mem, ptr};
 
-pub(in crate::depot::map::priority) use layout::Layout;
 pub use min::Min;
 pub use plan::Plan;
 
@@ -17,7 +16,6 @@ pub mod errors;
 mod min;
 mod plan;
 
-mod layout;
 mod node;
 pub(in crate::depot::map::priority) use node::Node;
 mod store;
@@ -57,12 +55,12 @@ impl<K, V, P: Ord> Core<K, V, P> {
     pub(in crate::depot::map::priority) fn try_new(
         plan: Plan<K, P, V>,
     ) -> Result<Self, crate::alloc::Exhausted> {
-        let layout = Layout::from_plan(plan);
-        let fields = layout.bundle.try_allocate()?;
-        let table = unsafe { map::raw::Table::from_fields(fields.prior().prior(), layout.buckets) };
+        let (bundle, buckets) = plan.into_bundle();
+        let fields = bundle.try_allocate()?;
+        let table = unsafe { map::raw::Table::from_fields(fields.prior().prior(), buckets) };
         Ok(Self {
             table,
-            store: unsafe { Store::new(fields.prior().tail(), layout.plan) },
+            store: unsafe { Store::new(fields.prior().tail(), plan) },
             indices: fields.tail(),
         })
     }
@@ -253,7 +251,7 @@ impl<K, V, P: Ord> Insertion<'_, K, P, V> {
 
 impl<K, V, P: Ord> Drop for Core<K, V, P> {
     fn drop(&mut self) {
-        let layout = Layout::from_plan(self.store.plan());
+        let (bundle, _) = self.store.plan().into_bundle();
         let base = self.table.base();
         for position in 0..self.store.len() {
             // SAFETY: the heap contains each live node once, owned exclusively by this core.
@@ -262,7 +260,7 @@ impl<K, V, P: Ord> Drop for Core<K, V, P> {
                 ptr::drop_in_place(self.store.pair_mut(index));
             }
         }
-        unsafe { layout.bundle.deallocate(base) }
+        unsafe { bundle.deallocate(base) }
     }
 }
 
