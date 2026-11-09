@@ -1,8 +1,14 @@
 //! Indexed priorities coupled to resident phases and exclusive event queues.
 
+use std::marker;
+
 use crate::{
     alloc::{self, BoxSliceExt as _},
-    depot::{capacity, heap::indexed, queue::indexed::planes},
+    depot::{
+        capacity,
+        heap::{self, indexed},
+        queue::{indexed::planes, links},
+    },
 };
 
 /// Payloads owned by the resident's scheduling and event phases.
@@ -51,7 +57,7 @@ pub type Peek<'a, P, T> = (
 );
 
 /// A resident phase retaining its exact vacant heap position.
-pub type Vacant<'a, P, T, F, C = capacity::Count> = Slot<'a, T, indexed::Vacant<'a, P, C>, F>;
+pub type Vacant<'a, P, T, F, C = capacity::Count> = Slot<'a, P, T, heap::Direct, F, C>;
 
 /// A sealed resident field selected by its exclusive owner.
 pub trait Phase<T: Values>: Sealed {
@@ -71,18 +77,21 @@ pub struct Min<P: Ord, T: Values, C: alloc::raw::Extent = capacity::Count> {
 }
 
 /// Exact heap membership and resident phase retained in one exclusive loan.
-pub struct Slot<'a, T: Values, H, F: Phase<T>> {
-    order: H,
-    field: raw::Held<'a, T, F>,
+pub struct Slot<'a, P: Ord, T: Values, H, F: Phase<T>, C: alloc::raw::Extent = capacity::Count> {
+    order: &'a mut indexed::Min<P, C>,
+    core: &'a mut raw::Core<T>,
+    index: links::Index,
+    state: H,
+    field: marker::PhantomData<fn() -> F>,
 }
 
 pub enum Control<'a, P: Ord, T: Values, C: alloc::raw::Extent = capacity::Count> {
-    Full(Slot<'a, T, indexed::Occupied<'a, P, C>, phase::Control>),
+    Full(Slot<'a, P, T, usize, phase::Control, C>),
     Empty(Vacant<'a, P, T, phase::Control, C>),
 }
 
 pub enum Entry<'a, P: Ord, T: Values, C: alloc::raw::Extent = capacity::Count> {
-    Scheduled(Slot<'a, T, indexed::Occupied<'a, P, C>, phase::Scheduled>),
+    Scheduled(Slot<'a, P, T, usize, phase::Scheduled, C>),
     Idle(Vacant<'a, P, T, phase::Idle, C>),
     Control(Control<'a, P, T, C>),
     Data(Vacant<'a, P, T, phase::Data, C>),
@@ -159,69 +168,6 @@ impl<P: Ord, T: Values, C: alloc::raw::Extent> Min<P, T, C> {
 impl<P: Ord, T: Values, C: alloc::raw::Extent> Drop for Min<P, T, C> {
     fn drop(&mut self) {
         raw::destroy(self);
-    }
-}
-
-impl<'a, T: Values, H, F: Phase<T>> Slot<'a, T, H, F> {
-    pub fn index(&self) -> usize {
-        self.field.index()
-    }
-
-    pub fn get(&self) -> (&T::Common, &F::Item) {
-        self.field.get()
-    }
-
-    pub fn get_mut(&mut self) -> (&mut T::Common, &mut F::Item) {
-        self.field.get_mut()
-    }
-
-    pub fn change<G: Phase<T> + Retained<H>>(self, value: G::Item) -> (Slot<'a, T, H, G>, F::Item) {
-        let (field, old) = self.field.change::<G>(value);
-        (
-            Slot {
-                order: self.order,
-                field,
-            },
-            old,
-        )
-    }
-}
-
-impl<'a, P: Ord, T: Values, C: alloc::raw::Extent, F: Phase<T>>
-    Slot<'a, T, indexed::Occupied<'a, P, C>, F>
-{
-    pub fn replace(self, priority: P) -> (Self, P) {
-        let (order, old) = self.order.replace(priority);
-        (
-            Self {
-                order,
-                field: self.field,
-            },
-            old,
-        )
-    }
-
-    pub fn retire(self, value: T::Idle) -> (Vacant<'a, P, T, phase::Idle, C>, F::Item, P) {
-        let (order, priority) = self.order.remove();
-        let (field, old) = self.field.change::<phase::Idle>(value);
-        (Slot { order, field }, old, priority)
-    }
-}
-
-impl<'a, P: Ord, T: Values, C: alloc::raw::Extent, F: Phase<T>>
-    Slot<'a, T, indexed::Vacant<'a, P, C>, F>
-{
-    pub fn schedule(
-        self,
-        priority: P,
-        value: T::Control,
-    ) -> (
-        Slot<'a, T, indexed::Occupied<'a, P, C>, phase::Control>,
-        F::Item,
-    ) {
-        let order = self.order.insert(priority);
-        let (field, old) = self.field.change::<phase::Control>(value);
-        (Slot { order, field }, old)
     }
 }
 

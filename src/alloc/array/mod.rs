@@ -58,7 +58,7 @@ impl<T, E: alloc::raw::Extent, S> array::Block<mem::MaybeUninit<T>, E, S> {
 
     /// Initializes the entire unpublished backing and transfers its ownership.
     pub fn init(mut self, make: impl FnMut(usize) -> T) -> array::Block<T, E, S> {
-        self.write_with(make);
+        alloc::raw::init(&mut self, make);
         // SAFETY: the complete owned extent now contains initialized elements.
         unsafe { self.assume_init() }
     }

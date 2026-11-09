@@ -118,39 +118,55 @@ unsafe impl<T: Values> depot::raw::Hooks for Core<T> {
     }
 }
 
-pub(super) struct Held<'a, T: Values, F: Phase<T>> {
-    core: &'a mut Core<T>,
-    index: links::Index,
-    field: marker::PhantomData<fn() -> F>,
-}
-
-impl<'a, T: Values, F: Phase<T>> Held<'a, T, F> {
-    // SAFETY: the constructor retains this exact node and its F field until transition.
-    unsafe fn new(core: &'a mut Core<T>, index: links::Index) -> Self {
+impl<'a, P: Ord, T: Values, H, F: Phase<T>, C: alloc::raw::Extent> Slot<'a, P, T, H, F, C> {
+    // SAFETY: both disjoint loans retain the same owner's exact index, heap state and F field.
+    unsafe fn new(
+        order: &'a mut indexed::Min<P, C>,
+        core: &'a mut Core<T>,
+        index: links::Index,
+        state: H,
+    ) -> Self {
         Self {
+            order,
             core,
             index,
+            state,
             field: marker::PhantomData,
         }
     }
 
-    pub(super) fn index(&self) -> usize {
+    pub fn index(&self) -> usize {
         self.index.get()
     }
 
-    pub(super) fn get(&self) -> (&T::Common, &F::Item) {
+    pub fn get(&self) -> (&T::Common, &F::Item) {
         // SAFETY: the retained slot admits exactly this resident and field.
         let node = unsafe { self.core.nodes.get_unchecked(self.index.get()) };
         (&node.common, unsafe { node.value.get() })
     }
 
-    pub(super) fn get_mut(&mut self) -> (&mut T::Common, &mut F::Item) {
+    pub fn get_mut(&mut self) -> (&mut T::Common, &mut F::Item) {
         // SAFETY: the exclusive owner prevents field replacement during this loan.
         let node = unsafe { self.core.nodes.get_unchecked_mut(self.index.get()) };
         (&mut node.common, unsafe { node.value.get_mut() })
     }
 
-    pub(super) fn change<G: Phase<T>>(self, value: G::Item) -> (Held<'a, T, G>, F::Item) {
+    pub fn change<G: Phase<T> + super::Retained<H>>(
+        self,
+        value: G::Item,
+    ) -> (Slot<'a, P, T, H, G, C>, F::Item)
+    where
+        H: Copy,
+    {
+        let state = self.state;
+        self.transition::<G, _>(state, value)
+    }
+
+    fn transition<G: Phase<T>, N>(
+        self,
+        state: N,
+        value: G::Item,
+    ) -> (Slot<'a, P, T, N, G, C>, F::Item) {
         let value = Stored::new(G::value(value));
         if F::TAG != G::TAG {
             // SAFETY: F owns this slot's sole membership; the successor cannot share its hook.
@@ -186,13 +202,48 @@ impl<'a, T: Values, F: Phase<T>> Held<'a, T, F> {
         let old = unsafe { node.value.take::<F::Item>() };
         node.value = value;
         (
-            Held {
+            Slot {
+                order: self.order,
                 core: self.core,
                 index: self.index,
+                state,
                 field: marker::PhantomData,
             },
             old,
         )
+    }
+}
+
+impl<'a, P: Ord, T: Values, F: Phase<T>, C: alloc::raw::Extent> Slot<'a, P, T, usize, F, C> {
+    pub fn replace(mut self, priority: P) -> (Self, P) {
+        // SAFETY: this exclusive slot retains its exact initialized heap position.
+        let entry = unsafe { heap::Entry::new(&mut *self.order, self.state, ()) };
+        let (order, old) = indexed::Occupied { entry }.replace(priority);
+        self.state = order.entry.position;
+        (self, old)
+    }
+
+    pub fn retire(self, value: T::Idle) -> (Vacant<'a, P, T, phase::Idle, C>, F::Item, P) {
+        // SAFETY: this exclusive slot retains its exact initialized heap position.
+        let entry = unsafe { heap::Entry::new(&mut *self.order, self.state, ()) };
+        let (vacant, priority) = indexed::Occupied { entry }.remove();
+        let direct = vacant.entry.value;
+        let (slot, old) = self.transition::<phase::Idle, _>(direct, value);
+        (slot, old, priority)
+    }
+}
+
+impl<'a, P: Ord, T: Values, F: Phase<T>, C: alloc::raw::Extent> Slot<'a, P, T, heap::Direct, F, C> {
+    pub fn schedule(
+        self,
+        priority: P,
+        value: T::Control,
+    ) -> (Slot<'a, P, T, usize, phase::Control, C>, F::Item) {
+        // SAFETY: the exclusive absent identity retains spare capacity in this exact heap.
+        let vacant = unsafe { heap::Vacancy::new(&mut *self.order, self.state) };
+        let entry = indexed::Vacant { entry: vacant }.insert(priority);
+        let position = entry.entry.position;
+        self.transition::<phase::Control, _>(position, value)
     }
 }
 
@@ -244,10 +295,7 @@ unsafe fn vacant<'a, P: Ord, T: Values, C: alloc::raw::Extent, F: Phase<T>>(
     let live: depot::raw::Proof<_, Initialized<indexed::Empty>> =
         unsafe { depot::raw::Proof::new(((order, core), index.position())) };
     let (order, core) = live.entry();
-    Slot {
-        order,
-        field: unsafe { Held::new(core, index) },
-    }
+    unsafe { Slot::new(order.entry.owner, core, index, order.entry.value) }
 }
 
 pub(super) fn entry<P: Ord, T: Values, C: alloc::raw::Extent>(
@@ -269,24 +317,20 @@ pub(super) fn entry<P: Ord, T: Values, C: alloc::raw::Extent>(
             let (order, core) = live.entry();
             match (tag, order) {
                 (Tag::Control, indexed::Entry::Occupied(order)) => {
-                    Entry::Control(Control::Full(Slot {
-                        order,
-                        field: unsafe { Held::new(core, index) },
+                    Entry::Control(Control::Full(unsafe {
+                        Slot::new(order.entry.owner, core, index, order.entry.position)
                     }))
                 }
                 (Tag::Control, indexed::Entry::Vacant(order)) => {
-                    Entry::Control(Control::Empty(Slot {
-                        order,
-                        field: unsafe { Held::new(core, index) },
+                    Entry::Control(Control::Empty(unsafe {
+                        Slot::new(order.entry.owner, core, index, order.entry.value)
                     }))
                 }
-                (_, indexed::Entry::Occupied(order)) => Entry::Scheduled(Slot {
-                    order,
-                    field: unsafe { Held::new(core, index) },
+                (_, indexed::Entry::Occupied(order)) => Entry::Scheduled(unsafe {
+                    Slot::new(order.entry.owner, core, index, order.entry.position)
                 }),
-                (_, indexed::Entry::Vacant(order)) => Entry::Idle(Slot {
-                    order,
-                    field: unsafe { Held::new(core, index) },
+                (_, indexed::Entry::Vacant(order)) => Entry::Idle(unsafe {
+                    Slot::new(order.entry.owner, core, index, order.entry.value)
                 }),
             }
         }
@@ -304,14 +348,12 @@ pub(super) fn control<P: Ord, T: Values, C: alloc::raw::Extent>(
         unsafe { depot::raw::Proof::new(((order, core), index.position())) };
     let (order, core) = live.entry();
     Some(match order {
-        indexed::Entry::Occupied(order) => Control::Full(Slot {
-            order,
-            field: unsafe { Held::new(core, index) },
+        indexed::Entry::Occupied(order) => Control::Full(unsafe {
+            Slot::new(order.entry.owner, core, index, order.entry.position)
         }),
-        indexed::Entry::Vacant(order) => Control::Empty(Slot {
-            order,
-            field: unsafe { Held::new(core, index) },
-        }),
+        indexed::Entry::Vacant(order) => {
+            Control::Empty(unsafe { Slot::new(order.entry.owner, core, index, order.entry.value) })
+        }
     })
 }
 

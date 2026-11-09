@@ -292,6 +292,15 @@ pub(crate) unsafe fn resize(
     ptr::NonNull::new(pointer).ok_or(Exhausted)
 }
 
+pub(in crate::alloc) fn init<T>(
+    entries: &mut [mem::MaybeUninit<T>],
+    mut make: impl FnMut(usize) -> T,
+) {
+    for (index, entry) in entries.iter_mut().enumerate() {
+        entry.write(make(index));
+    }
+}
+
 /// Writes paired rows in order; the caller retains each plane's complete
 /// extent and initialization proof, including an uninitialized first plane.
 pub(in crate::alloc) fn pair<T, U>(

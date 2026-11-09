@@ -303,7 +303,10 @@ fn resident_phases() {
                 _ => None,
             })
             .expect("second resident");
-        let (slot, _, _) = slot.retire(payload(9, &drops));
+        let (slot, previous) = slot.replace(0);
+        assert_eq!(previous, 10);
+        let (slot, _, priority) = slot.retire(payload(9, &drops));
+        assert_eq!(priority, 0);
         slot.change::<phase::Data>(payload(10, &drops));
         let slot = owner
             .entry(0)

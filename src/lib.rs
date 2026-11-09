@@ -1,4 +1,4 @@
-#![feature(allocator_api, maybe_uninit_fill)]
+#![feature(allocator_api)]
 #![doc = include_str!("../README.md")]
 
 pub mod alloc;
