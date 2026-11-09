@@ -30,17 +30,15 @@ impl<'a, T, const N: usize, const L: usize, C: crate::depot::raw::Count>
         unsafe { tagged::Vacant::new(Position { store, index }) }
     }
 
-    pub fn insert<const FRONT: bool>(self, value: T) -> lanes::Rollback<'a, T, N, L, C> {
-        crate::mem::Lease::open(
-            crate::depot::raw::LaneUndo(std::marker::PhantomData),
-            self.insert_linked::<FRONT>(value),
-        )
+    pub fn insert<const FRONT: bool>(self, value: T) -> lanes::Rollback<'a, T, N, C> {
+        let Position { store, index } = self.insert_linked::<FRONT>(value).into_inner();
+        // SAFETY: insertion established this exact initialized membership and exclusive owner.
+        let entry = unsafe { tagged::Linked::new(crate::depot::raw::Proof::new((store, index))) };
+        crate::mem::Lease::open(crate::depot::raw::LaneUndo(std::marker::PhantomData), entry)
     }
 }
 
-impl<'a, T, const N: usize, const L: usize, C: crate::depot::raw::Count>
-    lanes::Rollback<'a, T, N, L, C>
-{
+impl<'a, T, const N: usize, C: crate::depot::raw::Count> lanes::Rollback<'a, T, N, C> {
     pub fn commit(self) {
         self.into_parts();
     }
@@ -56,19 +54,11 @@ const _: () = {
             == 2 * mem::size_of::<usize>()
     );
     assert!(
-        mem::size_of::<lanes::Rollback<'static, (), 1, 0, capacity::Count>>()
+        mem::size_of::<lanes::Rollback<'static, (), 1, capacity::Count>>()
             == 2 * mem::size_of::<usize>()
     );
     assert!(
-        mem::size_of::<Option<lanes::Rollback<'static, (), 1, 0, capacity::Count>>>()
+        mem::size_of::<Option<lanes::Rollback<'static, (), 1, capacity::Count>>>()
             == 2 * mem::size_of::<usize>()
     );
 };
-
-impl<T, const N: usize, const L: usize, C: crate::depot::raw::Count, const INITIALIZED: bool>
-    Position<'_, T, N, L, C, INITIALIZED>
-{
-    pub(in crate::depot) fn parts(&self) -> (&lanes::Fifo<T, N, C>, links::Index) {
-        (&*self.store, self.index)
-    }
-}

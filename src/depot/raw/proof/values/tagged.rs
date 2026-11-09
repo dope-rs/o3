@@ -53,14 +53,13 @@ unsafe impl<T, const N: usize, const L: usize, C: crate::depot::raw::Count, cons
     const INITIALIZED: bool = INITIALIZED;
     type Store = lanes::Fifo<T, N, C>;
     fn store(&self) -> &Self::Store {
-        self.parts().0
+        self.store
     }
     fn index(&self) -> links::Index {
-        self.parts().1
+        self.index
     }
     fn hook(&self) -> &tagged::Hook {
-        use crate::depot::raw::LaneStore as _;
-        &unsafe { self.parts().0.nodes().get_unchecked(self.parts().1.get()) }.hook
+        unsafe { crate::depot::raw::TagStore::hook(self.store, self.index) }
     }
 }
 
@@ -69,6 +68,6 @@ unsafe impl<T, const N: usize, const L: usize, C: crate::depot::raw::Count, cons
     crate::depot::raw::TagTarget for lanes::Position<'_, T, N, L, C, INITIALIZED>
 {
     fn lane(&self) -> tagged::Endpoint<&Self::Store> {
-        tagged::Endpoint::constant::<L>(self.parts().0)
+        tagged::Endpoint::constant::<L>(self.store)
     }
 }
