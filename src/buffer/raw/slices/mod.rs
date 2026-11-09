@@ -1,7 +1,7 @@
 use std::{num::NonZero, ptr};
 
 use resident::copy;
-use storage::{alloc, regions::Initialize as _};
+use storage::alloc;
 
 use crate::buffer::{self, bytes::bounded, resident, storage, write::consume};
 
@@ -95,6 +95,14 @@ impl<'a, const N: usize> Slices<'a, N> {
 }
 
 impl<const N: usize> Slices<'_, N> {
+    pub(in crate::buffer) fn try_init<P: buffer::raw::Policy>(
+        self,
+        seed: P,
+    ) -> Result<storage::regions::Init<P>, alloc::Error<P::Failure>> {
+        // SAFETY: admission retains every source and their exact nonzero byte sum.
+        unsafe { storage::regions::try_init(self.len(), self.slices(), seed) }
+    }
+
     /// Allocates and initializes the exact admitted source without revalidation.
     pub fn try_owned(self) -> Result<storage::Exact, crate::alloc::Exhausted> {
         let inner = self.try_init(()).map_err(alloc::Error::into_alloc)?;

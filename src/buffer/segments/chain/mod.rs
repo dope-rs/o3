@@ -29,26 +29,11 @@ impl<T: buffer::raw::Segment> Chain<T> {
         let Some(capacity) = num::NonZero::<u32>::new(len as u32) else {
             return Ok(storage::Shared::new());
         };
-        let source = Flatten {
-            capacity,
-            sources: self.segments(),
-        };
-        let init = regions::Initialize::try_init::<()>(source, ())
+        // SAFETY: admission covers the exact byte sum of this retained immutable chain.
+        let init = unsafe { regions::try_init(capacity, self.segments(), ()) }
             .map_err(alloc::Error::into_alloc)
             .map_err(AllocError::Exhausted)?;
         Ok(init.into_buf().into())
-    }
-}
-
-struct Flatten<'a, T> {
-    capacity: num::NonZero<u32>,
-    sources: segments::Iter<'a, T>,
-}
-
-// SAFETY: try_flatten admits the exact byte sum of this retained immutable chain.
-unsafe impl<T: buffer::raw::Segment> regions::Initialize for Flatten<'_, T> {
-    fn parts(&self) -> (num::NonZero<u32>, impl buffer::raw::SliceExt) {
-        (self.capacity, &self.sources)
     }
 }
 

@@ -2,7 +2,7 @@ use crate::buffer;
 pub(in crate::buffer::storage) mod bytes;
 use std::num;
 
-use storage::{alloc, regions::Initialize as _};
+use storage::alloc;
 
 use crate::buffer::{
     bytes::bounded,

@@ -55,9 +55,6 @@ pub(in crate::depot::heap) unsafe fn resident_mut<
     unsafe { owner.storage.values_mut().get_unchecked_mut(key.index()) }
 }
 
-mod queue;
-pub(in crate::depot) use queue::Queue;
-
 mod source;
 
 const _: () = {

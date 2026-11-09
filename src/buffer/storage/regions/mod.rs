@@ -20,30 +20,17 @@ use crate::{
 /// # Safety
 /// The sources retain immutable bytes whose complete sum equals the capacity.
 /// Their copy operation initializes that complete admitted destination exactly once.
-pub(in crate::buffer) unsafe trait Initialize: Sized {
-    fn parts(&self) -> (NonZero<u32>, impl crate::buffer::raw::SliceExt);
-
-    #[inline(always)]
-    fn try_init<P: crate::buffer::raw::Policy>(
-        self,
-        seed: P,
-    ) -> Result<regions::Init<P>, alloc::Error<P::Failure>> {
-        use crate::buffer::raw::SliceExt as _;
-
-        let (capacity, sources) = self.parts();
-        let mut heap = crate::buffer::raw::Heap::try_new(seed, capacity)?;
-        // SAFETY: the retained sources exactly fill this fresh disjoint allocation.
-        unsafe { sources.copy_to(heap.as_mut_ptr().cast()) };
-        // SAFETY: copying every retained source initialized the complete allocation.
-        Ok(unsafe { regions::Init::new(heap) })
-    }
-}
-
-// SAFETY: admission pairs every retained slice with their exact nonzero byte sum.
-unsafe impl<const N: usize> Initialize for crate::buffer::raw::Slices<'_, N> {
-    fn parts(&self) -> (NonZero<u32>, impl crate::buffer::raw::SliceExt) {
-        (self.len(), self.slices())
-    }
+#[inline(always)]
+pub(in crate::buffer) unsafe fn try_init<P: crate::buffer::raw::Policy>(
+    capacity: NonZero<u32>,
+    sources: impl crate::buffer::raw::SliceExt,
+    seed: P,
+) -> Result<regions::Init<P>, alloc::Error<P::Failure>> {
+    let mut heap = crate::buffer::raw::Heap::try_new(seed, capacity)?;
+    // SAFETY: the retained sources exactly fill this fresh disjoint allocation.
+    unsafe { sources.copy_to(heap.as_mut_ptr().cast()) };
+    // SAFETY: copying every retained source initialized the complete allocation.
+    Ok(unsafe { regions::Init::new(heap) })
 }
 
 mod nonempty;
