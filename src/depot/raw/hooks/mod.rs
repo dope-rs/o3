@@ -64,7 +64,9 @@ pub unsafe trait Hooks {
     /// This exclusive free list is acyclic in this exact hook store.
     /// Implementations detach its exact first hook and preserve the remaining list.
     unsafe fn acquire(&self, free: &links::Free) -> Option<links::Index> {
-        unsafe { free.acquire_raw(self) }
+        let index = free.front()?;
+        unsafe { free.acquire_at(self, index) };
+        Some(index)
     }
     /// # Safety
     /// The index is detached and absent from every list of this owner.

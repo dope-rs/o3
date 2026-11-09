@@ -1,13 +1,7 @@
-use crate::{
-    buffer::{
-        self,
-        bytes::bounded,
-        storage::{
-            provided,
-            provided::{Account, Unique},
-        },
-    },
-    mem::rc,
+use crate::buffer::{
+    self,
+    bytes::bounded,
+    storage::{provided, provided::Unique},
 };
 
 // SAFETY: the projection reborrows the same exclusive view without changing its owner.
@@ -70,13 +64,6 @@ unsafe impl buffer::raw::Store for provided::Prefix<'_, '_> {
         <&mut [u8] as buffer::raw::Store>::project(slice);
     }
 }
-// SAFETY: the concrete edge retains its original allocation, ownership, and lifetime.
-unsafe impl<'d> buffer::raw::Retain for Account<'d> {
-    fn try_retain(&self) -> Result<Self, rc::Error> {
-        self.try_clone()
-    }
-}
-
 // SAFETY: roots borrow the original arena and the terminal reclaims every initialized slot and charge.
 unsafe impl<T, C> buffer::raw::Arenas for provided::Arena<T, C> {
     type Roots<'d>

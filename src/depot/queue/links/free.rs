@@ -16,17 +16,6 @@ impl Free {
     }
 
     /// # Safety
-    /// Reachable hooks belong to this store and form an acyclic vacant chain.
-    pub(in crate::depot) unsafe fn acquire_raw<H: crate::depot::raw::Hooks + ?Sized>(
-        &self,
-        hooks: &H,
-    ) -> Option<links::Index> {
-        let index = self.front()?;
-        unsafe { self.acquire_at(hooks, index) };
-        Some(index)
-    }
-
-    /// # Safety
     /// `index` is this head, preserved by its owner's exclusive reservation.
     pub(in crate::depot) unsafe fn acquire_at<H: crate::depot::raw::Hooks + ?Sized>(
         &self,

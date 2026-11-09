@@ -16,14 +16,18 @@ pub struct Account<'d> {
 }
 
 impl<'d> Account<'d> {
-    pub(in crate::buffer) fn try_clone(&self) -> Result<Self, rc::Error> {
-        Ok(Self {
-            registration: self.registration.try_clone()?,
-        })
-    }
     pub(in crate::buffer) fn charge(&self) -> &buffer::resident::Charge<'d> {
         // SAFETY: the owner borrow retains this exact initialized registration.
         unsafe { (*self.registration.get().value.get()).assume_init_ref() }
+    }
+}
+
+// SAFETY: the concrete edge retains its original allocation, ownership, and lifetime.
+unsafe impl<'d> buffer::raw::Retain for Account<'d> {
+    fn try_retain(&self) -> Result<Self, rc::Error> {
+        Ok(Self {
+            registration: self.registration.try_clone()?,
+        })
     }
 }
 

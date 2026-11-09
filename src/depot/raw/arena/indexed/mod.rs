@@ -1,4 +1,4 @@
-use std::{cell::Cell, marker, mem, ptr, slice};
+use std::{marker, mem, ptr, slice};
 
 pub(in crate::depot) use layouts::{IndexedMeta, IndexedState};
 
@@ -27,13 +27,10 @@ unsafe impl IndexedHook for links::Hook {
     type Head = links::Chain<()>;
     type Chain = links::Chain<()>;
     fn new(index: links::Index, next: Option<links::Index>) -> Self {
-        Self {
-            previous: Cell::new(index.raw()),
-            next: Cell::new(links::Index::encode(next)),
-        }
+        Self::vacant(index.raw(), links::Index::encode(next))
     }
     fn is_linked(&self, index: links::Index) -> bool {
-        self.previous.get() != index.raw()
+        index.is_linked(self)
     }
     unsafe fn next(&self) -> u32 {
         self.next.get()
