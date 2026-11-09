@@ -26,11 +26,10 @@ pub struct Set<'source, 'ranges, S: ?Sized, N = u32> {
 impl<'source, 'ranges, S: buffer::raw::Source + ?Sized, N: buffer::raw::Length>
     Set<'source, 'ranges, S, N>
 {
-    pub(in crate::buffer::hold) fn new(
-        source: &'source S,
-        ranges: &'ranges [(N, N)],
-        len: usize,
-    ) -> Self {
+    /// # Safety
+    /// Keep these admitted nonempty ranges within this source's unchanged coordinate origin.
+    /// Count is <=u32::MAX and their exact sum is len; copied sources preserve all bytes.
+    pub unsafe fn from_parts(source: &'source S, ranges: &'ranges [(N, N)], len: usize) -> Self {
         const { assert!(N::MAX <= u32::MAX as usize) };
         Self {
             source,
@@ -88,7 +87,8 @@ impl<'source, 'ranges, S: buffer::raw::Source + ?Sized, N: buffer::raw::Length>
         if actual != expected {
             return Err(Error::Length { expected, actual });
         }
-        Ok(Self::new(source, ranges, actual))
+        // SAFETY: every range, the count, and their exact sum were admitted above.
+        Ok(unsafe { Self::from_parts(source, ranges, actual) })
     }
 
     pub fn get(&self, index: usize) -> Option<buffer::View<'source, S>> {

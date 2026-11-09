@@ -23,5 +23,3 @@ pub use chain::Chain;
 /// This authority holds until consumption; its borrowed outputs retain the same hook lifetime.
 #[derive(Debug)]
 pub enum Vacant {}
-
-impl crate::depot::Predicate for Vacant {}

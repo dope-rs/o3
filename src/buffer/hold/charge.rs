@@ -14,18 +14,6 @@ pub struct Charge {
 }
 
 impl Charge {
-    pub(in crate::buffer) fn from_view<S: buffer::Residency + ?Sized>(
-        view: &buffer::View<'_, S>,
-    ) -> Self {
-        let logical = view.len();
-        let resident = if logical == 0 {
-            0
-        } else {
-            view.source.resident()
-        };
-        Self::from_commit(logical, resident, usize::from(resident > 0))
-    }
-
     /// Constructs an exact delta already committed by an ownership authority.
     /// Partial deltas are valid because the authority has already proved them.
     pub const fn from_commit(logical: usize, resident: usize, owners: usize) -> Self {

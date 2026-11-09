@@ -28,7 +28,7 @@ pub unsafe trait Rows: alloc::raw::Shape {
         while low < high {
             let span = high - low;
             let count = low + span.div_ceil(2);
-            if alloc::raw::Bundle::bounds::<Self>(count, count).fits() {
+            if alloc::raw::Bundle::try_layout::<Self>(count, count).is_ok() {
                 low = count;
             } else {
                 high = count - 1;

@@ -59,7 +59,7 @@ impl Owned {
         let mut writer = spare.bounded();
         build(&mut writer).map_err(BuildError::Build)?;
         writer.commit();
-        spare.commit();
+        value.len = spare.len() as u32;
         Ok(value)
     }
 

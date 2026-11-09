@@ -67,13 +67,10 @@ unsafe impl<O: regions::End> buffer::raw::Consume for Shared<O> {
 
 impl<O: regions::End> Shared<O> {
     pub fn project(
-        mut self,
+        self,
         visible: ops::Range<usize>,
     ) -> Result<Self, crate::mem::Rejected<Self, range::Error>> {
-        match self.try_restrict(visible) {
-            Ok(()) => Ok(self),
-            Err(error) => Err(crate::mem::Rejected::new(self, error)),
-        }
+        buffer::raw::Slice::try_project(self, visible)
     }
 }
 impl<O: regions::End> consume::Consume for Shared<O> {
@@ -128,16 +125,9 @@ impl bytes::TryRetain for Shared {
     }
 }
 
-impl<L> storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'_>>> {
-    pub(in crate::buffer) fn into_owner(self) -> storage::Shared<Option<regions::Tag>> {
-        let inner: storage::Shared<owners::Edge<owners::Plain<L>>> = self.into();
-        inner.into()
-    }
-}
-
 impl<L> bytes::TryRetain for storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'_>>> {
     fn try_retain(self) -> Result<storage::Shared, storage::AllocError> {
-        Ok(self.into_owner())
+        Ok(self.into())
     }
 }
 

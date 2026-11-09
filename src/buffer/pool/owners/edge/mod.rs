@@ -33,34 +33,13 @@ impl<K: crate::buffer::raw::Backing, M> Edge<K, M> {
         let this = mem::ManuallyDrop::new(self);
         this.ptr
     }
-
-    pub(in crate::buffer) unsafe fn release_raw(ptr: ptr::NonNull<()>) {
-        use crate::mem::raw::Edge;
-
-        // SAFETY: callers transfer one live pool-slot prefix edge.
-        if unsafe { ptr.cast::<regions::Prefix>().as_ref().release() } != rc::Release::Last {
-            return;
-        }
-        // SAFETY: Last transfers the exact terminal slot edge into Retired.
-        unsafe { owners::Retired::<K, owners::Any>::from_owner(ptr) }.finish();
-    }
-}
-
-impl<L> Edge<owners::Plain<L>, pool::Borrowed<'_>> {
-    pub(in crate::buffer) fn into_owned(self) -> Edge<owners::Plain<L>, pool::Owned> {
-        let this = mem::ManuallyDrop::new(self);
-        Edge {
-            ptr: this.ptr,
-            mode: marker::PhantomData,
-        }
-    }
 }
 
 impl<K: crate::buffer::raw::Backing, M> Drop for Edge<K, M> {
     fn drop(&mut self) {
         if let Some(ptr) = self.ptr {
             // SAFETY: Edge owns exactly one live pool-slot prefix edge.
-            unsafe { Self::release_raw(ptr.cast()) };
+            drop(unsafe { crate::mem::raw::Owner::<owners::Slot<K>>::from_raw(ptr.cast()) });
         }
     }
 }

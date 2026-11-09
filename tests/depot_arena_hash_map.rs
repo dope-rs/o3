@@ -68,7 +68,7 @@ fn allocations_are_exact() {
             let mut keys = [None; 64];
             for value in 0..64_u64 {
                 let key = map
-                    .try_insert(value & 7, value, |stored, input| stored == input)
+                    .try_create(value & 7, |stored| *stored == value, |_| value)
                     .expect("remaining resident slot");
                 keys[value as usize] = Some(key);
             }
@@ -135,7 +135,7 @@ fn values_stay_stable() {
     let mut live = Vec::new();
     for value in 0..8_u64 {
         let key = map
-            .try_insert(15, value, |stored, input| stored == input)
+            .try_create(15, |stored| *stored == value, |_| value)
             .expect("remaining resident slot");
         let stored = map
             .get(key)
@@ -287,10 +287,10 @@ fn stops_before_mutation() {
     let plan = hash::Plan::new(3).expect("three-resident plan");
     let mut store = runtime::Map::<u64>::try_new(plan).expect("allocate resident map");
     let first = store
-        .try_insert(15, 7, |stored, input| stored == input)
+        .try_create(15, |stored| *stored == 7, |_| 7)
         .expect("first resident");
     store
-        .try_insert(15, 9, |stored, input| stored == input)
+        .try_create(15, |stored| *stored == 9, |_| 9)
         .expect("second resident");
     let ((), counts) = Tracker::measure(|| {
         let calls = cell::Cell::new(0);
@@ -362,7 +362,7 @@ fn preserves_spare() {
     .expect("the empty map must reserve a slot");
     assert_eq!(store.len(), 0);
     let key = store
-        .try_insert(3, 17, |stored, input| stored == input)
+        .try_create(3, |stored| *stored == 17, |_| 17)
         .expect("the dropped vacancy must leave its slot available");
     assert_eq!(key.index(), index.raw());
 }

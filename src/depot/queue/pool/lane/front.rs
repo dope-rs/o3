@@ -35,6 +35,11 @@ impl<'a, T, S, const TRACK: bool> Front<'a, T, S, TRACK> {
         Self { lane, index }
     }
 
+    pub fn get(&self) -> &T {
+        // SAFETY: Front retains this initialized slot through its exact lane.
+        unsafe { self.lane.store.value(self.index) }
+    }
+
     pub fn get_mut(&mut self) -> &mut T {
         self.parts_mut().0
     }

@@ -209,11 +209,11 @@ impl<O: Unpin> buffer::Source for Value<storage::Shared<O>> {
 
 // SAFETY: The bounded view delegates its exact immutable range to the provided owner.
 unsafe impl<'d> hold::raw::Retain<'d> for Value<storage::Shared<provided::Owner<'d>>> {
-    fn charge<'a>(plan: &Self::View<'a>) -> hold::Charge
+    fn resident<'a>(plan: &Self::View<'a>) -> usize
     where
         Self: 'a,
     {
-        <storage::Shared<provided::Owner<'d>> as hold::raw::Retain<'d>>::charge(&plan.0)
+        <storage::Shared<provided::Owner<'d>> as hold::raw::Retain<'d>>::resident(&plan.0)
     }
 
     #[inline]

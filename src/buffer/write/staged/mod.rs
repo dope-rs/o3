@@ -75,14 +75,7 @@ impl<L: buffer::raw::Length> write::Sink for Staged<'_, L> {
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
         use buffer::raw::SliceExt as _;
 
-        let remaining = self.capacity() - self.len();
-        let added = match slices.as_slice() {
-            [source] => {
-                consume::Error::check(source.len(), remaining)?;
-                source.len()
-            }
-            _ => consume::Error::checked_end(0, remaining, &slices)?,
-        };
+        let added = consume::Error::checked_end(0, self.capacity() - self.len(), &slices)?;
         let start = self.out.len() + self.len();
         // SAFETY: admission retains every source and room for its disjoint suffix.
         unsafe { slices.copy_to(self.out.as_mut_ptr().add(start)) };

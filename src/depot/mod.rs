@@ -10,3 +10,5 @@ pub mod raw;
 
 /// A closed family of exact ownership and state predicates retained by raw proofs.
 pub trait Predicate: raw::Sealed {}
+
+impl<P: raw::Sealed> Predicate for P {}

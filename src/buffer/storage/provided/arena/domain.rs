@@ -2,7 +2,7 @@ use std::{cell, marker, num};
 
 use crate::buffer::storage::{
     provided,
-    provided::arena::{self, charge::Counter},
+    provided::arena::{self, entry::Counter},
 };
 
 /// Intrusive storage whose slot type is fixed by its original arena.

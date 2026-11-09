@@ -52,8 +52,8 @@ fn runtime_alloc_is_exact() {
 
         let (queue, alloc) = Tracker::measure(|| {
             shared::Fifo::<u64>::try_from(
-                capacity::Count::new(CAPACITY as u32),
-                capacity::Count::new(LANES as u32),
+                std::hint::black_box(capacity::Count::new(CAPACITY as u32)),
+                std::hint::black_box(capacity::Count::new(LANES as u32)),
                 &token,
             )
         });

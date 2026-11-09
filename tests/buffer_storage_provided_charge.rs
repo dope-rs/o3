@@ -189,7 +189,7 @@ fn keeps_foreign_charge() {
                     let bound = input.defer_all().bind(hold::Policy::share());
                     let (result, ops) = Tracker::measure(|| bound.try_retain());
                     assert_eq!(ops, [0; 4]);
-                    let (bound, cause) = result
+                    let cause = result
                         .expect_err("foreign retention must preserve its exact cause and input");
                     std::assert_matches!(cause, hold::Error::Account(account::Cause::Foreign));
                     let deferred = bound.defer();
@@ -201,9 +201,8 @@ fn keeps_foreign_charge() {
                 let (retry, ops) =
                     Tracker::measure(|| deferred.bind(hold::Policy::share()).try_retain());
                 assert_eq!(ops, [0; 4]);
-                let owner = retry
-                    .map_err(|rejected| rejected.1)
-                    .expect("the retry must retain within the matching resident domain");
+                let owner =
+                    retry.expect("the retry must retain within the matching resident domain");
                 assert_eq!(owner.as_slice().as_ptr(), source.as_slice().as_ptr());
                 assert_eq!((first.resident(), second.resident()), (0, 1));
                 owner
@@ -303,10 +302,7 @@ fn copies_bounded_retention() {
         let bound = scope::Input::new(&source, &budget)
             .defer_all()
             .bind(std::hint::black_box(hold::Policy::compact()));
-        let held = bound
-            .try_retain()
-            .map_err(|(_, error)| error)
-            .expect("bounded copy");
+        let held = bound.try_retain().expect("bounded copy");
         assert_eq!(held.as_slice(), source.as_ref());
         assert_ne!(held.as_slice().as_ptr(), source.as_ref().as_ptr());
         assert_eq!(held.resident(), 7);

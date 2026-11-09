@@ -87,16 +87,6 @@ impl<T, Tag> Map<T, Tag> {
         )
     }
 
-    pub fn try_insert(
-        &mut self,
-        hash: u64,
-        value: T,
-        eq: impl Fn(&T, &T) -> bool,
-    ) -> Result<key::Handle<runtime::Domain<Tag>>, errors::Insert<T, Tag>> {
-        let (place, value) = entry::Vacancy::try_new(&mut self.core, hash, value, eq)?;
-        Ok(place.insert(value))
-    }
-
     pub fn try_create(
         &mut self,
         hash: u64,

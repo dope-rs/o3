@@ -26,7 +26,6 @@ unsafe impl<P: crate::buffer::raw::Policy> crate::mem::raw::Target for Header<P>
 
 impl<P: crate::buffer::raw::Policy> Header<P> {
     pub(in crate::buffer) const DATA_OFFSET: usize = size_of::<Self>();
-    const ALIGN: usize = align_of::<Self>();
     const VALID: () = assert!(alloc::raw::Layout::<u8>::fits_after(
         Layout::new::<Self>(),
         u32::MAX as usize
@@ -37,11 +36,7 @@ impl<P: crate::buffer::raw::Policy> Header<P> {
         // SAFETY: VALID admits this exact header followed by any u32 byte count;
         // the byte tail starts at DATA_OFFSET and preserves the header alignment.
         unsafe {
-            alloc::raw::Layout::<u8>::at(
-                Self::DATA_OFFSET,
-                capacity.get() as usize,
-                num::NonZero::<usize>::MIN.saturating_add(Self::ALIGN - 1),
-            )
+            alloc::raw::Layout::<u8>::extend(Layout::new::<Self>(), capacity.get() as usize).0
         }
     }
 

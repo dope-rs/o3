@@ -2,8 +2,12 @@ pub mod common;
 
 use std::{cell::Cell, num::NonZero};
 
-use common::{Counted, Owner};
+use common::{Counted, Owner, alloc::system::Tracker};
+
 use o3::depot::map::{Plan, flat::Table};
+
+#[global_allocator]
+static ALLOCATOR: Tracker = Tracker;
 
 #[test]
 fn retires_collision_once() {
@@ -45,19 +49,22 @@ fn resident_rounds_bounds() {
         let plan = resident::Plan::counts([
             bounded::U32::<0, 5>::new(records).expect("bounded record count")
         ]);
-        let mut table = resident::Table::<_, _, 1>::try_new(plan, ResidentHash(&hash))
-            .expect("small resident table");
-        for slot in 0..records {
-            let entry = table.entry(resident::Id::mask(u64::from(slot)));
-            assert!(matches!(&entry, Entry::Vacant(Some(_))));
-            if let Entry::Vacant(Some(entry)) = entry {
-                entry.insert(slot);
+        let ((), counts) = Tracker::counts(|| {
+            let mut table = resident::Table::<_, _, 1>::try_new(plan, ResidentHash(&hash))
+                .expect("small resident table");
+            for slot in 0..records {
+                let entry = table.entry(resident::Id::mask(u64::from(slot)));
+                assert!(matches!(&entry, Entry::Vacant(Some(_))));
+                if let Entry::Vacant(Some(entry)) = entry {
+                    entry.insert(slot);
+                }
             }
-        }
-        assert!(matches!(
-            table.entry(resident::Id::mask(u64::from(records))),
-            Entry::Vacant(None)
-        ));
+            assert!(matches!(
+                table.entry(resident::Id::mask(u64::from(records))),
+                Entry::Vacant(None)
+            ));
+        });
+        assert_eq!(counts, [2 * usize::from(records != 0); 2]);
     }
 }
 

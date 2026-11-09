@@ -36,6 +36,28 @@ impl<'a> From<&'a links::Hook> for EndpointHook<'a, u32> {
     }
 }
 
+impl<'a> EndpointHook<'a, u32> {
+    /// # Safety
+    /// The hook is exclusively linked at `index` in this head's reciprocal lane.
+    /// Only `Index::END` marks an endpoint; every other word is a live node
+    /// resolved in the same owner without changing topology.
+    pub(in crate::depot) unsafe fn unlink<H: tagged::raw::Head>(
+        self,
+        index: links::Index,
+        head: &'a H,
+        resolve: impl Fn(links::Index) -> Self,
+    ) {
+        let before = self.previous.get();
+        let after = self.next.get();
+        let neighbor = |word| match links::Index::decode(word) {
+            Some(index) => Neighbor::node(word, resolve(index)),
+            None => Neighbor::head(word, head),
+        };
+        // SAFETY: both original neighbors remain live through reciprocal repair.
+        unsafe { self.detach(index, neighbor(before), neighbor(after)) };
+    }
+}
+
 /// One observed link and its resolved neighbor under the original owner loan.
 pub(in crate::depot) struct Neighbor<'a, W, H = links::Chain> {
     link: W,

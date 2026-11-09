@@ -22,6 +22,6 @@ impl<'a, K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position>
         unsafe { heap::raw::resident_mut(self.entry.owner, self.entry.next) }
     }
     pub fn set(self, priority: P) {
-        heap::raw::Hole::prepare(self.entry.prepare_key(priority));
+        heap::raw::Hole::replace::<false>(self.entry.prepare_key(priority));
     }
 }

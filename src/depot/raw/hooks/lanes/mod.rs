@@ -12,9 +12,6 @@ unsafe impl<T, const N: usize, C: crate::depot::raw::Count> crate::depot::raw::T
     fn heads(&self) -> &Self::Heads {
         self.nodes.state()
     }
-    fn capacity(&self) -> usize {
-        self.nodes.len()
-    }
     unsafe fn hook(&self, index: links::Index) -> &tagged::Hook {
         &unsafe { self.nodes().get_unchecked(index.get()) }.hook
     }
@@ -52,8 +49,8 @@ unsafe impl<T, C: crate::depot::raw::Count, L: crate::depot::raw::Count, H: tagg
     fn heads(&self) -> &Self::Heads {
         self.block.tail()
     }
-    fn capacity(&self) -> usize {
-        self.block.extent().shape().capacity().count().get()
+    fn is_node(&self, word: u32) -> bool {
+        (word as usize) < self.block.extent().shape().capacity().count().get()
     }
     unsafe fn hook(&self, index: links::Index) -> &tagged::Hook {
         &unsafe { self.nodes().get_unchecked(index.get()) }.hook

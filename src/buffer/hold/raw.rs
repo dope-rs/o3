@@ -2,19 +2,18 @@ use storage::provided;
 
 use crate::buffer::{
     self,
-    hold::{Charge, Error, Retained, ranges},
+    hold::{Error, Retained},
     resident, storage,
     storage::{provided::Frozen as _, regions},
 };
 
-impl<'source, 'ranges, S: buffer::raw::Source + ?Sized, N: buffer::raw::Length>
-    ranges::Set<'source, 'ranges, S, N>
-{
-    /// # Safety
-    /// Keep these admitted nonempty ranges within this source's unchanged coordinate origin.
-    /// Count is <=u32::MAX and their exact sum is len; copied sources preserve all bytes.
-    pub unsafe fn from_parts(source: &'source S, ranges: &'ranges [(N, N)], len: usize) -> Self {
-        Self::new(source, ranges, len)
+pub(in crate::buffer) fn resident<S: buffer::Residency + ?Sized>(
+    view: &buffer::View<'_, S>,
+) -> usize {
+    if view.is_empty() {
+        0
+    } else {
+        view.source.resident()
     }
 }
 
@@ -22,12 +21,12 @@ impl<'source, 'ranges, S: buffer::raw::Source + ?Sized, N: buffer::raw::Length>
 /// Source and view bytes remain unchanged through shared access and these methods; Cursor/Complete selection and Read splitting preserve exact visible ranges and prefix/suffix.
 /// Successful copies/retains preserve selected bytes, order, length, and ownership for 'd; backing identity may change.
 pub unsafe trait Retain<'d>: buffer::Source {
-    /// Bounds retained Residency by max(plan.len(), resident_bytes), including retries.
-    fn charge<'a>(plan: &Self::View<'a>) -> Charge
+    /// Bounds retained Residency by max(plan.len(), resident(plan)), including retries.
+    fn resident<'a>(_: &Self::View<'a>) -> usize
     where
         Self: 'a,
     {
-        Charge::from_commit(buffer::Read::as_slice(plan).len(), 0, 0)
+        0
     }
 
     /// Uniquely owns the copied bytes with output Residency at most their length.
@@ -55,11 +54,11 @@ pub unsafe trait Retain<'d>: buffer::Source {
 
 // SAFETY: The immutable provided view retains its exact range and original registration.
 unsafe impl<'d> Retain<'d> for storage::Shared<provided::Owner<'d>> {
-    fn charge<'a>(plan: &Self::View<'a>) -> Charge
+    fn resident<'a>(plan: &Self::View<'a>) -> usize
     where
         Self: 'a,
     {
-        Charge::from_view(plan)
+        resident(plan)
     }
 
     fn try_retain<'a>(
@@ -84,11 +83,11 @@ unsafe impl<'d, O: buffer::raw::Retain + buffer::Residency + Unpin> Retain<'d>
 where
     Self: Into<resident::Shared<'d>>,
 {
-    fn charge<'a>(plan: &Self::View<'a>) -> Charge
+    fn resident<'a>(plan: &Self::View<'a>) -> usize
     where
         Self: 'a,
     {
-        Charge::from_view(plan)
+        resident(plan)
     }
 
     fn try_retain<'a>(

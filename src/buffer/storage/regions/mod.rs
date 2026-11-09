@@ -12,7 +12,7 @@ use crate::{
         pool,
         pool::owners,
         resident,
-        storage::{alloc, provided, range, regions},
+        storage::{alloc, provided, regions},
     },
     mem::rc,
 };
@@ -62,8 +62,11 @@ pub(in crate::buffer) mod retained {
     }
 
     #[derive(Debug)]
-    #[repr(transparent)]
-    pub struct Retained<'d>(Shared<Owner<'d>>);
+    #[repr(C)]
+    pub struct Retained<'d> {
+        bytes: Extent,
+        owner: Owner<'d>,
+    }
 
     impl<'d> From<storage::Owned<resident::Budget<'d>>> for Retained<'d> {
         #[inline]
@@ -73,27 +76,28 @@ pub(in crate::buffer) mod retained {
                 Some(heap) => Owner::Unique(heap),
                 None => Owner::Shared(resident::State::Slice),
             };
-            Self(Shared { owner, bytes })
+            Self { bytes, owner }
         }
     }
 
     impl<'d> From<resident::Shared<'d>> for Retained<'d> {
         fn from(value: resident::Shared<'d>) -> Self {
             let Shared { owner, bytes } = value.region;
-            Self(Shared {
-                owner: Owner::Shared(owner),
+            Self {
                 bytes,
-            })
+                owner: Owner::Shared(owner),
+            }
         }
     }
 
     impl<'d> Retained<'d> {
         pub fn as_slice(&self) -> &[u8] {
-            self.0.as_slice()
+            // SAFETY: constructors retain this exact immutable extent in owner.
+            unsafe { self.bytes.0.as_ref() }
         }
 
         pub fn into_shared(self) -> resident::Shared<'d> {
-            let Shared { owner, bytes } = self.0;
+            let Self { bytes, owner } = self;
             let owner = match owner {
                 Owner::Unique(heap) => resident::State::Resident(heap.into_shared()),
                 Owner::Shared(owner) => owner,
@@ -107,7 +111,7 @@ pub(in crate::buffer) mod retained {
     impl buffer::Residency for Retained<'_> {
         #[inline]
         fn resident(&self) -> usize {
-            match &self.0.owner {
+            match &self.owner {
                 Owner::Unique(heap) => heap.capacity().get() as usize,
                 Owner::Shared(owner) => owner.resident(),
             }
@@ -225,22 +229,6 @@ impl<O> regions::Shared<O> {
         // SAFETY: the caller proves the range; the paired owner remains unchanged.
         self.bytes = unsafe { self.bytes.restrict(bounds) };
     }
-    pub fn try_restrict(&mut self, visible: ops::Range<usize>) -> Result<(), range::Error>
-    where
-        O: regions::End,
-    {
-        self.bytes = self
-            .as_slice()
-            .get(visible.clone())
-            .map(regions::Extent::from_bytes)
-            .ok_or_else(|| range::Error::new(visible, self.len()))?;
-        if self.is_empty()
-            && let Some(owner) = O::EMPTY
-        {
-            self.owner = owner;
-        }
-        Ok(())
-    }
 }
 
 impl<O: buffer::raw::Retain> regions::Shared<O> {
@@ -297,23 +285,12 @@ impl From<regions::Shared<crate::buffer::raw::Rc>> for regions::Shared<Option<re
     }
 }
 
-impl<L> From<regions::Shared<owners::Edge<owners::Plain<L>>>>
+impl<L, M> From<regions::Shared<owners::Edge<owners::Plain<L>, M>>>
     for regions::Shared<Option<regions::Tag>>
 {
-    fn from(region: regions::Shared<owners::Edge<owners::Plain<L>>>) -> Self {
+    fn from(region: regions::Shared<owners::Edge<owners::Plain<L>, M>>) -> Self {
         Self {
             owner: regions::Tag::pool(region.owner),
-            bytes: region.bytes,
-        }
-    }
-}
-
-impl<'d, L> From<regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>>
-    for regions::Shared<owners::Edge<owners::Plain<L>>>
-{
-    fn from(region: regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>) -> Self {
-        Self {
-            owner: region.owner.into_owned(),
             bytes: region.bytes,
         }
     }
@@ -331,10 +308,13 @@ impl<'a: 'd, 'd> From<&'a [u8]> for resident::Shared<'d> {
 }
 
 impl<'d> From<regions::Shared<Option<regions::Tag>>> for resident::Shared<'d> {
+    #[inline]
     fn from(region: regions::Shared<Option<regions::Tag>>) -> Self {
         Self {
             region: regions::Shared {
-                owner: resident::State::Owned(region.owner),
+                owner: region
+                    .owner
+                    .map_or(resident::State::Static, resident::State::Owned),
                 bytes: region.bytes,
             },
         }
@@ -354,19 +334,13 @@ impl<'d> From<regions::Shared<crate::buffer::raw::Rc<resident::Budget<'d>>>>
     }
 }
 
-impl<'d, L> From<regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>>
+impl<'pool, 'd, L> From<regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>>>
     for resident::Shared<'d>
 {
-    fn from(region: regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'d>>>) -> Self {
-        match regions::Tag::pool(region.owner) {
-            Some(owner) => Self {
-                region: regions::Shared {
-                    owner: resident::State::Borrowed(owner),
-                    bytes: region.bytes,
-                },
-            },
-            None => Self::new(),
-        }
+    fn from(
+        region: regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>>,
+    ) -> Self {
+        Shared::<Option<Tag>>::from(region).into()
     }
 }
 
@@ -390,7 +364,7 @@ impl<'d> regions::Shared<resident::State<'d>> {
     ) -> Result<regions::Shared<Option<regions::Tag>>, Self> {
         if let resident::State::Resident(owner) = self.owner {
             self.owner = match owner.try_own() {
-                Ok(owner) => resident::State::Owned(Some(regions::Tag::allocation(owner))),
+                Ok(owner) => resident::State::Owned(regions::Tag::allocation(owner)),
                 Err(owner) => resident::State::Resident(owner),
             };
         }

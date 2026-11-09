@@ -294,6 +294,7 @@ fn mutate_front_in_place() {
     let lane = (pool.get_mut(0)).expect("the plan retains lane zero");
     let mut front = (lane.front_entry()).expect("lane zero retains its head");
     front.get_mut().push_str("-mutated");
+    assert_eq!(Some(std::ptr::from_ref(front.get())), pointer);
 
     let lane = (pool.get(0)).expect("the plan retains lane zero");
     assert_eq!(lane.front().map(String::as_str), Some("head-mutated"));

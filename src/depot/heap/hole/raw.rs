@@ -42,7 +42,7 @@ pub unsafe trait Source: Sized {
     /// # Safety
     /// The replacement preserves encoded identity and ancillary records when it stays at this position.
     unsafe fn update(entry: heap::Entry<Self, Self::Value>) {
-        heap::raw::Hole::update(entry);
+        heap::raw::Hole::replace::<true>(entry);
     }
     /// Moves the initialized source into the hole and records its new reverse position.
     fn shift(step: hole::Step<'_, Self>);

@@ -243,16 +243,11 @@ impl<K, V, P: Ord> Insertion<'_, K, P, V> {
             value,
             priority,
         };
-        let len = self.core.store.len();
-        let path = hole::Path::up(
-            self.core,
-            len,
-            &(self.slot.index(), &pair.priority),
-            Core::compare,
-        );
-        let index = path.owner.store.insert(self.slot, pair, &self.bucket);
-        unsafe { path.owner.table.insert(self.bucket, self.hash, index) };
-        path.append(index).commit::<true>();
+        let index = self.core.store.insert(self.slot, pair, &self.bucket);
+        // SAFETY: the reserved slot is initialized and absent from the unchanged heap.
+        let vacancy = unsafe { heap::Vacancy::new(self.core, index) };
+        let owner = heap::raw::Hole::append(vacancy).commit::<true>();
+        unsafe { owner.table.insert(self.bucket, self.hash, index) };
     }
 }
 

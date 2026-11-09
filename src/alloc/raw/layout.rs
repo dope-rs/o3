@@ -17,16 +17,18 @@ impl<T> Layout<T> {
         prior: alloc::Layout,
         len: usize,
     ) -> Result<(alloc::Layout, usize), crate::alloc::Overflow> {
-        let bounds = Bounds::new(prior).extend::<T>(len);
-        if !bounds.fits() {
-            return Err(crate::alloc::Overflow);
+        let tail = match Self::try_layout(len) {
+            Ok(layout) => layout,
+            Err(error) => return Err(error),
+        };
+        match prior.extend(tail) {
+            Ok(layout) => Ok(layout),
+            Err(_) => Err(crate::alloc::Overflow),
         }
-        // SAFETY: fits admits this complete extent at its retained alignment.
-        Ok((unsafe { bounds.layout() }, bounds.offset))
     }
 
     pub(crate) const fn fits_after(prior: alloc::Layout, len: usize) -> bool {
-        Bounds::new(prior).extend::<T>(len).fits()
+        Self::try_extend(prior, len).is_ok()
     }
 
     /// # Safety
@@ -133,49 +135,6 @@ impl<T> Layout<T> {
             _ => 1,
         };
         required.max(capacity.saturating_mul(2)).max(minimum)
-    }
-}
-
-/// Numeric layout extent; saturation preserves rejection above the isize domain.
-#[derive(Debug)]
-pub(crate) struct Bounds {
-    size: usize,
-    align: NonZero<usize>,
-    offset: usize,
-}
-
-impl Bounds {
-    pub(crate) const fn new(layout: alloc::Layout) -> Self {
-        Self {
-            size: layout.size(),
-            align: NonZero::<usize>::MIN.saturating_add(layout.align() - 1),
-            offset: 0,
-        }
-    }
-
-    pub(crate) const fn extend<T>(mut self, len: usize) -> Self {
-        let element = mem::align_of::<T>();
-        let align = if self.align.get() > element {
-            self.align.get()
-        } else {
-            element
-        };
-        let offset = self.size.saturating_add(element - 1) & !(element - 1);
-        self.size = offset.saturating_add(mem::size_of::<T>().saturating_mul(len));
-        self.align = NonZero::<usize>::MIN.saturating_add(align - 1);
-        self.offset = offset;
-        self
-    }
-
-    pub(crate) const fn fits(&self) -> bool {
-        self.size <= isize::MAX as usize - (self.align.get() - 1)
-    }
-
-    /// # Safety
-    /// fits has admitted this exact numeric extent and retained alignment.
-    pub(crate) const unsafe fn layout(&self) -> alloc::Layout {
-        // SAFETY: the caller retains this exact extent's representability proof.
-        unsafe { alloc::Layout::from_size_align_unchecked(self.size, self.align.get()) }
     }
 }
 

@@ -41,16 +41,12 @@ impl Error {
         slices: &[&[u8]; N],
     ) -> Result<usize, Self> {
         Self::check(start, capacity)?;
-        let Some((last, prefix)) = slices.split_last() else {
-            return Ok(start);
-        };
         let mut room = capacity - start;
-        for slice in prefix {
+        for slice in slices {
             Self::check(slice.len(), room)?;
             room -= slice.len();
         }
-        Self::check(last.len(), room)?;
-        Ok(capacity - room + last.len())
+        Ok(capacity - room)
     }
 }
 

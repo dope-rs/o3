@@ -331,7 +331,7 @@ pub unsafe trait Initializer {
     unsafe fn initialize(&self, target: *mut mem::MaybeUninit<u8>);
 }
 
-pub(in crate::buffer) use store::{Backing, Debit, Header, Heap, Policy, Rc, Unique};
+pub(in crate::buffer) use store::{Backing, Debit, Header, Heap, Policy, Rc};
 
 mod length;
 pub use length::Length;

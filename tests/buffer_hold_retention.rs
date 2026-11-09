@@ -43,7 +43,7 @@ fn materializes_policy_choices() {
             let bound = plan.bind(hold::Policy::new(1, 2));
             assert_eq!(bound.ceiling(), 8);
             let bytes = bound.as_slice();
-            let shared = bound.try_retain().map_err(|(_, error)| error);
+            let shared = bound.try_retain();
             assert!(sample.finish() == Activity::default());
             let shared = shared.expect("the bounded view must fit its sharing policy");
             assert_eq!(bytes, b"ayloa");
@@ -187,11 +187,8 @@ fn cursor_charges_budget() {
                 .expect("the bytes range must be in bounds");
 
             let act = {
-                let (retained, act) = Tracker::measure(|| {
-                    plan.bind(hold::Policy::compact())
-                        .try_retain()
-                        .map_err(|(_, error)| error)
-                });
+                let (retained, act) =
+                    Tracker::measure(|| plan.bind(hold::Policy::compact()).try_retain());
                 let shared = retained.expect("deferred view must fit the resident budget");
                 assert_eq!(shared.resident(), 4);
                 assert_eq!(budget.resident(), 4);
@@ -215,9 +212,10 @@ fn returns_inputs() {
                 .expect("the rejection source must allocate");
             let input = scope::Input::new(&source, budget).defer_all();
 
-            let retained = input.bind(hold::Policy::compact()).try_retain();
-            let result = retained;
-            let (bound, error) = result.expect_err("zero budget must reject materialization");
+            let bound = input.bind(hold::Policy::compact());
+            let error = bound
+                .try_retain()
+                .expect_err("zero budget must reject materialization");
             let error = match error {
                 hold::Error::Resident(resident::AllocError::Budget(error)) => Some(error),
                 _ => None,
@@ -251,21 +249,21 @@ fn retries_staging() {
                     .write_slice(b"one-four")
                     .expect("the payload must fit the staging window");
                 let pointer = window.as_slice().as_ptr().wrapping_add(2);
+                let bound;
                 let denied = {
                     let blocker = (resident::Exact::try_copy(budget, &[b'r'; 16]))
                         .expect("the remaining sixteen bytes must allocate");
                     let plan = (scope::Input::new(&window, budget).try_plan(2..6))
                         .expect("the four-byte range must fit");
-                    let (denied, ops) =
-                        Tracker::measure(|| plan.bind(hold::Policy::share()).try_retain());
-                    assert_eq!(ops, [0; 4]);
+                    let sample = Tracker::begin();
+                    bound = plan.bind(hold::Policy::share());
+                    let denied = bound.try_retain();
+                    assert!(sample.finish() == Activity::default());
                     assert_eq!(blocker.as_slice(), &[b'r'; 16]);
                     assert_eq!(budget.resident(), 32);
                     denied
                 };
-                let result = denied;
-                let (bound, error) =
-                    result.expect_err("retention must fail while the budget is occupied");
+                let error = denied.expect_err("retention must fail while the budget is occupied");
                 let error = match error {
                     hold::Error::Resident(resident::AllocError::Budget(error)) => Some(error),
                     _ => None,
@@ -278,20 +276,12 @@ fn retries_staging() {
                 assert_eq!(bound.ceiling(), 8);
                 {
                     let (retained, ops) = Tracker::measure(|| bound.try_retain());
-                    match retained {
-                        Ok(retained) => {
-                            assert_eq!(retained.as_slice(), b"e-fo");
-                            assert_eq!(retained.as_slice().as_ptr() == pointer, shared == 1);
-                            assert_eq!(ops[0], usize::from(shared == 0));
-                            assert_eq!(ops[2], 0);
-                            assert_eq!(budget.resident(), 16 + need.get());
-                        }
-                        outcome => assert!(
-                            outcome.is_ok(),
-                            "retention rejected: {:?}",
-                            outcome.as_ref().err().map(|(_, cause)| cause),
-                        ),
-                    }
+                    let retained = retained.expect("retention after budget release");
+                    assert_eq!(retained.as_slice(), b"e-fo");
+                    assert_eq!(retained.as_slice().as_ptr() == pointer, shared == 1);
+                    assert_eq!(ops[0], usize::from(shared == 0));
+                    assert_eq!(ops[2], 0);
+                    assert_eq!(budget.resident(), 16 + need.get());
                 }
                 assert_eq!(budget.resident(), 16);
             })

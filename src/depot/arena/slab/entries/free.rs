@@ -42,7 +42,6 @@ where
         mut range: ops::Range<u32>,
         excluded: u32,
     ) -> Option<Self> {
-        let core: &'a entries::Core<T, MAX, M, PARTITIONS, S> = core;
         let cap = core.slots.count().raw();
         range.end = range.end.min(cap);
         let split = cap.div_ceil(2);
@@ -53,27 +52,9 @@ where
         } else if PARTITIONS == 2 && range == (split..cap) {
             1..2
         } else {
-            let slots = core.slots.as_ref();
-            let start = range.start as usize;
-            let end = (range.end as usize).min(slots.len());
-            if start >= end {
-                return None;
-            }
-            return slots
-                .get(start..end)?
-                .iter()
-                .enumerate()
-                .find_map(|(offset, slot)| {
-                    let index = (start + offset) as u32;
-                    if index == excluded {
-                        return None;
-                    }
-                    // SAFETY: this initialized owner slice and state retain the
-                    // free member at this index under the exclusive core loan.
-                    (slot.state.get() == slab::State::Free)
-                        .then(|| unsafe { Self::new(core, slot, index) })
-                });
+            return Self::find(core, range, Some(excluded));
         };
+        let core: &'a entries::Core<T, MAX, M, PARTITIONS, S> = core;
         for head in core.free.iter().take(groups.end).skip(groups.start) {
             let mut index = head.get();
             if index == entries::NONE {
@@ -94,6 +75,31 @@ where
             return Some(unsafe { Self::new(core, slot, index) });
         }
         None
+    }
+
+    pub(in crate::depot::arena::slab) fn find(
+        core: &'a mut entries::Core<T, MAX, M, PARTITIONS, S>,
+        range: ops::Range<u32>,
+        excluded: Option<u32>,
+    ) -> Option<Self> {
+        let core: &'a entries::Core<T, MAX, M, PARTITIONS, S> = core;
+        let slots = core.slots.as_ref();
+        let start = range.start as usize;
+        let end = (range.end as usize).min(slots.len());
+        if start >= end {
+            return None;
+        }
+        slots
+            .get(start..end)?
+            .iter()
+            .enumerate()
+            .find_map(|(offset, slot)| {
+                let index = (start + offset) as u32;
+                // SAFETY: this initialized owner slice and state retain the
+                // free member at this index under the exclusive core loan.
+                (excluded != Some(index) && slot.state.get() == slab::State::Free)
+                    .then(|| unsafe { Self::new(core, slot, index) })
+            })
     }
 
     pub(in crate::depot::arena::slab) fn take(

@@ -124,10 +124,6 @@ where
         })
     }
 
-    pub fn parts(&self, parts: key::Parts<MAX>) -> Option<&T> {
-        Some(entries::Occupied::key(&self.core, parts.index(), parts.generation())?.read())
-    }
-
     pub fn anchor(
         self: Pin<&mut Self>,
         parts: key::Parts<MAX>,
@@ -161,15 +157,6 @@ where
 
     pub fn is_full(&self) -> bool {
         self.core.is_full()
-    }
-
-    /// Checks temporary or permanent admission without reserving a slot.
-    pub fn try_ready(&self) -> Result<(), Vacancy> {
-        if self.core.is_full() {
-            Err(self.core.refusal())
-        } else {
-            Ok(())
-        }
     }
 
     pub fn insert(&mut self, value: T) -> Result<key::Handle<Tag, MAX>, T> {
@@ -444,7 +431,6 @@ impl<'a, T, Tag, const MAX: u32, const ROOT: bool> Reuse<'a, T, Tag, MAX, ROOT> 
 pub enum Field {}
 
 impl crate::depot::raw::Sealed for Field {}
-impl crate::depot::Predicate for Field {}
 
 type Lookup<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize> = Result<
     slab::Occupied<entries::Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>, Tag>,

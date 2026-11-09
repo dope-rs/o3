@@ -66,7 +66,7 @@ impl<T, Tag, const MAX: u32, H: IndexedHook, const N: usize, C: crate::depot::ra
         ))?;
         if shape.capacity().count().get() == 0 && N == 0 {
             return Ok(Self {
-                allocation: ptr::NonNull::dangling(),
+                allocation: ptr::NonNull::from(&EMPTY),
                 metadata: ptr::NonNull::dangling(),
                 shape,
                 generation: key::Limit::NEW,
@@ -101,10 +101,7 @@ impl<T, Tag, const MAX: u32, H: IndexedHook, const N: usize, C: crate::depot::ra
     }
 
     pub(in crate::depot) fn state(&self) -> &IndexedState {
-        if self.capacity() == 0 && N == 0 {
-            return &EMPTY;
-        }
-        // SAFETY: every allocated IndexedBlock initializes IndexedState before publication.
+        // SAFETY: construction retains an initialized allocation or the immutable promoted EMPTY.
         unsafe { self.allocation.as_ref() }
     }
 

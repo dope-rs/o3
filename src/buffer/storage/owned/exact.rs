@@ -1,10 +1,6 @@
 use crate::{
     buffer,
-    buffer::{
-        storage,
-        storage::regions,
-        write::{SpareExt as _, spans},
-    },
+    buffer::{storage, storage::regions, write::spans},
 };
 
 /// Lifetime-independent one-word exact allocation owner.
@@ -24,22 +20,14 @@ impl Exact {
         capacity: usize,
         build: impl FnOnce(&mut spans::Writer<'_, '_>) -> Result<(), E>,
     ) -> Result<Self, storage::BuildError<E>> {
-        use storage::BuildError;
-
-        let mut owned = storage::Owned::try_with(capacity)?;
-        let mut spare = owned.spare();
-        let mut writer = spare.bounded();
-        build(&mut writer).map_err(BuildError::Build)?;
-        writer.commit();
-        spare
-            .try_complete()
-            .map_err(|error| BuildError::Length(error.into()))?;
-        let Some(heap) = owned.allocation else {
-            return Ok(Self::new());
-        };
-        // SAFETY: the original spare completed this owner's entire uninitialized suffix.
+        let owned = storage::Owned::try_build(capacity, build)?;
+        spans::Gap::check(capacity as u32, owned.len)
+            .map_err(|error| storage::BuildError::Length(error.into()))?;
         Ok(Self {
-            inner: Some(unsafe { regions::Init::new(heap) }),
+            // SAFETY: try_build preserves admitted capacity; Gap proves full initialization.
+            inner: owned
+                .allocation
+                .map(|heap| unsafe { regions::Init::new(heap) }),
         })
     }
 

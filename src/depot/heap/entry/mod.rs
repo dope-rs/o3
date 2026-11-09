@@ -24,19 +24,6 @@ impl<S: hole::raw::Source, V> Entry<S, V> {
     }
 }
 
-impl<'a, S, V> Entry<&'a mut S, V> {
-    pub(in crate::depot) fn into_parts(self) -> (Entry<&'a mut S>, V) {
-        (
-            Entry {
-                owner: self.owner,
-                position: self.position,
-                next: (),
-            },
-            self.next,
-        )
-    }
-}
-
 impl<'a, S, K> Entry<&'a mut S, K> {
     pub(in crate::depot) fn prepare_key(
         self,
@@ -94,10 +81,11 @@ impl<'a, S> Entry<&'a mut S> {
             } else {
                 heap::Change::Minimum
             };
-            heap::raw::Hole::prepare(entry);
+            heap::raw::Hole::replace::<false>(entry);
             change
         } else {
-            heap::raw::Hole::prepare(entry).change()
+            let entry = heap::raw::Hole::replace::<false>(entry).0;
+            entry.change()
         }
     }
 
@@ -160,9 +148,7 @@ impl<S, V> Entry<S, V> {
     pub(in crate::depot) fn into_inner(self) -> (S, usize, V) {
         (self.owner, self.position, self.next)
     }
-}
 
-impl<S> Entry<S> {
     pub(in crate::depot) fn with_key<K>(self, key: K) -> Entry<S, K> {
         Entry {
             owner: self.owner,

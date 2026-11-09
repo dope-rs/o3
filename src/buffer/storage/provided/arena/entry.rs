@@ -1,15 +1,31 @@
 use std::{
     cell, marker,
-    mem::{ManuallyDrop, MaybeUninit, size_of},
+    mem::{MaybeUninit, offset_of, size_of},
     ops, ptr,
 };
 
 use provided::account;
 
-use crate::buffer::{
-    resident,
-    storage::{provided, provided::arena},
+use crate::{
+    buffer::{
+        resident,
+        storage::{provided, provided::arena},
+    },
+    mem::raw::{self, Edge},
 };
+
+/// Only admitted registrations can change this arena's outstanding count.
+#[repr(transparent)]
+#[derive(Default)]
+pub(super) struct Counter(cell::Cell<u32>);
+
+/// The embedded account domain; a live count retains its initialized debit.
+#[derive(Debug)]
+#[repr(C)]
+pub(in crate::buffer::storage::provided) struct Registration<'d> {
+    count: raw::Count,
+    pub(super) value: cell::UnsafeCell<MaybeUninit<resident::Charge<'d>>>,
+}
 
 /// The hidden scope's authority to reclaim an initialized item.
 #[derive(Clone, Copy)]
@@ -26,7 +42,7 @@ pub(in crate::buffer::storage::provided) struct Entry<'d> {
     pub(super) resident: cell::Cell<MaybeUninit<u32>>,
     pub(super) domain: &'d arena::State<'d>,
     pub(super) next: arena::nodes::Link<'d>,
-    pub(super) charge: cell::UnsafeCell<Option<ManuallyDrop<arena::Charge<'d>>>>,
+    registration: Registration<'d>,
 }
 
 impl<'d> Entry<'d> {
@@ -39,7 +55,10 @@ impl<'d> Entry<'d> {
             resident: cell::Cell::new(resident),
             domain,
             next: cell::Cell::new(None),
-            charge: cell::UnsafeCell::new(None),
+            registration: Registration {
+                count: raw::Count::empty(),
+                value: cell::UnsafeCell::new(MaybeUninit::uninit()),
+            },
         }
     }
 
@@ -74,30 +93,53 @@ impl<'d> Entry<'d> {
         // SAFETY: the owner retains this scope's stable slot. Occupied
         // registrations remain shared; admission invokes no user callbacks.
         let entry: &'d Self = unsafe { pointer.as_ref() };
-        let charge = unsafe { &*entry.charge.get() };
-        if let Some(charge) = charge {
+        let registration = &entry.registration;
+        if !registration.is_empty() {
+            // SAFETY: the published count retains the initialized resident charge.
+            let charge = unsafe { (*registration.value.get()).assume_init_ref() };
             if !ptr::eq(charge.budget().core(), budget.core()) {
                 return Err(account::Cause::Foreign);
             }
-            charge.try_retain().map_err(account::Cause::Retain)?;
-            return Ok(provided::Account::new(charge));
+            // SAFETY: the slot owner retains this proved live registration;
+            // no callbacks or edge releases intervene before the increment.
+            unsafe { registration.try_retain() }.map_err(account::Cause::Retain)?;
+        } else {
+            let domain = entry.domain;
+            let count = domain.accounted.0.get();
+            let limit = domain.limit;
+            if count >= limit {
+                return Err(account::Cause::Exhausted { count, limit });
+            }
+            // SAFETY: the owner retains the slot's original resident layout.
+            let charge = budget
+                .try_charge(unsafe { Self::resident(pointer) } as usize)
+                .map_err(account::Cause::Budget)?;
+            domain.accounted.0.set(count + 1);
+            // SAFETY: this empty registration has no issued account. Initialize
+            // its sole debit before publishing the first edge; no callbacks run.
+            unsafe {
+                (*registration.value.get()).write(charge);
+                registration.activate();
+            }
         }
-        // SAFETY: the vacant registration has no Account or escaping borrow.
-        let vacant = unsafe { &mut *entry.charge.get() };
-        let charge = vacant.insert(ManuallyDrop::new(arena::Charge::try_new(owner, budget)?));
-        Ok(provided::Account::new(charge))
+        // SAFETY: admission transferred one live embedded edge. Deriving its
+        // address from the complete slot preserves provenance for finalization.
+        Ok(provided::Account {
+            registration: unsafe {
+                raw::Owner::from_raw(pointer.byte_add(offset_of!(Self, registration)).cast())
+            },
+        })
     }
 
-    pub(super) fn unregister(charge: arena::Charge<'d>) {
-        // SAFETY: the last Account moved this exact initialized registration;
-        // overwriting its former storage retires it without dropping it twice.
-        let entry = unsafe { charge.entry().as_ref() };
-        unsafe { entry.charge.get().write(None) };
-        let pointer = charge.entry();
-        drop(charge);
-        if matches!(entry.state.get(), State::Ready) {
-            entry.domain.finish(arena::Ready { entry: pointer });
-        }
+    /// # Safety
+    /// The registration is initialized and all its issued access has ended.
+    /// Consume it once before returning the slot or initializing another charge.
+    unsafe fn unaccount(&self) -> &'d arena::State<'d> {
+        let domain = self.domain;
+        domain.accounted.0.set(domain.accounted.0.get() - 1);
+        // SAFETY: terminal registration ownership consumes its sole resident debit.
+        unsafe { (*self.registration.value.get()).assume_init_drop() };
+        domain
     }
 
     /// # Safety
@@ -106,8 +148,7 @@ impl<'d> Entry<'d> {
         // SAFETY: the owner retains the sole external edge to the live slot.
         let entry = unsafe { owner.entry.as_ref() };
         entry.state.set(State::Ready);
-        // SAFETY: release consumes the external edge before testing the remaining account.
-        if unsafe { &*entry.charge.get() }.is_none() {
+        if entry.registration.is_empty() {
             entry.domain.finish(arena::Ready { entry: owner.entry });
         }
     }
@@ -129,10 +170,11 @@ impl<'d> Entry<'d> {
         match entry.state.get() {
             State::Empty => ops::ControlFlow::Break(()),
             State::Ready | State::External => {
-                // SAFETY: terminal scope authority now owns every registration,
-                // including accounts forgotten inside the ended callback.
-                if let Some(charge) = unsafe { entry.charge.get().replace(None) } {
-                    drop(ManuallyDrop::into_inner(charge));
+                if !entry.registration.is_empty() {
+                    // SAFETY: the ended scope owns even forgotten account edges.
+                    // No issued access or count operation survives reclamation;
+                    // the next generation initializes this slot before reuse.
+                    unsafe { entry.unaccount() };
                 }
                 ops::ControlFlow::Continue(arena::Returned {
                     node: arena::Ready { entry: pointer },
@@ -143,7 +185,32 @@ impl<'d> Entry<'d> {
     }
 }
 
+// SAFETY: every account edge retains this exact slot and embedded count.
+unsafe impl raw::Edge for Registration<'_> {
+    fn count(&self) -> &raw::Count {
+        &self.count
+    }
+}
+
+// SAFETY: account edges retain the initialized debit; its finalizer owns both
+// refunds before returning the slot, without callbacks or premature reuse.
+unsafe impl<'d> raw::Target for Registration<'d> {
+    unsafe fn destroy(pointer: ptr::NonNull<Self>) {
+        // SAFETY: activation retained the complete slot's provenance for this
+        // exact embedded registration in the stable repr(C) entry.
+        let pointer =
+            unsafe { pointer.byte_sub(offset_of!(Entry<'d>, registration)) }.cast::<Entry<'d>>();
+        // SAFETY: the last counted edge ended and set this registration's count to zero.
+        let entry = unsafe { pointer.as_ref() };
+        let domain = unsafe { entry.unaccount() };
+        if matches!(entry.state.get(), State::Ready) {
+            domain.finish(arena::Ready { entry: pointer });
+        }
+    }
+}
+
 const _: () = {
-    assert!(size_of::<Entry<'_>>() == 7 * size_of::<usize>());
+    assert!(size_of::<Registration<'_>>() == 3 * size_of::<usize>());
+    assert!(size_of::<Entry<'_>>() == 6 * size_of::<usize>());
     assert!(align_of::<Entry<'_>>() == 8);
 };

@@ -127,8 +127,10 @@ fn retains_ranges() {
                             assert_eq!(head, b"b");
                             assert_eq!(tail.as_slice(), b"cd");
                             assert_eq!(tail.as_slice().as_ptr(), pointer);
-                            let charge = <staging::Buf<'_> as hold::raw::Retain<'_>>::charge(&tail);
-                            assert!(charge == hold::Charge::from_commit(2, capacity, 1));
+                            assert!(
+                                <staging::Buf<'_> as hold::raw::Retain<'_>>::resident(&tail)
+                                    == capacity
+                            );
                             <staging::Buf<'_> as hold::raw::Retain<'_>>::try_retain(&tail, &budget)
                         });
                         assert_eq!(activity, [0; 4]);
@@ -139,10 +141,7 @@ fn retains_ranges() {
                             (source.view().try_split::<4>()).expect("split through the source end");
                         assert_eq!(head, b"abcd");
                         assert_eq!(tail.as_slice(), b"");
-                        assert!(
-                            <staging::Buf<'_> as hold::raw::Retain<'_>>::charge(&tail)
-                                == hold::Charge::default()
-                        );
+                        assert!(<staging::Buf<'_> as hold::raw::Retain<'_>>::resident(&tail) == 0);
                         let (result, activity) = Tracker::measure(|| {
                             <staging::Buf<'_> as hold::raw::Retain<'_>>::try_retain(&tail, &budget)
                         });
@@ -240,9 +239,7 @@ fn empty<'d>(source: &mut staging::Buf<'d>, budget: &resident::Budget<'d>) {
         let error = result.err().expect("empty source cannot provide one byte");
         let (required, capacity) = error.into_parts();
         assert_eq!((required.get(), capacity), (1, 0));
-        assert!(
-            <staging::Buf<'_> as hold::raw::Retain<'_>>::charge(&tail) == hold::Charge::default()
-        );
+        assert!(<staging::Buf<'_> as hold::raw::Retain<'_>>::resident(&tail) == 0);
         let result = <staging::Buf<'_> as hold::raw::Retain<'_>>::try_retain(&tail, budget)
             .map(hold::Retained::into_shared);
         assert!(matches!(result, Ok(ref bytes) if bytes.is_empty() && bytes.resident() == 0));

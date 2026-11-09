@@ -8,15 +8,8 @@ pub struct Staged<B, Tag = (), const ROOT: bool = true> {
     pub(in crate::depot::arena::slab) inner: slab::Staged<B, Tag, ROOT>,
 }
 
-impl<T, G: external::Generation, Tag>
-    external::Staged<
-        crate::mem::Lease<
-            entries::Busy<'_, external::Stamped<T, G>, 1, entries::Interior<true>, 1>,
-            lease::Open,
-        >,
-        Tag,
-        true,
-    >
+impl<T, G: external::Generation, Tag, M: entries::Mode, const N: usize>
+    external::Staged<crate::mem::Lease<external::Busy<'_, T, G, M, N>, lease::Open>, Tag, true>
 {
     pub fn get_mut(&mut self) -> &mut T {
         &mut self.inner.get_mut().value
@@ -32,14 +25,6 @@ impl<'a, T, G: external::Generation, Tag, const PARTITIONS: usize>
 {
     pub fn get(&self) -> &T {
         &self.inner.get().value
-    }
-
-    pub fn get_mut(&mut self) -> &mut T {
-        &mut self.inner.get_mut().value
-    }
-
-    pub fn publish(self) {
-        self.inner.publish();
     }
 
     pub fn commit(self) -> external::OccupiedSlot<'a, T, G, Tag, PARTITIONS> {

@@ -359,11 +359,11 @@ impl buffer::Complete for Buf<'_> {
 
 // SAFETY: The immutable view retains the same backing range or copies those exact bytes.
 unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
-    fn charge<'a>(plan: &Self::View<'a>) -> hold::Charge
+    fn resident<'a>(plan: &Self::View<'a>) -> usize
     where
         Self: 'a,
     {
-        hold::Charge::from_view(plan)
+        hold::raw::resident(plan)
     }
 
     fn try_retain<'a>(

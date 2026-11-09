@@ -10,7 +10,6 @@ pub(in crate::buffer::pool) use key::Key;
 pub(in crate::buffer) use ptr::Ptr;
 pub(in crate::buffer::pool) use ptr::{Accounted, Any, Block};
 use ptr::{Base, Binding};
-use slot::Retired;
 pub(in crate::buffer) use slot::Slot;
 pub(in crate::buffer::pool) use slot::{Active, Entry, Seed};
 

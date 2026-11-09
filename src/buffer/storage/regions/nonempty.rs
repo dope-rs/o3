@@ -1,8 +1,4 @@
-use crate::{
-    buffer,
-    buffer::{pool, pool::owners, segments, storage},
-    mem::rc,
-};
+use crate::buffer::{self, segments};
 
 #[repr(transparent)]
 pub struct NonEmpty<'view, 'source, S: ?Sized>(&'view buffer::View<'source, S>);
@@ -31,11 +27,5 @@ impl<'view, 'source, S: ?Sized> From<&'view segments::Item<buffer::View<'source,
 {
     fn from(view: &'view segments::Item<buffer::View<'source, S>>) -> Self {
         Self(view.as_ref())
-    }
-}
-
-impl<L> NonEmpty<'_, '_, storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'_>>>> {
-    pub(in crate::buffer) fn try_own(self) -> Result<storage::Shared, rc::Error> {
-        Ok(self.0.try_clone()?.into_owner())
     }
 }

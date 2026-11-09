@@ -48,7 +48,7 @@ impl<
         slab::Handle::new(self.index, epoch)
     }
     pub(in crate::depot) fn state_mut(&mut self) -> &mut crate::depot::raw::IndexedState {
-        // SAFETY: the admitted metadata cell excludes the dangling empty allocation.
+        // SAFETY: the admitted metadata cell excludes the immutable empty state.
         unsafe { self.core.block.state_mut() }
     }
     pub(in crate::depot) fn release<const RETIRE: bool>(&mut self) {
@@ -171,8 +171,7 @@ impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
         // SAFETY: the occupied slot retains this owner's exact live membership.
         unsafe { tagged::Linked::new(self.into_phase(phase::Metadata)) }
             .unlink()
-            .select(lane)
-            .push::<false>();
+            .push_at::<false, N>(lane);
     }
 
     pub fn take(

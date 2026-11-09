@@ -2,7 +2,7 @@ use storage::{backing, provided};
 
 use crate::{
     buffer,
-    buffer::{pool, pool::owners, resident, storage, storage::regions},
+    buffer::{pool::owners, resident, storage, storage::regions},
     mem::rc,
 };
 
@@ -11,8 +11,8 @@ use crate::{
 #[repr(usize)]
 pub(in crate::buffer) enum State<'d> {
     Slice,
-    Owned(Option<regions::Tag>),
-    Borrowed(regions::Tag<pool::Borrowed<'d>>),
+    Owned(regions::Tag),
+    Static,
     Resident(crate::buffer::raw::Rc<resident::Budget<'d>>),
     Accounted(owners::Registered<'d>),
     Provided(provided::Account<'d>),
@@ -33,7 +33,7 @@ unsafe impl buffer::raw::Retain for State<'_> {
         Ok(match self {
             Self::Slice => Self::Slice,
             Self::Owned(owner) => Self::Owned(owner.try_retain()?),
-            Self::Borrowed(owner) => Self::Borrowed(owner.try_retain()?),
+            Self::Static => Self::Static,
             Self::Resident(owner) => Self::Resident(owner.try_retain()?),
             Self::Accounted(owner) => Self::Accounted(owner.try_retain()?),
             Self::Provided(owner) => Self::Provided(owner.try_retain()?),
@@ -44,9 +44,9 @@ unsafe impl buffer::raw::Retain for State<'_> {
 impl<'d> State<'d> {
     pub(in crate::buffer) fn try_own(self, empty: bool) -> Result<Option<regions::Tag>, Self> {
         match self {
-            Self::Owned(owner) => Ok(owner),
+            Self::Owned(owner) => Ok(Some(owner)),
+            Self::Static => Ok(None),
             Self::Slice if empty => Ok(None),
-            Self::Borrowed(owner) => Ok(Some(owner.into_owned())),
             Self::Slice | Self::Resident(_) | Self::Accounted(_) | Self::Provided(_) => Err(self),
         }
     }
@@ -58,9 +58,8 @@ impl<'d> backing::Owner<'d> for State<'d> {
         'd: 'a,
     {
         match self {
-            Self::Slice => None,
-            Self::Owned(owner) => owner.root(),
-            Self::Borrowed(owner) => Some(owner.root()),
+            Self::Slice | Self::Static => None,
+            Self::Owned(owner) => Some(owner.root()),
             Self::Resident(owner) => owner.root(),
             Self::Accounted(owner) => owner.root(),
             Self::Provided(owner) => owner.root(),

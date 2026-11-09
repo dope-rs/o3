@@ -21,7 +21,7 @@ impl<'a, P: Ord, C: alloc::raw::Extent> Entry<'a, P, C> {
             |entry, ()| Self::Vacant(indexed::Vacant { entry }),
             |entry, ()| {
                 Self::Occupied(indexed::Occupied {
-                    entry: entry.into_parts().0,
+                    entry: entry.with_key(()),
                 })
             },
         )

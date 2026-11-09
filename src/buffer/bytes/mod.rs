@@ -127,13 +127,13 @@ impl<'pool> buffer::Complete for Cursor<'_, 'pool> {
 
 // SAFETY: The selected immutable pool view delegates retention to its original owner.
 unsafe impl<'pool> hold::raw::Retain<'pool> for Cursor<'_, 'pool> {
-    fn charge<'a>(plan: &Self::View<'a>) -> hold::Charge
+    fn resident<'a>(plan: &Self::View<'a>) -> usize
     where
         Self: 'a,
     {
         <storage::Shared<owners::Edge<owners::Plain, pool::Borrowed<'pool>>> as hold::raw::Retain<
             'pool,
-        >>::charge(plan)
+        >>::resident(plan)
     }
 
     fn try_retain<'a>(

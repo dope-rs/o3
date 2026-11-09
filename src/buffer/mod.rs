@@ -3,10 +3,7 @@ use std::{convert, num, ops};
 use storage::{provided, range};
 use write::consume;
 
-use crate::{
-    buffer::{pool::owners, storage::regions},
-    mem::rc,
-};
+use crate::{buffer::pool::owners, mem::rc};
 
 pub mod raw;
 
@@ -103,14 +100,12 @@ impl View<'_, resident::Shared<'_>> {
     /// Retains this validated range when its existing owner is independent.
     /// A scoped owner returns `None` without retaining or copying its bytes.
     pub fn try_own(self) -> Result<Option<storage::Shared>, rc::Error> {
-        use crate::buffer::raw::Retain as _;
-
         if self.is_empty() {
             return Ok(Some(storage::Shared::new()));
         }
         let owner = match self.source.region.owner() {
-            resident::State::Owned(owner) => owner.try_retain()?,
-            resident::State::Borrowed(owner) => Some(owner.try_clone()?.into_owned()),
+            resident::State::Owned(owner) => Some(owner.try_clone()?),
+            resident::State::Static => None,
             resident::State::Slice
             | resident::State::Resident(_)
             | resident::State::Accounted(_)
@@ -121,16 +116,6 @@ impl View<'_, resident::Shared<'_>> {
         Ok(Some(unsafe {
             storage::Shared::assume(self.as_slice(), owner)
         }))
-    }
-}
-
-impl<L> View<'_, storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'_>>>> {
-    /// Retains this range with an independent owner of its pool allocation.
-    pub fn try_own(self) -> Result<storage::Shared, rc::Error> {
-        let Some(view) = regions::NonEmpty::new(&self) else {
-            return Ok(storage::Shared::new());
-        };
-        view.try_own()
     }
 }
 

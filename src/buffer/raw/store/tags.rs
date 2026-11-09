@@ -4,7 +4,8 @@ use crate::{
 };
 
 // SAFETY: each plain backing stores its exact Count at offset zero.
-unsafe impl<M> mem::raw::Edge for Tag<M> {
+unsafe impl mem::raw::Edge for Tag {
+    #[inline]
     fn count(&self) -> &mem::raw::Count {
         // SAFETY: the source edge keeps its initialized first field live.
         unsafe { self.untag().cast().as_ref() }
@@ -12,7 +13,8 @@ unsafe impl<M> mem::raw::Edge for Tag<M> {
 }
 
 // SAFETY: the concrete edge retains its original allocation, ownership, and lifetime.
-unsafe impl<M> buffer::raw::Retain for Tag<M> {
+unsafe impl buffer::raw::Retain for Tag {
+    #[inline]
     fn try_retain(&self) -> Result<Self, rc::Error> {
         self.try_clone()
     }

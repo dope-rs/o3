@@ -93,7 +93,11 @@ impl Chain {
         hooks: &H,
     ) {
         // SAFETY: caller retains distinct reciprocal endpoint pairs in this exact store.
-        let change = unsafe { crate::depot::raw::Splice::new(self, source, hooks) };
+        let head = unsafe { hooks.hook_raw(source.front_key()) };
+        // SAFETY: the destination's retained tail belongs to this exact store.
+        let tail = self.last().map(|index| unsafe { hooks.hook_raw(index) });
+        // SAFETY: the retained endpoints resolve both distinct reciprocal chains.
+        let change = unsafe { crate::depot::raw::Splice::new(self, source, head, tail) };
         change.commit();
     }
 

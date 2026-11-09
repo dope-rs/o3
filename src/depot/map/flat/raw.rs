@@ -5,7 +5,6 @@ use crate::depot::map::{self, flat::Table};
 pub struct Available;
 
 impl crate::depot::raw::Sealed for Available {}
-impl crate::depot::Predicate for Available {}
 
 /// This exact table retains an initialized entry with the retained hash, satisfying
 /// every invocation of the retained matcher throughout the query. Its context
@@ -13,7 +12,6 @@ impl crate::depot::Predicate for Available {}
 pub struct Member;
 
 impl crate::depot::raw::Sealed for Member {}
-impl crate::depot::Predicate for Member {}
 
 unsafe impl<V> map::raw::Mutation for &mut Table<V> {
     unsafe fn table_mut(&mut self) -> &mut map::raw::Table<V> {

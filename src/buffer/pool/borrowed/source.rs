@@ -4,13 +4,13 @@ use crate::buffer::{
 };
 
 /// One checked initialized range for every acquisition from its original pool.
-pub struct Source<'pool> {
+pub struct Source<'pool, const SUFFIX: usize = 0> {
     pool: &'pool pool::Pool<state::Initialized>,
     start: u32,
     end: u32,
 }
 
-impl<'pool> Source<'pool> {
+impl<'pool, const SUFFIX: usize> Source<'pool, SUFFIX> {
     pub fn try_new(
         pool: &'pool pool::Pool<state::Initialized>,
         length: usize,
@@ -24,6 +24,12 @@ impl<'pool> Source<'pool> {
         };
         let end = (capacity.get() as usize).checked_sub(suffix).ok_or(error)?;
         let start = end.checked_sub(length).ok_or(error)?;
+        if SUFFIX > length {
+            return Err(borrowed::Error::Partition {
+                suffix: SUFFIX,
+                length,
+            });
+        }
         Ok(Self {
             pool,
             start: start as u32,
@@ -39,17 +45,20 @@ impl<'pool> Source<'pool> {
         (self.end - self.start) as usize
     }
 
-    pub fn into_split(self) -> borrowed::Split<'pool> {
-        borrowed::Split {
-            source: self,
-            suffix: 0,
-        }
-    }
-
     pub fn acquire(&self) -> Option<borrowed::Slice<'pool>> {
         let span = pool::Span::borrow(&self.pool.core)?;
         Some(borrowed::Slice {
             span,
+            start: self.start,
+            end: self.end,
+        })
+    }
+
+    pub fn acquire_frame(&self) -> Option<borrowed::Frame<'pool>> {
+        let mut payload = self.acquire()?;
+        payload.start = self.end - SUFFIX as u32;
+        Some(borrowed::Frame {
+            payload,
             start: self.start,
             end: self.end,
         })

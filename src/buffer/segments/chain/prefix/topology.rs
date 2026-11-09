@@ -14,6 +14,8 @@ use crate::{
     },
 };
 
+type Claim<'a> = slots::Vacant<Descriptor, &'a slots::Store<Descriptor>>;
+
 pub(in crate::buffer::segments::chain::prefix) struct Body<'a, T> {
     pub(in crate::buffer::segments::chain::prefix) handle: &'a Pool<T>,
     key: &'a mut Key,
@@ -24,7 +26,7 @@ pub(in crate::buffer::segments::chain::prefix) struct Body<'a, T> {
 
 pub(in crate::buffer::segments::chain::prefix) struct Topology<'a, T> {
     pub(in crate::buffer::segments::chain::prefix) body: Body<'a, T>,
-    output: Output<'a>,
+    output: Option<(NonZero<u32>, Claim<'a>)>,
 }
 
 pub(in crate::buffer::segments::chain::prefix) enum Original<'a, T> {
@@ -38,32 +40,13 @@ pub(in crate::buffer::segments::chain::prefix) struct Existing<'a, T> {
     index: slots::Index,
 }
 
-enum Small {
-    Empty,
-    One,
-}
-
-enum Output<'a> {
-    Small(Small),
-    Many {
-        count: NonZero<u32>,
-        claim: slots::Vacant<Descriptor, &'a slots::Store<Descriptor>>,
-    },
-}
-
 enum Source<'a, T> {
-    Direct {
-        body: Body<'a, T>,
-        state: Small,
-    },
+    Direct(Body<'a, T>),
     Keep {
         old: Existing<'a, T>,
         count: NonZero<u32>,
     },
-    Free {
-        old: Existing<'a, T>,
-        state: Small,
-    },
+    Free(Existing<'a, T>),
 }
 
 impl<'a, T: buffer::raw::Segment> Original<'a, T> {
@@ -124,12 +107,7 @@ impl<'a, T: buffer::raw::Segment> Original<'a, T> {
 }
 
 impl<'a, T> Existing<'a, T> {
-    fn take(
-        self,
-    ) -> (
-        Body<'a, T>,
-        slots::Vacant<Descriptor, &'a slots::Store<Descriptor>>,
-    ) {
+    fn take(self) -> (Body<'a, T>, Claim<'a>) {
         let (desc, claim) =
             unsafe { handles::descriptors(self.handle).detached(self.index) }.take();
         *self.key = Key::EMPTY;
@@ -149,23 +127,9 @@ impl<'a, T> Existing<'a, T> {
 impl<'a, T> Source<'a, T> {
     fn new(input: Original<'a, T>, count: segments::Count) -> Self {
         match input {
-            Original::Direct(body) => Self::Direct {
-                body,
-                state: if count == segments::Count::EMPTY {
-                    Small::Empty
-                } else {
-                    Small::One
-                },
-            },
+            Original::Direct(body) => Self::Direct(body),
             Original::Multi(old) => match count.kind() {
-                Kind::Empty => Self::Free {
-                    old,
-                    state: Small::Empty,
-                },
-                Kind::One => Self::Free {
-                    old,
-                    state: Small::One,
-                },
+                Kind::Empty | Kind::One => Self::Free(old),
                 Kind::Many(count) => Self::Keep {
                     old,
                     count: count.nonzero(),
@@ -176,19 +140,16 @@ impl<'a, T> Source<'a, T> {
 
     fn take(self) -> Topology<'a, T> {
         match self {
-            Self::Direct { body, state } => Topology {
-                body,
-                output: Output::Small(state),
-            },
-            Self::Free { old, state } => Topology {
+            Self::Direct(body) => Topology { body, output: None },
+            Self::Free(old) => Topology {
                 body: old.take().0,
-                output: Output::Small(state),
+                output: None,
             },
             Self::Keep { old, count } => {
                 let (body, claim) = old.take();
                 Topology {
                     body,
-                    output: Output::Many { count, claim },
+                    output: Some((count, claim)),
                 }
             }
         }
@@ -209,24 +170,23 @@ impl<'a, T: buffer::raw::Segment> Topology<'a, T> {
                 let (body, claim) = old.take();
                 // SAFETY: a positive prefix extends the original multi sequence.
                 let count = unsafe { NonZero::new_unchecked(count.into_raw()) };
-                (body, Output::Many { count, claim }, source)
+                (body, Some((count, claim)), source)
             }
             Original::Direct(body) => match count.kind() {
-                Kind::Empty => (body, Output::Small(Small::Empty), source),
-                Kind::One => (body, Output::Small(Small::One), source),
+                Kind::Empty | Kind::One => (body, None, source),
                 Kind::Many(count) => {
                     let count = count.nonzero();
                     match (different_pool, source) {
-                        (false, Source::Free { old, state }) => {
+                        (false, Source::Free(old)) => {
                             let (from, claim) = old.take();
                             return Ok((
                                 Self {
                                     body: from,
-                                    output: Output::Small(state),
+                                    output: None,
                                 },
                                 Self {
                                     body,
-                                    output: Output::Many { count, claim },
+                                    output: Some((count, claim)),
                                 },
                             ));
                         }
@@ -234,7 +194,7 @@ impl<'a, T: buffer::raw::Segment> Topology<'a, T> {
                             let claim = handles::descriptors(body.handle)
                                 .vacant()
                                 .ok_or(segments::Error::ChainCapacity(capacity::Shortage::ONE))?;
-                            (body, Output::Many { count, claim }, source)
+                            (body, Some((count, claim)), source)
                         }
                     }
                 }
@@ -247,9 +207,8 @@ impl<'a, T: buffer::raw::Segment> Topology<'a, T> {
 impl<T> Topology<'_, T> {
     pub(in crate::buffer::segments::chain::prefix) fn restore(self) {
         match self.output {
-            Output::Small(Small::Empty) => *self.body.key = Key::EMPTY,
-            Output::Small(Small::One) => *self.body.key = Key::single(self.body.links.head_raw()),
-            Output::Many { count, claim } => {
+            None => *self.body.key = Key::from(self.body.links.head_raw()),
+            Some((count, claim)) => {
                 let live = claim.insert(Descriptor {
                     links: self.body.links,
                     count,

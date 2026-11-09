@@ -32,7 +32,7 @@ fn drops_live_reverse_dense() {
     let mut map =
         runtime::Map::<Order<'_>>::try_new(hash::Plan::new(4).expect("capacity")).expect("map");
     let keys: [_; 4] = array::from_fn(|index| {
-        map.try_insert(0, Order(&drops, index as u64 + 1), |_, _| false)
+        map.try_create(0, |_| false, |_| Order(&drops, index as u64 + 1))
             .expect("vacancy")
     });
     drop(map.remove(keys[1]).expect("live"));
@@ -87,31 +87,10 @@ fn reserve_stays_private() {
 }
 
 #[test]
-fn insertion_reports_owner() {
-    let plan = (hash::Plan::new(2)).expect("the fixture capacity must fit");
-    let mut map =
-        (runtime::Map::<u32>::try_new(plan)).expect("the two-resident collision map must allocate");
-    let compared = cell::Cell::new(false);
-    let first = map
-        .try_insert(9, 1_u32, |_, _| {
-            compared.set(true);
-            false
-        })
-        .expect("initial vacancy");
-    assert!(!compared.get());
-    let prior = *map.get(first).expect("first resident remains live");
-    let error = map
-        .try_insert(9, 2, |stored, input| *stored == prior && *input == 2)
-        .expect_err("matching resident");
-    assert!(matches!(error, hash::errors::Insert::Occupied { key, value: 2 } if key == first));
-    assert_eq!(map.len(), 1);
-}
-
-#[test]
 fn matcher_keeps_failure() {
     let plan = hash::Plan::new(2).expect("capacity");
     let mut map = runtime::Map::<u32>::try_new(plan).expect("map");
-    let key = map.try_insert(9, 7, |_, _| false).expect("resident");
+    let key = map.try_create(9, |_| false, |_| 7).expect("resident");
     let life = Rc::new(());
     let token = String::from("matcher");
     let mark = &token;
@@ -171,7 +150,7 @@ fn rejects_unproved_keys() {
     let plan = (hash::Plan::new(1)).expect("capacity must fit");
     let mut map = (runtime::Map::<u64>::try_new(plan)).expect("map must allocate");
     let first = map
-        .try_insert(3, 3, |stored, input| stored == input)
+        .try_create(3, |stored| *stored == 3, |_| 3)
         .expect("hash key must own its original vacant slot");
 
     let outside =
@@ -258,8 +237,6 @@ fn rejects_before_create() {
 
 #[test]
 fn randomized_model_matches() {
-    use hash::errors::Insert;
-
     const CAPACITY: usize = 17;
     const DOMAIN: u8 = 31;
     let plan = (hash::Plan::new(CAPACITY)).expect("the fixture capacity must fit");
@@ -278,22 +255,21 @@ fn randomized_model_matches() {
         let id = (random % u64::from(DOMAIN)) as u8;
         match op {
             0 | 1 => {
-                let item = Item { id, revision: step };
-                let inserted =
-                    map.try_insert(Item::hash(id), item, |stored, input| stored.id == input.id);
+                let inserted = map.try_create(
+                    Item::hash(id),
+                    |stored| stored.id == id,
+                    |_| Item { id, revision: step },
+                );
                 if let Some(prior) = model.get(&id) {
                     let error = inserted.expect_err("model duplicate");
-                    assert!(matches!(error, Insert::Occupied { .. }));
-                    if let Insert::Occupied { key, value } = error {
+                    assert!(matches!(error, errors::Create::Occupied { .. }));
+                    if let errors::Create::Occupied { key } = error {
                         assert!(key == keys[id as usize].expect("model resident key"));
-                        assert_eq!(value.revision, step);
                         assert_eq!(map.get(key).expect("model resident").revision, *prior);
                     }
                 } else if model.len() == CAPACITY {
                     let error = inserted.expect_err("full model map");
-                    assert!(
-                        matches!(error, Insert::Full(value) if (value.id, value.revision) == (id, step))
-                    );
+                    assert!(matches!(error, errors::Create::Full { capacity: CAPACITY }));
                 } else {
                     assert!(inserted.is_ok());
                     if let Ok(key) = inserted {
@@ -380,22 +356,4 @@ fn retains_owner_context() {
     assert_eq!(map.len(), 0);
     assert_eq!(map.get(key), None);
     assert!((map.key(11, |_| true)).is_none());
-}
-
-#[test]
-fn compares_owned_input() {
-    let plan = (hash::Plan::new(2)).expect("the fixture capacity must fit");
-    let mut map =
-        (runtime::Map::<String, ()>::try_new(plan)).expect("a two-slot hash map must allocate");
-    let first = map
-        .try_insert(7, String::from("same"), |stored, input| stored == input)
-        .expect("the first owned hash input must fit");
-    let error = map
-        .try_insert(7, String::from("same"), |stored, input| stored == input)
-        .expect_err("equal key");
-    assert!(matches!(
-        error,
-        hash::errors::Insert::Occupied { key, value } if key == first && value == "same"
-    ));
-    assert!((map.key_at(first.index() as usize)) == (Some(first)));
 }

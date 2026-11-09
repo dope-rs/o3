@@ -40,11 +40,11 @@ impl<E: crate::depot::raw::TagEntry> Vacant<E> {
         self.0
     }
 
-    pub fn select<const N: usize>(self, lane: Index<N>) -> Vacant<tagged::Position<E, N>>
+    pub fn push_at<const FRONT: bool, const N: usize>(self, lane: Index<N>) -> tagged::Linked<E>
     where
         E::Store: crate::depot::raw::TagStore<Heads = [links::Chain; N]>,
     {
-        Vacant(tagged::Position::new(self.0, lane))
+        self.push_with::<FRONT>(|entry| tagged::Endpoint::indexed(entry.store(), lane))
     }
 
     pub fn detach(entry: E) -> Self {
@@ -56,14 +56,14 @@ impl<E: crate::depot::raw::TagEntry> Vacant<E> {
         // SAFETY: private Hook transitions admit exactly detached or reciprocal linked membership.
         unsafe { tagged::Linked::new(entry) }.unlink()
     }
-}
-
-impl<E: crate::depot::raw::TagTarget> Vacant<E> {
-    pub fn push<const FRONT: bool>(self) -> tagged::Linked<E> {
+    fn push_with<const FRONT: bool>(
+        self,
+        destination: impl FnOnce(&E) -> tagged::Endpoint<&E::Store>,
+    ) -> tagged::Linked<E> {
         const { assert!(E::INITIALIZED) };
         use tagged::hook::Link;
 
-        let lane = self.0.lane();
+        let lane = destination(&self.0);
         let index = self.0.index();
         let hook = self.0.hook();
         let endpoint = Link::endpoint(lane.endpoint());
@@ -82,6 +82,12 @@ impl<E: crate::depot::raw::TagTarget> Vacant<E> {
         };
         // SAFETY: the detached entry was inserted exactly once into its own lane.
         unsafe { tagged::Linked::new(self.0) }
+    }
+}
+
+impl<E: crate::depot::raw::TagTarget> Vacant<E> {
+    pub fn push<const FRONT: bool>(self) -> tagged::Linked<E> {
+        self.push_with::<FRONT>(E::lane)
     }
 }
 

@@ -183,13 +183,17 @@ pub unsafe trait SetSource<Tag, Raw, const N: usize> {
 pub unsafe trait Bitmap<W: bitmap::Width = usize>: Words<W> {}
 
 /// # Safety
-/// Stable disjoint domains retain their heads; tagged operations own mutations and `&mut Self` excludes competing access.
-/// Projections return normally without reentering the topology.
+/// Linked words are initialized node indices or `u32::MAX - lane` for retained heads.
+/// These domains remain fixed and disjoint; `is_node` distinguishes their linked words.
+/// Tagged operations own mutations and `&mut Self` excludes competing access.
+/// Projections and classification are pure and return normally without topology reentry.
 pub unsafe trait TagStore {
     type Head: tagged::raw::Head;
     type Heads: AsRef<[Self::Head]> + ?Sized;
     fn heads(&self) -> &Self::Heads;
-    fn capacity(&self) -> usize;
+    fn is_node(&self, word: u32) -> bool {
+        (u32::MAX - word) as usize >= self.heads().as_ref().len()
+    }
     /// # Safety
     /// The index names an initialized node in this exact owner.
     unsafe fn hook(&self, index: Index) -> &tagged::Hook;
@@ -313,7 +317,8 @@ pub unsafe trait KeyFinish<const LINKED: bool, P = ()>: Sized {
 /// This exclusive root retains its selected slot authority, exact key/link pair and FIFO.
 /// The key index is below `u32::MAX` and excludes the FIFO's endpoint tags.
 /// Shared loans retain the initialized link and plane; escaping values preserve authority and membership.
-/// Neighbor projection returns the exact initialized slot's link without changing or reentering the topology.
+/// All projections preserve topology without reentry or mutation.
+/// Neighbor projection returns the exact initialized slot's link.
 pub unsafe trait KeyOwner<P = ()>: Sized {
     type Key: Address;
     type Fifo;

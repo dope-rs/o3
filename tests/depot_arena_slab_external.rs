@@ -204,12 +204,12 @@ fn exclusive_cancel_epoch() {
     let mut slab = (Exclusive::<u32, Generation>::try_new(capacity::Count::new(2)))
         .expect("two exclusive slab slots must fit");
     {
-        let free = (slab.try_grant_at(1)).expect("the indexed slot must initially be vacant");
+        let free = (slab.try_grant_in(1..2)).expect("the indexed slot must initially be vacant");
         let free = free.reserve();
         assert_eq!(free.key().generation(), Generation::MIN);
     }
 
-    let key = (slab.try_grant_at(1)).expect("the cancelled reservation must restore its slot");
+    let key = (slab.try_grant_in(1..2)).expect("the cancelled reservation must restore its slot");
     let key = {
         let vacant = key.reserve();
         let key = vacant.key();

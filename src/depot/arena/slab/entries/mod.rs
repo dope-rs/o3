@@ -281,8 +281,8 @@ where
     }
 
     pub(in crate::depot) fn in_range(
-        &'a self,
-        mut range: ops::Range<u32>,
+        &'a mut self,
+        range: ops::Range<u32>,
     ) -> Option<Pending<'a, T, MAX, M, PARTITIONS, (), S>> {
         let cap = self.slots.capacity() as u32;
         if range == (0..cap) {
@@ -297,24 +297,7 @@ where
                 return self.head_at(&self.free[1]);
             }
         }
-        range.end = range.end.min(cap);
-        let slots = self.slots.as_ref();
-        let start = range.start as usize;
-        let end = (range.end as usize).min(slots.len());
-        slots
-            .get(start..end)?
-            .iter()
-            .enumerate()
-            .find_map(|(offset, slot)| {
-                if slot.state.get() != slab::State::Free {
-                    return None;
-                }
-                let index = (start + offset) as u32;
-                // SAFETY: this initialized owner slice retains the slot at this
-                // index, and its free membership is consumed immediately.
-                let free = unsafe { Free::new(self, slot, index) };
-                Some(free.take())
-            })
+        Free::find(self, range, None).map(Free::take)
     }
 
     pub(in crate::depot) fn at(

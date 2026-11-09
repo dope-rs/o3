@@ -285,7 +285,7 @@ fn lookup_retains_storage() {
         Tracker::measure(|| external::Exclusive::<u64, Wide>::try_new(capacity::Count::new(4)));
     let mut slab = (built).expect("four external slots must allocate");
     assert_eq!(cold, [1, 112, 0, 0]);
-    let grant = (slab.try_grant_at(3)).expect("the last slot must be vacant");
+    let grant = (slab.try_grant_in(3..4)).expect("the last slot must be vacant");
     let key = {
         let vacant = grant.reserve();
         let key = vacant.key();
@@ -313,7 +313,7 @@ fn retains_rollback_owner() {
     {
         let mut slab = (external::Exclusive::<(u32, _), Wide>::try_new(capacity::Count::new(1)))
             .expect("one external slot must allocate");
-        let grant = (slab.try_grant_at(0)).expect("initial slot must be vacant");
+        let grant = (slab.try_grant_in(0..1)).expect("initial slot must be vacant");
         let vacant = grant.reserve();
         let key = vacant.key();
         vacant.commit((0, Counted(&drops)));
@@ -353,7 +353,7 @@ fn retains_rollback_owner() {
         });
         assert_eq!(hot, [0; 4]);
         assert_eq!(slab.len(), o3::depot::capacity::Count::EMPTY);
-        let grant = (slab.try_grant_at(0)).expect("retirement must release the physical slot");
+        let grant = (slab.try_grant_in(0..1)).expect("retirement must release the physical slot");
         let vacant = grant.reserve();
         assert_eq!(vacant.key().index(), key.index());
         assert_eq!(vacant.key().generation().get(), key.generation().get() + 1);

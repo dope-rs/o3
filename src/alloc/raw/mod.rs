@@ -2,7 +2,6 @@ use std::{alloc, marker, mem, num::NonZero, ptr};
 
 pub use block::Block;
 pub use extent::Extent;
-pub(crate) use layout::Bounds;
 pub use layout::Layout;
 pub use rows::Rows;
 pub use shape::Shape;
@@ -329,20 +328,26 @@ impl Bundle<()> {
         len: usize,
         tail_len: usize,
     ) -> Result<alloc::Layout, Overflow> {
-        let bounds = Self::bounds::<S>(len, tail_len);
-        if !bounds.fits() {
-            return Err(Overflow);
+        let fields = [
+            Layout::<S::Root>::try_layout(len),
+            Layout::<S::Tail>::try_layout(tail_len),
+            Layout::<S::Extra>::try_layout(len),
+            Layout::<S::Last>::try_layout(len),
+        ];
+        let mut layout = alloc::Layout::new::<()>();
+        let mut index = 0;
+        while index < fields.len() {
+            let field = match fields[index] {
+                Ok(field) => field,
+                Err(error) => return Err(error),
+            };
+            layout = match layout.extend(field) {
+                Ok((layout, _)) => layout,
+                Err(_) => return Err(Overflow),
+            };
+            index += 1;
         }
-        // SAFETY: fits admits the complete retained four-plane extent.
-        Ok(unsafe { bounds.layout() }.pad_to_align())
-    }
-
-    pub(crate) const fn bounds<S: Shape + ?Sized>(len: usize, tail_len: usize) -> Bounds {
-        Bounds::new(alloc::Layout::new::<()>())
-            .extend::<S::Root>(len)
-            .extend::<S::Tail>(tail_len)
-            .extend::<S::Extra>(len)
-            .extend::<S::Last>(len)
+        Ok(layout.pad_to_align())
     }
 
     pub(crate) fn try_root<T>(len: usize) -> Result<Bundle<Layout<T>>, Overflow> {

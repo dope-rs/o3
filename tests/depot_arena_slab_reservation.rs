@@ -96,16 +96,13 @@ fn remaining_capacity() {
     assert!(matches!(empty.try_vacant(), Err(slab::Vacancy::Full)));
 
     let mut slab = Store::<u32, (), 1>::try_new(Count::new(2)).expect("two identities");
-    assert_eq!(slab.try_ready(), Ok(()));
     let first = slab.try_vacant().expect("first slot").insert(1);
     assert_eq!(slab.remove(first), Some(1));
     assert_eq!(slab.remaining(), Count::new(1));
     slab.try_vacant().expect("remaining slot").insert(2);
-    assert_eq!(slab.try_ready(), Err(slab::Vacancy::Full));
     assert!(matches!(slab.try_vacant(), Err(slab::Vacancy::Full)));
     slab.clear();
     assert_eq!(slab.capacity(), 2);
-    assert_eq!(slab.try_ready(), Err(slab::Vacancy::IdentityExhausted));
     assert_eq!(slab.remaining(), Count::EMPTY);
     assert!(matches!(
         slab.try_vacant(),

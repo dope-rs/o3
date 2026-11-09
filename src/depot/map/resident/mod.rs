@@ -14,7 +14,7 @@ pub mod scoped;
 
 pub type Id = bounded::U64<0, { u64::MAX >> 2 }>;
 
-/// The exact record and directory extents admitted before allocation.
+/// The record extent and nonempty directory extent admitted before allocation.
 #[derive(Clone, Copy, Debug)]
 pub struct Plan {
     records: u32,
@@ -94,7 +94,12 @@ pub struct Table<T, H, const MAX: u32> {
 impl<T, H: map::Hasher<Id>, const MAX: u32> Table<T, H, MAX> {
     pub fn try_new(plan: Plan, hash: H) -> Result<Self, alloc::Error> {
         let records = Vec::try_new(plan.records as usize)?;
-        let buckets = Box::try_repeat(plan.buckets.get() as usize, links::Index::END)?;
+        let buckets = if plan.records == 0 {
+            0
+        } else {
+            plan.buckets.get() as usize
+        };
+        let buckets = Box::try_repeat(buckets, links::Index::END)?;
         Ok(Self {
             records,
             buckets,

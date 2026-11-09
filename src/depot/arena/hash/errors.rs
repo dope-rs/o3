@@ -1,13 +1,4 @@
 #[derive(Debug)]
-pub enum Insert<T, Tag> {
-    Full(T),
-    Occupied {
-        key: key::Handle<runtime::Domain<Tag>>,
-        value: T,
-    },
-}
-
-#[derive(Debug)]
 pub enum Create<Tag> {
     Full {
         capacity: usize,

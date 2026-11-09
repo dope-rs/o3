@@ -140,16 +140,12 @@ impl<K: crate::depot::raw::Key, V> Table<K, V> {
         if self.is_empty() {
             return;
         }
-        for index in 0..self.capacity() {
-            // SAFETY: this index belongs to the unchanged backing extent.
-            if unsafe { self.block.get_unchecked(index) }.key == K::VACANT {
-                continue;
-            }
-            // SAFETY: the live slot retains this exact native index until removal.
-            unsafe {
-                self.vacate(links::Index::new_usize(index))
-                    .assume_init_drop();
+        let (len, entries) = self.block.parts_mut();
+        for entry in entries {
+            if entry.key != K::VACANT {
+                *entry = raw::Entry::vacant();
             }
         }
+        *len = capacity::Count::EMPTY;
     }
 }

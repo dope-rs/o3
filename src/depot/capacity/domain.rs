@@ -25,5 +25,3 @@ impl Domain<'_> {
         self.count
     }
 }
-
-impl crate::depot::Predicate for Domain<'_> {}

@@ -32,9 +32,7 @@ impl<'p, 's, const N: usize, Tag, W: crate::mem::raw::Word> Lane<'p, 's, N, Tag,
     }
 
     pub fn fits(self, amount: [W; N]) -> bool {
-        (0..N).all(|axis| {
-            amount[axis] <= self.pool.limit[axis].wrapping_add(self.state.reserve[axis])
-        })
+        (0..N).all(|axis| amount[axis] <= self.pool.limit[axis] + self.state.reserve[axis])
     }
 
     /// # Safety

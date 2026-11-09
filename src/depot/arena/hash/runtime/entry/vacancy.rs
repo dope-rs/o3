@@ -4,7 +4,7 @@ use runtime::entry;
 
 use crate::depot::{
     arena::{
-        hash::{self, errors, runtime},
+        hash::{self, runtime},
         slab::key,
     },
     map,
@@ -52,24 +52,6 @@ impl<'a, T, Tag> Vacancy<'a, T, Tag> {
         value: T,
     ) -> entry::Live<'a, T, Tag, entry::Indexed> {
         entry::Live::index(self.value.insert(value), self.bucket, self.hash)
-    }
-}
-
-impl<'a, T, Tag> entry::Vacancy<'a, T, Tag> {
-    pub(in crate::depot) fn try_new(
-        core: &'a mut hash::Core<T, Tag>,
-        hash: u64,
-        value: T,
-        matches: impl Fn(&T, &T) -> bool,
-    ) -> Result<(Self, T), errors::Insert<T, Tag>> {
-        match map::raw::Probe::new(core, hash, |stored| matches(stored, &value)).entry() {
-            map::Entry::Occupied(occupied) => Err(errors::Insert::Occupied {
-                key: occupied.key(),
-                value,
-            }),
-            map::Entry::Vacant(None) => Err(errors::Insert::Full(value)),
-            map::Entry::Vacant(Some(place)) => Ok((place, value)),
-        }
     }
 
     pub fn insert(self, value: T) -> key::Handle<runtime::Domain<Tag>> {

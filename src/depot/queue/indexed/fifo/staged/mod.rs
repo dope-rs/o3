@@ -106,15 +106,18 @@ impl<'a, K, Q, P, S: crate::depot::raw::StagedPhase<K, Q, P>, I: crate::depot::r
         self,
         finish: impl FnOnce(&mut arena::raw::StagedValue<K, Q, P>) -> R,
     ) -> (Slot<'a, K, Q, P, (), I>, R) {
-        let occupied = S::occupied(&self);
+        // SAFETY: this phase retains one initialized payload in its exact owner.
+        let occupied =
+            unsafe { num::NonZero::new_unchecked(self.owner.nodes.state().occupied.get()) };
         // SAFETY: this occupied phase retains its reciprocal slot; the private
         // transition finishes its payload before returning the vacancy.
-        let slot = unsafe { S::unlink(self) }.release(occupied);
+        let slot = unsafe { S::unlink(self) };
+        let node = crate::depot::raw::StagedNode::of(&slot);
+        node.phase.set(staged::Phase::Vacant);
+        slot.owner.nodes.state().occupied.set(occupied.get() - 1);
         // SAFETY: retirement changed only metadata; this exclusive loan still
         // owns the initialized key and active value consumed by finish.
-        let payload = unsafe {
-            (&mut *crate::depot::raw::StagedNode::of(&slot).value.get()).assume_init_mut()
-        };
+        let payload = unsafe { (&mut *node.value.get()).assume_init_mut() };
         (slot, finish(payload))
     }
 }
@@ -152,12 +155,6 @@ impl<'a, K, Q, P, I: crate::depot::raw::Compact> Slot<'a, K, Q, P, (), I> {
     pub fn insert(self, key: K, value: Q) {
         crate::depot::raw::StagedMove::insert(self, key, value).store();
     }
-    pub(in crate::depot) fn release(self, occupied: num::NonZero<u32>) -> Self {
-        let node = crate::depot::raw::StagedNode::of(&self);
-        node.phase.set(staged::Phase::Vacant);
-        self.owner.nodes.state().occupied.set(occupied.get() - 1);
-        self
-    }
 }
 
 impl<'a, K, Q, P, I: crate::depot::raw::Compact> Slot<'a, K, Q, P, Queued, I> {
@@ -183,8 +180,6 @@ const _: () = {
     assert!(mem::size_of::<Slot<'_, (), (), (), ()>>() == 2 * mem::size_of::<usize>());
     assert!(mem::size_of::<Option<Slot<'_, (), (), (), ()>>>() == 2 * mem::size_of::<usize>());
 };
-
-impl crate::depot::Predicate for Exclusive {}
 
 /// Staged admission and removal preserve the original table and owned payload.
 type Admission<'a, K, Q, P, I, C, F> = Live<(&'a mut Table<K, Q, P, I>, C), num::NonZero<u32>, F>;

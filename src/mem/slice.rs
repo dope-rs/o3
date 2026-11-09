@@ -1,5 +1,3 @@
-use std::ptr;
-
 /// Slice operations that retain the boundary discovered in their original owner.
 pub trait Ext<T> {
     fn split_while(&self, test: impl FnMut(&T) -> bool) -> (&[T], &[T]);
@@ -22,12 +20,7 @@ impl<T> Ext<T> for [T] {
         T: Copy,
     {
         let len = self.len().checked_sub(start)?;
-        // SAFETY: admission bounds the suffix by this exclusive slice. Its
-        // length also fits the destination prefix; ptr::copy permits overlap.
-        unsafe {
-            let target = self.as_mut_ptr();
-            ptr::copy(target.add(start), target, len);
-            Some(self.get_unchecked_mut(..len))
-        }
+        self.copy_within(start.., 0);
+        Some(&mut self[..len])
     }
 }
