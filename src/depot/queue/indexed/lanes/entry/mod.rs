@@ -71,25 +71,14 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
     }
 
     pub fn unlink(self) {
-        let index = unsafe { links::Index::new_usize(self.slot.index()) };
-        // SAFETY: the retained occupied key proves this exact initialized node.
-        let node = unsafe { self.slot.table().value(index) };
-        if let Some(source) = node.lane.get() {
-            unsafe {
-                source
-                    .get(self.queues)
-                    .unlink(self.slot.table(), index)
-                    .idle();
-            }
-            node.lane.set(None);
-        }
+        self.detach::<true>();
     }
 
     /// Removes the value while retaining its exact key and original position.
     pub(in crate::depot) fn take_owned(
         self,
     ) -> (Withdrawn<'a, K, V, N, S>, lanes::raw::Owned<V, S>) {
-        let index = self.detach();
+        let index = self.detach::<false>();
         // SAFETY: unlink retained the exact entry and the pre-resolved index.
         let (slot, node) = unsafe { self.slot.take_at(index) };
         let (lane, hook, value) = node.unpack();
@@ -105,7 +94,7 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
     }
 
     pub fn discard(self) {
-        let index = self.detach();
+        let index = self.detach::<false>();
         // SAFETY: unlink retained the exact occupied entry and resolved index.
         unsafe { self.slot.discard_at(index) };
     }
@@ -118,14 +107,16 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
         self.slot.get().lane.get()
     }
 
-    fn detach(&self) -> links::Index {
+    fn detach<const IDLE: bool>(&self) -> links::Index {
         // SAFETY: this occupied key was admitted within its exact u32-sized table.
         let index = unsafe { links::Index::new_usize(self.slot.index()) };
-        let lane = unsafe { self.slot.table().value(index) }.lane.get();
-        if let Some(lane) = lane {
+        let node = unsafe { self.slot.table().value(index) };
+        if let Some(lane) = node.lane.get() {
             // SAFETY: this occupied entry retains its exact reciprocal lane.
-            unsafe {
-                lane.get(self.queues).unlink(self.slot.table(), index);
+            let detached = unsafe { lane.get(self.queues).unlink(self.slot.table(), index) };
+            if IDLE {
+                detached.idle();
+                node.lane.set(None);
             }
         }
         index
