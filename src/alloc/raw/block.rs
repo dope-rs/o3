@@ -103,8 +103,8 @@ impl<E: alloc::raw::Shape, S> Block<E, S, (), E::Root> {
         const { assert!(!mem::needs_drop::<E::Tail>()) };
         let mut memory = Uninit::try_new(extent)?;
         let (entries, heads, _, _) = memory.planes_mut();
-        alloc::raw::init(entries, &root);
-        alloc::raw::init(heads, tail);
+        entries.write_with(&root);
+        heads.write_with(tail);
         // SAFETY: the separate loops initialized each complete plane, including
         // Shapes whose root and tail lengths differ.
         Ok(unsafe { memory.finish(state, ()) })
@@ -129,7 +129,7 @@ impl<E: alloc::raw::Shape<Last = ()>, S> Block<E, S, alloc::raw::Initialized, E:
             let (value, aux) = root(index);
             (mem::MaybeUninit::new(value), aux)
         });
-        alloc::raw::init(heads, tail);
+        heads.write_with(tail);
         // SAFETY: all three complete planes are initialized; the marker retains
         // auxiliary initialization while its location is reconstructed from Shape.
         Ok(unsafe { memory.finish(state, alloc::raw::Initialized) })
@@ -154,7 +154,7 @@ impl<E: alloc::raw::Shape, S> Block<E, S> {
         let extra = unsafe { self.root.cast::<u8>().add(self.extent.extra()) }
             .cast::<mem::MaybeUninit<E::Extra>>();
         let entries = unsafe { slice::from_raw_parts_mut(extra.as_ptr(), self.extent.len()) };
-        alloc::raw::init(entries, init);
+        entries.write_with(init);
         let this = mem::ManuallyDrop::new(self);
         Block {
             root: this.root,

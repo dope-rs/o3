@@ -125,7 +125,7 @@ impl<T> BoxSliceExt<T> for Box<[T]> {
 
     fn try_from_fn(len: usize, init: impl FnMut(usize) -> T) -> Result<Self, Error> {
         let mut entries = Box::<[mem::MaybeUninit<T>]>::try_uninit(len)?;
-        crate::alloc::raw::init(&mut entries, init);
+        entries.write_with(init);
         // SAFETY: the complete owned slice was initialized in index order.
         Ok(unsafe { entries.assume_init() })
     }
