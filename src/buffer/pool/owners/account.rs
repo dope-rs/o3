@@ -19,79 +19,6 @@ pub(in crate::buffer) struct Accounts<'d> {
     free: Free<true>,
 }
 
-/// Validated current account free-list head before its infallible activation.
-struct Claim<'a, 'd> {
-    table: &'a Accounts<'d>,
-    account: &'a Account<'d>,
-    key: Key<true>,
-}
-
-#[repr(transparent)]
-struct Active<'a, 'd>(&'a Account<'d>);
-
-impl<'a, 'd> Claim<'a, 'd> {
-    fn new(entry: super::Entry<'a, super::Resident<'d>>) -> Option<Self> {
-        // SAFETY: the live resident entry retains its initialized accounting table.
-        let table = unsafe { Accounts::ptr(entry.core()).as_ref() };
-        let key = table.free.head()?;
-        // SAFETY: this key comes from the free list of the entry's exact table.
-        let account = unsafe { Accounts::entry(entry, key) };
-        Some(Self {
-            table,
-            account,
-            key,
-        })
-    }
-
-    fn activate(
-        self,
-        slot: super::Active<super::Resident<'d>, state::Uninit>,
-        charge: resident::Charge<'d>,
-    ) -> Registered<'d> {
-        use crate::mem::raw::Edge;
-
-        let account = self.account;
-        let ptr = ptr::NonNull::from(account);
-        // SAFETY: Claim proves this vacant prefix contains only its exact
-        // Accounts free-list successor.
-        unsafe { self.table.free.pop(account.prefix.word()) };
-        // SAFETY: the claimed Account's resident cell is uninitialized and
-        // exclusively owned by this unpublished transition.
-        unsafe { *account.resident.get() = mem::MaybeUninit::new(charge) };
-        let slot = mem::ManuallyDrop::new(slot);
-        // SAFETY: Claim owns the vacant Account and its initialized charge;
-        // the retained slot key is written before publishing the first edge.
-        unsafe {
-            account.prefix.write(slot.key.get());
-            account.prefix.activate();
-        }
-        // SAFETY: activation created the first external account edge.
-        unsafe { Registered::from_raw(ptr) }
-    }
-}
-
-impl<'a, 'd> Active<'a, 'd> {
-    fn try_retain(
-        self,
-        budget: resident::Budget<'d>,
-    ) -> Result<Option<Registered<'d>>, resident::AllocError> {
-        use crate::mem::raw::Edge;
-
-        // SAFETY: a linked Account initialized its resident domain before
-        // publication and retains it until terminal release.
-        let charge = unsafe { (*self.0.resident.get()).assume_init_ref() };
-        if !ptr::eq(budget.core(), charge.budget().core()) {
-            return Ok(None);
-        }
-        // SAFETY: this active account can issue one additional external edge.
-        unsafe { self.0.prefix.try_retain() }.map_err(resident::AllocError::Retain)?;
-        // SAFETY: the retained edge is branded by the checked budget domain.
-        Ok(Some(unsafe {
-            Registered::from_raw(ptr::NonNull::from(self.0))
-        }))
-    }
-}
-
 impl<'d> Accounts<'d> {
     pub(in crate::buffer) fn try_grow<I: buffer::raw::SliceExt>(
         reserve: staging::Reserve<
@@ -251,27 +178,54 @@ impl<'d> Account<'d> {
     }
 
     pub(in crate::buffer) fn try_bind<M>(
-        lease: &pool::Span<super::Resident<'d>, M>,
+        span: &pool::Span<super::Resident<'d>, M>,
         budget: &resident::Budget<'d>,
     ) -> Result<Option<Registered<'d>>, resident::AllocError> {
-        let span = lease;
+        use crate::mem::raw::Edge;
+
         let entry = span.entry();
         let link = &entry.slot().link;
         // SAFETY: the live slot's association is empty or its exact active account key.
         if let Some(key) = unsafe { Key::<true>::decode(link.get()) } {
             // SAFETY: this association was published after its account activated.
-            let active = Active(unsafe { Accounts::entry(entry, key) });
-            return active.try_retain(*budget);
+            let account = unsafe { Accounts::entry(entry, key) };
+            // SAFETY: the linked account retains its initialized resident charge.
+            let charge = unsafe { (*account.resident.get()).assume_init_ref() };
+            if !ptr::eq(budget.core(), charge.budget().core()) {
+                return Ok(None);
+            }
+            // SAFETY: this active account can issue one additional external edge.
+            unsafe { account.prefix.try_retain() }.map_err(resident::AllocError::Retain)?;
+            // SAFETY: the retained edge is branded by the checked budget domain.
+            return Ok(Some(unsafe {
+                Registered::from_raw(ptr::NonNull::from(account))
+            }));
         }
-        let Some(claim) = Claim::new(entry) else {
+        // SAFETY: the live resident entry retains its initialized accounting table.
+        let table = unsafe { Accounts::ptr(entry.core()).as_ref() };
+        let Some(key) = table.free.head() else {
             return Ok(None);
         };
+        // SAFETY: this key comes from the free list of the entry's exact table.
+        let account = unsafe { Accounts::entry(entry, key) };
         let charge = budget
             .try_charge(entry.capacity().get() as usize)
             .map_err(resident::AllocError::Budget)?;
-        let entry = entry.try_retain().map_err(resident::AllocError::Retain)?;
-        let key = claim.key;
-        let owner = claim.activate(entry, charge);
+        let slot = entry.try_retain().map_err(resident::AllocError::Retain)?;
+        let pointer = ptr::NonNull::from(account);
+        // SAFETY: the admitted vacant account still holds its exact free-list successor.
+        unsafe { table.free.pop(account.prefix.word()) };
+        // SAFETY: this unpublished account exclusively owns its uninitialized charge cell.
+        unsafe { *account.resident.get() = mem::MaybeUninit::new(charge) };
+        let slot = mem::ManuallyDrop::new(slot);
+        // SAFETY: the claimed account owns the charge and slot edge; publish
+        // the retained slot key before creating its first external edge.
+        unsafe {
+            account.prefix.write(slot.key.get());
+            account.prefix.activate();
+        }
+        // SAFETY: activation created the first external account edge.
+        let owner = unsafe { Registered::from_raw(pointer) };
         link.set(Key::encode(Some(key)));
         Ok(Some(owner))
     }
@@ -349,7 +303,6 @@ impl<'d> backing::Owner<'d> for Registered<'d> {
 const _: () = {
     assert!(size_of::<Accounts<'static>>() == 24);
     assert!(size_of::<Account<'static>>() == 32);
-    assert!(size_of::<Active<'static, 'static>>() == size_of::<usize>());
     assert!(size_of::<Registered<'static>>() == size_of::<usize>());
     assert!(size_of::<Option<Registered<'static>>>() == size_of::<usize>());
 };
