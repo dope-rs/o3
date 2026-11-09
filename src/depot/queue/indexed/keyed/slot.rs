@@ -23,7 +23,7 @@ impl<
 {
     pub fn try_new(owner: O) -> Result<Self, Slot<O, P, false>> {
         let (index, link) = keyed::selected::<_, P>(&owner);
-        if link.raw.previous.get() == index.raw() {
+        if !index.is_linked(&link.raw) {
             // SAFETY: the owner admits only canonical vacancy or membership in its FIFO.
             return Err(Slot::from_source(unsafe {
                 crate::depot::raw::Proof::new(owner)

@@ -99,26 +99,21 @@ impl<'a, S: heap::raw::Store> Slot<'a, S> {
         vacant: impl FnOnce(heap::Vacancy<&'a mut S, S::Key>, C) -> T,
         occupied: impl FnOnce(heap::Entry<&'a mut S, S::Key>, C) -> T,
     ) -> T {
-        if self.position == <S::Position as crate::depot::raw::Link>::NONE {
+        let Self {
+            owner,
+            key,
+            position,
+        } = self;
+        match <S::Position as crate::depot::raw::Link>::item(position) {
             // SAFETY: this absent reverse-map identity leaves one spare entry.
-            vacant(unsafe { heap::Vacancy::new(self.owner, self.key) }, context)
-        } else {
-            // SAFETY: this admitted reverse-map position is occupied.
-            occupied(unsafe { self.into_entry() }, context)
-        }
-    }
-
-    /// # Safety
-    /// The retained reverse-map position is occupied, rather than NONE.
-    unsafe fn into_entry(self) -> heap::Entry<&'a mut S, S::Key> {
-        // SAFETY: Slot retains the exact owner and admitted identity, and the
-        // occupied reverse map identifies its initialized heap entry.
-        unsafe {
-            heap::Entry::new(
-                self.owner,
-                crate::depot::raw::Word::offset(self.position),
-                self.key,
-            )
+            None => vacant(unsafe { heap::Vacancy::new(owner, key) }, context),
+            Some(position) => {
+                // SAFETY: the retained reverse map identifies this owner's initialized entry.
+                let entry = unsafe {
+                    heap::Entry::new(owner, crate::depot::raw::Word::offset(position), key)
+                };
+                occupied(entry, context)
+            }
         }
     }
 
@@ -178,13 +173,6 @@ impl<'a, S: heap::raw::Store> Lookup<'a, S> {
         Ok(Slot::new(owner, key)
             .ok_or(keyed::Error { key, capacity })?
             .lookup())
-    }
-
-    pub(in crate::depot::heap) fn from_source<C>(
-        live: Live<(&'a mut S, C), S::Key, ()>,
-    ) -> (Self, C) {
-        let (slot, context) = Slot::from_source(live);
-        (slot.lookup(), context)
     }
 
     pub(in crate::depot::heap) fn probe<T>(

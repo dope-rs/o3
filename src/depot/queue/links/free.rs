@@ -44,17 +44,6 @@ impl Free {
         hook.next.set(links::Index::encode(self.0.get()));
         self.0.set(Some(index));
     }
-
-    /// # Safety
-    /// `index` is detached and absent from every live/free chain of this owner.
-    pub(in crate::depot) unsafe fn recycle_now<H: crate::depot::raw::Hooks + ?Sized>(
-        &self,
-        hooks: &H,
-        index: links::Index,
-    ) {
-        // SAFETY: this exact hook is exclusively detached by the caller.
-        self.recycle(unsafe { links::Detached::new(hooks.hook_raw(index), index) });
-    }
 }
 
 const _: () = assert!(mem::size_of::<Free>() == mem::size_of::<u32>());

@@ -31,16 +31,6 @@ impl regions::End for Option<Account<'_>> {
     const EMPTY: Option<Self> = Some(None);
 }
 
-impl<'d> backing::Owner<'d> for Option<Account<'d>> {
-    fn root<'a>(&'a self) -> Option<backing::Root<'a, 'd>>
-    where
-        'd: 'a,
-    {
-        self.as_ref()
-            .map(|owner| backing::Root::Provided(owner.charge()))
-    }
-}
-
 const _: () = assert!(size_of::<Account<'_>>() == size_of::<usize>());
 
 impl<'d> backing::Owner<'d> for Account<'d> {

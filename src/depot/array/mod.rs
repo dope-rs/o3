@@ -343,8 +343,7 @@ impl<T, const N: usize> Drop for IntoIter<T, N> {
         let raw = &mut self.raw;
         let start = raw.front.get();
         let end = raw.back.get();
-        raw.front = raw.back;
-        // SAFETY: the exhausted iterator transfers exactly its unread initialized suffix.
+        // SAFETY: this terminal iterator retains exactly its unread initialized suffix.
         unsafe { raw.entries.get_unchecked_mut(start..end).assume_init_drop() };
     }
 }

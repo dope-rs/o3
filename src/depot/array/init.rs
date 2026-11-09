@@ -94,9 +94,8 @@ impl<'id, T, const N: usize> Slot<'_, '_, 'id, T, N> {
 
 impl<T, const N: usize> Drop for Prefix<'_, '_, T, N> {
     fn drop(&mut self) {
-        let len = mem::replace(&mut self.len, array::Len::ZERO);
-        // SAFETY: the cleared length transfers this exact initialized prefix.
-        unsafe { len.prefix_mut(self.entries).assume_init_drop() };
+        // SAFETY: this terminal owner retains exactly the initialized prefix.
+        unsafe { self.len.prefix_mut(self.entries).assume_init_drop() };
     }
 }
 
@@ -226,9 +225,8 @@ impl<'a, T, const N: usize, const REVERSE: bool> Guard<'a, T, N, REVERSE, Vacant
 
 impl<T, const N: usize, const REVERSE: bool, P> Drop for Guard<'_, T, N, REVERSE, P> {
     fn drop(&mut self) {
-        let len = mem::replace(&mut self.len, 0);
-        // SAFETY: the cleared length transfers exactly the initialized prefix.
-        let entries = unsafe { self.entries.get_unchecked_mut(..len) };
+        // SAFETY: this terminal owner retains exactly the initialized prefix.
+        let entries = unsafe { self.entries.get_unchecked_mut(..self.len) };
         drop(IntoIter::<T, REVERSE> { entries });
     }
 }
@@ -312,14 +310,13 @@ impl<T, const REVERSE: bool> iter::FusedIterator for IntoIter<'_, T, REVERSE> {}
 
 impl<T, const REVERSE: bool> Drop for IntoIter<'_, T, REVERSE> {
     fn drop(&mut self) {
-        let entries = mem::take(&mut self.entries);
-        // SAFETY: taking the slice transfers the exclusively owned initialized suffix.
+        // SAFETY: this terminal owner retains exactly the unread initialized suffix.
         if REVERSE {
-            for entry in entries.iter_mut().rev() {
+            for entry in self.entries.iter_mut().rev() {
                 unsafe { entry.assume_init_drop() };
             }
         } else {
-            unsafe { entries.assume_init_drop() };
+            unsafe { self.entries.assume_init_drop() };
         }
     }
 }

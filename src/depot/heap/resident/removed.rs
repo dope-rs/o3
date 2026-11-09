@@ -27,12 +27,8 @@ impl<K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position>
         // keeps this resident value unique.
         unsafe { heap::raw::resident_mut(self.entry.owner, self.entry.value.identity) }
     }
-    pub fn reinsert(self, priority: P) {
-        heap::Vacancy {
-            owner: self.entry.owner,
-            value: self.entry.value.identity,
-        }
-        .prepare(priority)
-        .store();
+    pub fn reinsert(mut self, priority: P) {
+        let _old = std::mem::replace(&mut self.entry.value.priority, priority);
+        self.entry.store();
     }
 }

@@ -85,7 +85,7 @@ impl<T, I: crate::depot::raw::Compact> List<T, I> {
 
     pub fn entry(&mut self, index: I) -> Option<Entry<'_, T, I>> {
         let entry = self.store.get(index.into_raw() as usize)?;
-        Some(if entry.slot().hook.previous.get() == entry.index().raw() {
+        Some(if !entry.index().is_linked(&entry.slot().hook) {
             Entry::Vacant(Slot {
                 entry,
                 phase: marker::PhantomData,

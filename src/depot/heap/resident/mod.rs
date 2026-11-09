@@ -156,8 +156,8 @@ impl<K: crate::depot::raw::Address, P: Ord, R: Copy, C, I: Position>
 {
     /// Resolves one resident state before returning its unchanged source owner.
     pub fn with<O>(self, run: impl for<'a> FnOnce(resident::Entry<'a, K, P, R, I>) -> O) -> (C, O) {
-        let (entry, context) = heap::Lookup::from_source(self);
-        let output = run(resident::Entry::from_lookup(entry));
+        let (slot, context) = heap::Slot::from_source(self);
+        let output = run(resident::Entry::from_lookup(slot.lookup()));
         (context, output)
     }
 }

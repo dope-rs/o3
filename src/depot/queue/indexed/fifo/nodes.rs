@@ -109,7 +109,7 @@ impl<T: Copy + Eq> NodeEntry<'_, T> {
         let store = self.store();
         let index = self.index();
         let node = self.slot();
-        let change = if node.hook.previous.get() != index.raw() {
+        let change = if index.is_linked(&node.hook) {
             if KEEP_EQUAL {
                 let current = *unsafe { (*node.value.get()).assume_init_ref() };
                 if current == value {
@@ -131,7 +131,7 @@ impl<T: Copy + Eq> NodeEntry<'_, T> {
         let store = self.store();
         let index = self.index();
         let node = self.slot();
-        if node.hook.previous.get() == index.raw() {
+        if !index.is_linked(&node.hook) {
             return;
         }
         let current = *unsafe { (*node.value.get()).assume_init_ref() };

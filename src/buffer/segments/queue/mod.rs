@@ -39,10 +39,13 @@ impl<'a, T: buffer::raw::Segment, const N: usize> Array<'a, T, N> {
     }
 
     pub fn contiguous(&mut self) -> Option<&'a [u8; N]> {
-        let Some(mut step) = Step::array(self) else {
+        let Some(cap) = NonZero::new(N) else {
             return Some(&[0; N]);
         };
-        step.peek().bytes().as_array()
+        // SAFETY: array admission retains exactly N bytes without advancing this cursor.
+        unsafe { self.source.peek_chunk::<{ usize::MAX }>(cap) }
+            .bytes()
+            .as_array()
     }
 
     /// Copies into the array whose size was proved at construction.
@@ -75,46 +78,6 @@ pub struct Iter<'a, T> {
     end: u32,
 }
 
-/// A positive bounded read retaining its exact immutable cursor state.
-struct Step<'cursor, 'data, T, const MAX: usize> {
-    source: &'cursor mut Iter<'data, T>,
-    cap: NonZero<usize>,
-}
-
-impl<'cursor, 'data, T> Step<'cursor, 'data, T, { usize::MAX }> {
-    fn array<const N: usize>(source: &'cursor mut Array<'data, T, N>) -> Option<Self> {
-        let cap = NonZero::new(N)?;
-        Some(Self {
-            source: &mut source.source,
-            cap,
-        })
-    }
-}
-
-impl<'data, T: buffer::raw::Segment, const MAX: usize> Step<'_, 'data, T, MAX> {
-    fn peek(&mut self) -> buffer::raw::Chunk<'data, MAX> {
-        let source = &self.source;
-        // SAFETY: Step retains positive remaining bytes in this cursor's
-        // validated range and the unchanged queue that proves its totals.
-        let (location, bytes) = unsafe { source.location.locate(source.start) };
-        let start = (source.start - location.start) as usize;
-        let len = (bytes.len().get() - start).min(self.cap.get());
-        // SAFETY: start lies inside this nonempty item; cap is positive
-        // and bounded by the same cursor's remaining logical range.
-        let part = unsafe { bytes.bytes().get_unchecked(start..start + len) };
-        self.source.location = location;
-        // SAFETY: len is positive and <= cap <= MAX (Scatter's contract;
-        // array/iterator steps use usize::MAX). The slice retains its source borrow.
-        unsafe { buffer::raw::Chunk::new(part) }
-    }
-
-    fn advance(mut self) -> buffer::raw::Chunk<'data, MAX> {
-        let chunk = self.peek();
-        self.source.start += chunk.len().get() as u32;
-        chunk
-    }
-}
-
 impl<'a, T> Iter<'a, T> {
     pub(in crate::buffer::segments::queue) const fn new(slice: queue::Slice<'a, T>) -> Self {
         Self {
@@ -132,11 +95,31 @@ impl<'a, T: buffer::raw::Segment> Iter<'a, T> {
 
     /// # Safety
     /// The caller proves cap <= self.remaining() and cap <= MAX.
+    unsafe fn peek_chunk<const MAX: usize>(
+        &mut self,
+        cap: NonZero<usize>,
+    ) -> buffer::raw::Chunk<'a, MAX> {
+        // SAFETY: positive remaining bytes lie in this cursor's admitted queue range.
+        let (location, bytes) = unsafe { self.location.locate(self.start) };
+        let start = (self.start - location.start) as usize;
+        let len = (bytes.len().get() - start).min(cap.get());
+        // SAFETY: start lies inside this item and cap bounds the positive suffix.
+        let part = unsafe { bytes.bytes().get_unchecked(start..start + len) };
+        self.location = location;
+        // SAFETY: len is positive, <= cap <= MAX, and retains the queue borrow.
+        unsafe { buffer::raw::Chunk::new(part) }
+    }
+
+    /// # Safety
+    /// The caller proves cap <= self.remaining() and cap <= MAX.
     pub(in crate::buffer) unsafe fn next_chunk<const MAX: usize>(
         &mut self,
         cap: NonZero<usize>,
     ) -> buffer::raw::Chunk<'a, MAX> {
-        Step { source: self, cap }.advance()
+        // SAFETY: the caller supplies this unchanged cursor's exact cap bounds.
+        let chunk = unsafe { self.peek_chunk(cap) };
+        self.start += chunk.len().get() as u32;
+        chunk
     }
 
     fn at(position: queue::Position<'_, 'a, T>) -> Self {
@@ -157,14 +140,8 @@ impl<'a, T: buffer::raw::Segment> Iterator for Iter<'a, T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let left = NonZero::new(buffer::raw::Scatter::remaining(self))?;
-        Some(
-            Step::<_, { usize::MAX }> {
-                source: self,
-                cap: left,
-            }
-            .advance()
-            .bytes(),
-        )
+        // SAFETY: left is this cursor's positive remaining range and fits usize::MAX.
+        Some(unsafe { self.next_chunk::<{ usize::MAX }>(left) }.bytes())
     }
 }
 

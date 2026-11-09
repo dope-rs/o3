@@ -70,7 +70,8 @@ pub unsafe trait Hooks {
     /// The index is detached and absent from every list of this owner.
     /// Implementations return this exact hook to the owner's free list once.
     unsafe fn recycle(&self, free: &links::Free, index: links::Index) {
-        unsafe { free.recycle_now(self, index) }
+        // SAFETY: the caller retains this exact hook exclusively outside every list.
+        free.recycle(unsafe { links::Detached::new(self.hook_raw(index), index) });
     }
 
     /// # Safety

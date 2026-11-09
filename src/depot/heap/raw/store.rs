@@ -39,14 +39,10 @@ pub(in crate::depot) unsafe trait Store: Sized {
         self.storage().tail()
     }
 
-    fn first(&self) -> Option<&heap::Stored<Self::Key, Self::Priority>> {
-        // SAFETY: every element of this exact owner's prefix is initialized.
-        Some(unsafe { self.values().first()?.assume_init_ref() })
-    }
-
     /// The minimum entry retaining its stored identity and priority.
     fn peek(&self) -> Option<(Self::Key, &Self::Priority)> {
-        let entry = self.first()?;
+        // SAFETY: every element of this exact owner's prefix is initialized.
+        let entry = unsafe { self.values().first()?.assume_init_ref() };
         Some((entry.identity, &entry.priority))
     }
 
@@ -54,10 +50,7 @@ pub(in crate::depot) unsafe trait Store: Sized {
     fn current(&self, index: usize) -> Option<&heap::Stored<Self::Key, Self::Priority>> {
         use crate::depot::raw::{Link as _, Word as _};
 
-        let position = *self.positions().get(index)?;
-        if position == Self::Position::NONE {
-            return None;
-        }
+        let position = self.positions().get(index)?.item()?;
         // SAFETY: the retained reverse map points into this exact initialized prefix.
         Some(unsafe {
             self.values()

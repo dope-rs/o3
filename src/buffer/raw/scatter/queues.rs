@@ -19,7 +19,7 @@ unsafe impl<'a, T: buffer::raw::Segment> buffer::raw::Scatter<'a> for Iter<'a, T
         cap: NonZero<usize>,
     ) -> buffer::raw::Chunk<'a, MAX> {
         // SAFETY: the raw cursor contract supplies the exact bounds for this
-        // borrowed state; Step retains them until the physical read completes.
+        // borrowed state, retained until the physical read completes.
         unsafe { self.next_chunk(cap) }
     }
 }

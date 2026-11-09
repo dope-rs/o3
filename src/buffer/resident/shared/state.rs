@@ -41,16 +41,6 @@ unsafe impl buffer::raw::Retain for State<'_> {
     }
 }
 
-impl<'d> State<'d> {
-    pub(in crate::buffer) fn try_own(self, empty: bool) -> Result<Option<regions::Tag>, Self> {
-        match self {
-            Self::Owned(owner) => Ok(Some(owner)),
-            Self::Static => Ok(None),
-            Self::Slice if empty => Ok(None),
-            Self::Slice | Self::Resident(_) | Self::Accounted(_) | Self::Provided(_) => Err(self),
-        }
-    }
-}
 impl<'d> backing::Owner<'d> for State<'d> {
     #[inline]
     fn root<'a>(&'a self) -> Option<backing::Root<'a, 'd>>

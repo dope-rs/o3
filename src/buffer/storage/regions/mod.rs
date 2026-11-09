@@ -374,16 +374,13 @@ impl<'d> regions::Shared<resident::State<'d>> {
     pub(in crate::buffer) fn try_detach(
         self,
     ) -> Result<regions::Shared<Option<regions::Tag>>, Self> {
-        let empty = self.is_empty();
-        match self.owner.try_own(empty) {
-            Ok(owner) => Ok(regions::Shared {
-                owner,
-                bytes: self.bytes,
-            }),
-            Err(owner) => Err(Self {
-                owner,
-                bytes: self.bytes,
-            }),
-        }
+        let Self { owner, bytes } = self;
+        let owner = match owner {
+            resident::State::Owned(owner) => Some(owner),
+            resident::State::Static => None,
+            resident::State::Slice if bytes.len() == 0 => None,
+            owner => return Err(Self { owner, bytes }),
+        };
+        Ok(regions::Shared { owner, bytes })
     }
 }

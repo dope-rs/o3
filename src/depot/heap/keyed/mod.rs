@@ -169,11 +169,11 @@ impl<'a, K: crate::depot::raw::Address, P: Ord, I: Position> Min<K, P, I, capaci
     }
 
     pub fn peek(&self) -> Option<(capacity::Key<'a, K>, &P)> {
-        let entry = heap::raw::Store::first(self)?;
+        let (key, priority) = heap::raw::Store::peek(self)?;
         // SAFETY: every stored identity entered through this exact domain.
         Some((
-            capacity::Key::new(unsafe { crate::depot::raw::Proof::new(entry.identity) }),
-            &entry.priority,
+            capacity::Key::new(unsafe { crate::depot::raw::Proof::new(key) }),
+            priority,
         ))
     }
 }
