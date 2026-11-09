@@ -92,22 +92,20 @@ fn reserved_identity() {
 
 #[test]
 fn remaining_capacity() {
-    let mut empty = Store::<u32, (), 1>::try_new(Count::EMPTY).expect("empty extent");
-    assert!(matches!(empty.try_vacant(), Err(slab::Vacancy::Full)));
+    let empty = Store::<u32, (), 1>::try_new(Count::EMPTY).expect("empty extent");
+    assert_eq!(empty.try_ready(), Err(slab::Vacancy::Full));
 
     let mut slab = Store::<u32, (), 1>::try_new(Count::new(2)).expect("two identities");
     let first = slab.try_vacant().expect("first slot").insert(1);
     assert_eq!(slab.remove(first), Some(1));
     assert_eq!(slab.remaining(), Count::new(1));
+    assert_eq!(slab.try_ready(), Ok(()));
     slab.try_vacant().expect("remaining slot").insert(2);
-    assert!(matches!(slab.try_vacant(), Err(slab::Vacancy::Full)));
+    assert_eq!(slab.try_ready(), Err(slab::Vacancy::Full));
     slab.clear();
     assert_eq!(slab.capacity(), 2);
     assert_eq!(slab.remaining(), Count::EMPTY);
-    assert!(matches!(
-        slab.try_vacant(),
-        Err(slab::Vacancy::IdentityExhausted)
-    ));
+    assert_eq!(slab.try_ready(), Err(slab::Vacancy::IdentityExhausted));
 }
 
 #[test]

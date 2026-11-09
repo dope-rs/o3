@@ -159,6 +159,15 @@ where
         self.core.is_full()
     }
 
+    /// Checks temporary or permanent admission without reserving a slot.
+    pub fn try_ready(&self) -> Result<(), Vacancy> {
+        if self.core.is_full() {
+            Err(self.core.refusal())
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn insert(&mut self, value: T) -> Result<key::Handle<Tag, MAX>, T> {
         let Some(pending) = self.core.free() else {
             return Err(value);
@@ -192,13 +201,7 @@ where
         let core = &self.core;
         iter::from_fn(move || core.free().map(slab::Vacant::new))
     }
-}
 
-impl<T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize>
-    slab::Store<T, Tag, MAX, RECYCLE, PARTITIONS>
-where
-    cycle::Mode<RECYCLE>: Policy,
-{
     /// Borrows occupied values in physical slot order from this exact shared owner.
     pub fn values(&self) -> impl Iterator<Item = &T> {
         (0..self.capacity()).filter_map(|index| {
@@ -229,17 +232,11 @@ where
     pub fn clear(&mut self) {
         self.core.clear();
     }
-}
 
-impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize>
-    slab::Store<T, Tag, MAX, RECYCLE, PARTITIONS>
-where
-    cycle::Mode<RECYCLE>: Policy,
-{
     pub fn try_entry(
-        &'a mut self,
+        &mut self,
         key: key::Handle<Tag, MAX>,
-    ) -> Lookup<'a, T, Tag, MAX, RECYCLE, PARTITIONS> {
+    ) -> Lookup<'_, T, Tag, MAX, RECYCLE, PARTITIONS> {
         let entry = entries::Occupied::try_key(&self.core, key)?;
         Ok(slab::Occupied::new(entry))
     }
