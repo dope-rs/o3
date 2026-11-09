@@ -31,7 +31,9 @@ impl<H, T, N: alloc::raw::TailExtent> Uninit<H, T, N> {
 
     pub fn repeat_with(self, header: H, mut init: impl FnMut() -> T) -> tail::Block<H, T, N> {
         let mut block = self.init(header);
-        alloc::raw::init(block.as_mut_slice(), |_| init());
+        block
+            .as_mut_slice()
+            .fill_with(|| mem::MaybeUninit::new(init()));
         // SAFETY: every tail slot now contains one initialized element.
         unsafe { block.assume_init() }
     }

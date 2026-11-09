@@ -96,10 +96,15 @@ impl<L, M> Cursor<L, M> {
 
     /// Copies the largest source prefix admitted by this cursor.
     pub fn write(&mut self, source: &[u8]) -> usize {
-        let append = pool::Append::prefix(self, source);
-        let copied = append.input.len();
-        append.commit();
-        copied
+        let len = source.len().min(self.spare_len());
+        let input = owners::Measured::slice(&source[..len]);
+        self.compact_for(len);
+        pool::Append {
+            target: &mut self.lease,
+            input,
+        }
+        .commit();
+        len
     }
 }
 

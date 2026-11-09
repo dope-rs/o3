@@ -224,10 +224,7 @@ const _: () = {
 };
 
 /// Reconstructed pool and slot identity carried by one live storage owner.
-pub(super) struct Binding<K> {
-    pub(super) slots: super::Ptr<K, super::Any>,
-    pub(super) key: super::Key,
-}
+pub(super) type Binding<K> = (super::Ptr<K, super::Any>, super::Key);
 
 impl<K: crate::buffer::raw::Backing, S> Ptr<K, S> {
     pub(super) fn is_unique(&self, key: super::Key) -> bool {
@@ -284,6 +281,6 @@ impl<K: crate::buffer::raw::Backing> Ptr<K, Any> {
         // SAFETY: the live typed owner edge proves publication completed before
         // this state-erased reconstruction of the same backing kind.
         let core = unsafe { base.publish() };
-        Binding { slots: core, key }
+        (core, key)
     }
 }

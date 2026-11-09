@@ -38,18 +38,6 @@ impl<L, M> Append<'_, &[u8], pool::Cursor<L, M>> {
     }
 }
 
-impl<'a, 'source, L, M> Append<'a, &'source [u8], pool::Cursor<L, M>> {
-    pub(in crate::buffer::pool) fn prefix(
-        target: &'a mut pool::Cursor<L, M>,
-        src: &'source [u8],
-    ) -> Self {
-        let len = src.len().min(target.spare_len());
-        let input = owners::Measured::slice(&src[..len]);
-        target.compact_for(len);
-        Self { target, input }
-    }
-}
-
 const _: () = {
     assert!(size_of::<Append<'_, &[u8], pool::Cursor>>() == 4 * size_of::<usize>());
     assert!(

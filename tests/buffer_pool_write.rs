@@ -54,9 +54,7 @@ fn preserves_rejected_tail() {
     }
     assert_eq!(cursor.as_ref(), b"ef");
     assert_eq!(cursor.as_ref().as_ptr(), position);
-    let append =
-        (cursor.try_append(b"123456")).expect("the exact remaining capacity must be admitted");
-    append.commit();
+    assert_eq!(cursor.write(b"1234567"), 6);
     assert_eq!(cursor.as_ref(), b"ef123456");
 }
 

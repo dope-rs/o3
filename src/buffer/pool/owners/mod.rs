@@ -22,7 +22,7 @@ pub(in crate::buffer) unsafe fn capacity_of<K: crate::buffer::raw::Backing>(
 ) -> NonZero<u32> {
     // SAFETY: the caller proves this is one active pool-slot prefix, and the
     // reconstruction reads only the immutable header geometry it retains.
-    unsafe { Ptr::<K, Any>::from_owner(owner) }.slots.capacity()
+    unsafe { Ptr::<K, Any>::from_owner(owner) }.0.capacity()
 }
 
 mod account;

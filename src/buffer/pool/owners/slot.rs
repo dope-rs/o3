@@ -136,8 +136,7 @@ impl<K: crate::buffer::raw::Backing> Retired<K, super::Any> {
     /// The caller must transfer the terminal edge for this exact slot owner.
     pub(super) unsafe fn from_owner(owner: ptr::NonNull<()>) -> Self {
         // SAFETY: the terminal owner is an active Slot prefix from its live pool.
-        let super::Binding { slots, key } =
-            unsafe { super::Ptr::<K, super::Any>::from_owner(owner) };
+        let (slots, key) = unsafe { super::Ptr::<K, super::Any>::from_owner(owner) };
         Self { slots, key }
     }
 }
