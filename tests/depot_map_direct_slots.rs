@@ -5,12 +5,14 @@ use std::{cell::Cell, mem, num::NonZero};
 use common::{
     Counted,
     alloc::system::Tracker,
-    depot::{index::Id, model::Lcg},
+    depot::{
+        index::{Id, id},
+        model::Lcg,
+    },
 };
 use o3::depot::{
     capacity,
     map::direct::{Occupied, Table, Vacant},
-    raw::Address as _,
 };
 
 #[global_allocator]
@@ -46,7 +48,7 @@ fn keeps_allocation_bounds() {
         let mut slots = slots;
         for index in 0..CAPACITY {
             slots
-                .vacant(Id::new(
+                .vacant(id(
                     u32::try_from(index).expect("fixture index"),
                     NonZero::<u32>::MIN,
                 ))
@@ -54,7 +56,7 @@ fn keeps_allocation_bounds() {
                 .insert(index as u64);
         }
         for index in 0..CAPACITY {
-            let key = Id::new(
+            let key = id(
                 u32::try_from(index).expect("fixture index"),
                 NonZero::<u32>::MIN,
             );
@@ -67,7 +69,7 @@ fn keeps_allocation_bounds() {
         for index in (0..CAPACITY).step_by(2) {
             assert_eq!(
                 slots
-                    .entry(Id::new(
+                    .entry(id(
                         u32::try_from(index).expect("fixture index"),
                         NonZero::<u32>::MIN,
                     ))
@@ -81,9 +83,9 @@ fn keeps_allocation_bounds() {
 
     let ((), counts) = Tracker::measure(move || {
         assert_eq!(slots.len(), CAPACITY / 2);
-        assert_eq!(slots.get(Id::new(1, NonZero::<u32>::MIN)), Some(&2));
+        assert_eq!(slots.get(id(1, NonZero::<u32>::MIN)), Some(&2));
         assert_eq!(
-            slots.get(Id::new(
+            slots.get(id(
                 u32::try_from(CAPACITY - 2).expect("fixture index"),
                 NonZero::<u32>::MIN,
             )),
@@ -106,9 +108,9 @@ fn keeps_allocation_bounds() {
 fn distinguishes_exact_keys() {
     let mut slots = (Table::try_new(capacity::Count::new(2)))
         .expect("the two-entry direct table must allocate");
-    let first = Id::new(0, NonZero::<u32>::MIN);
-    let stale = Id::new(0, NonZero::new(2).expect("fixture epoch"));
-    let outside = Id::new(2, NonZero::<u32>::MIN);
+    let first = id(0, NonZero::<u32>::MIN);
+    let stale = id(0, NonZero::new(2).expect("fixture epoch"));
+    let outside = id(2, NonZero::<u32>::MIN);
     assert!(slots.vacant(outside).is_none());
     assert!(slots.entry_at(1).is_none());
     assert!(slots.entry_at(2).is_none());
@@ -148,7 +150,7 @@ fn retains_removed_slot() {
     let drops = Cell::new(Some(0));
     let mut slots =
         (Table::try_new(capacity::Count::new(2))).expect("the direct table must allocate");
-    let key = Id::new(0, NonZero::new(9).expect("fixture epoch"));
+    let key = id(0, NonZero::new(9).expect("fixture epoch"));
     slots
         .vacant(key)
         .expect("the selected slot must be vacant")
@@ -174,8 +176,8 @@ fn drops_each_value_once() {
     {
         let mut slots = (Table::try_new(capacity::Count::new(2)))
             .expect("the two-entry counted table must allocate");
-        let first = Id::new(0, NonZero::<u32>::MIN);
-        let second = Id::new(1, NonZero::<u32>::MIN);
+        let first = id(0, NonZero::<u32>::MIN);
+        let second = id(1, NonZero::<u32>::MIN);
         slots
             .vacant(first)
             .expect("the selected slot must be vacant")
@@ -213,8 +215,8 @@ fn iterates_keys_and_values() {
     let mut slots = (Table::try_new(capacity::Count::new(5)))
         .expect("the five-entry direct table must allocate");
     let keys = [
-        Id::new(1, NonZero::new(3).expect("fixture epoch")),
-        Id::new(4, NonZero::new(7).expect("fixture epoch")),
+        id(1, NonZero::new(3).expect("fixture epoch")),
+        id(4, NonZero::new(7).expect("fixture epoch")),
     ];
     for (key, value) in keys.into_iter().zip([10, 20]) {
         slots
@@ -249,7 +251,7 @@ fn matches_churn_model() {
         let random = rng.advance();
         let index = (random as usize >> 9) % (CAPACITY + 4);
         let epoch = ((random >> 32) as u32 % 19) + 1;
-        let key = Id::new(
+        let key = id(
             u32::try_from(index).expect("fixture index"),
             NonZero::new(epoch).expect("fixture epoch"),
         );

@@ -94,18 +94,9 @@ impl<'id, T, const N: usize> Slot<'_, '_, 'id, T, N> {
 
 impl<T, const N: usize> Drop for Prefix<'_, '_, T, N> {
     fn drop(&mut self) {
-        crate::depot::raw::Drain::destroy::<false>(self);
-    }
-}
-
-// SAFETY: the prefix retains exclusive backing and detaches its initialized
-// positions once, before any element destruction can run.
-unsafe impl<T, const N: usize> crate::depot::raw::Drain<T> for Prefix<'_, '_, T, N> {
-    type Slots = [mem::MaybeUninit<T>; N];
-
-    fn detach(&mut self) -> (&mut Self::Slots, ops::Range<usize>) {
         let len = mem::replace(&mut self.len, array::Len::ZERO);
-        (self.entries, 0..len.get())
+        // SAFETY: the cleared length transfers this exact initialized prefix.
+        unsafe { len.prefix_mut(self.entries).assume_init_drop() };
     }
 }
 
@@ -154,23 +145,20 @@ impl<'a, T, const N: usize, const REVERSE: bool> Guard<'a, T, N, REVERSE> {
         source: &'source Prefix<'_, '_, V, N>,
         mut map: impl FnMut(&'source V) -> Result<Option<T>, E>,
     ) -> Result<Self, (Self, E)> {
-        let mut guard = Self {
+        let guard = Self {
             entries: crate::mem::raw::cast_uninit(entries),
             len: 0,
             phase: marker::PhantomData,
         };
-        for value in source.as_slice() {
-            let value = match map(value) {
-                Ok(value) => value,
-                Err(error) => return Err((guard, error)),
-            };
-            if let Some(value) = value {
-                // SAFETY: each earlier source position inserted at most one
-                // value, so this next source position proves a vacancy below N.
-                guard = guard.phase::<Vacant>().insert(value);
+        source.as_slice().iter().try_fold(guard, |guard, value| {
+            match map(value) {
+                // Each preceding source position inserted at most one value,
+                // so this source position proves a vacancy below N.
+                Ok(Some(value)) => Ok(guard.phase::<Vacant>().insert(value)),
+                Ok(None) => Ok(guard),
+                Err(error) => Err((guard, error)),
             }
-        }
-        Ok(guard)
+        })
     }
 
     /// Completes the array or transfers initialization to its next position.
@@ -238,7 +226,10 @@ impl<'a, T, const N: usize, const REVERSE: bool> Guard<'a, T, N, REVERSE, Vacant
 
 impl<T, const N: usize, const REVERSE: bool, P> Drop for Guard<'_, T, N, REVERSE, P> {
     fn drop(&mut self) {
-        crate::depot::raw::Drain::destroy::<REVERSE>(self);
+        let len = mem::replace(&mut self.len, 0);
+        // SAFETY: the cleared length transfers exactly the initialized prefix.
+        let entries = unsafe { self.entries.get_unchecked_mut(..len) };
+        drop(IntoIter::<T, REVERSE> { entries });
     }
 }
 
@@ -321,30 +312,14 @@ impl<T, const REVERSE: bool> iter::FusedIterator for IntoIter<'_, T, REVERSE> {}
 
 impl<T, const REVERSE: bool> Drop for IntoIter<'_, T, REVERSE> {
     fn drop(&mut self) {
-        crate::depot::raw::Drain::destroy::<REVERSE>(self);
-    }
-}
-
-// SAFETY: the iterator owns its exact unread suffix and detachment exhausts it.
-unsafe impl<T, const REVERSE: bool> crate::depot::raw::Drain<T> for IntoIter<'_, T, REVERSE> {
-    type Slots = [mem::MaybeUninit<T>];
-
-    fn detach(&mut self) -> (&mut Self::Slots, ops::Range<usize>) {
         let entries = mem::take(&mut self.entries);
-        let len = entries.len();
-        (entries, 0..len)
-    }
-}
-
-// SAFETY: the guard retains exclusive backing and initializes only its counted prefix.
-unsafe impl<T, const N: usize, const REVERSE: bool, P> crate::depot::raw::Drain<T>
-    for Guard<'_, T, N, REVERSE, P>
-{
-    type Slots = [mem::MaybeUninit<T>; N];
-
-    fn detach(&mut self) -> (&mut Self::Slots, ops::Range<usize>) {
-        let len = self.len;
-        self.len = 0;
-        (self.entries, 0..len)
+        // SAFETY: taking the slice transfers the exclusively owned initialized suffix.
+        if REVERSE {
+            for entry in entries.iter_mut().rev() {
+                unsafe { entry.assume_init_drop() };
+            }
+        } else {
+            unsafe { entries.assume_init_drop() };
+        }
     }
 }

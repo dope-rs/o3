@@ -33,9 +33,9 @@ impl<K: crate::buffer::raw::Backing, S> Span<K, pool::Owned, S> {
     }
 
     pub(in crate::buffer::pool) fn from_seed(seed: owners::Seed<K, S>) -> Self {
-        let (core, active) = seed.take();
+        let active = seed.take();
         // Seed transferred the sole root; active keeps the pool live through detachment.
-        owners::Header::detach(core);
+        owners::Header::detach(active.slots);
         Self::new(active, pool::Owned)
     }
 }

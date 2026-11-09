@@ -229,9 +229,7 @@ pub unsafe trait Edge<W: Counter = u32> {
         let next = W::get(current)
             .checked_add(W::ONE)
             .ok_or(rc::Error::Exhausted)?;
-        // SAFETY: checked addition to this nonzero count preserves its nonzero domain.
-        let next = unsafe { next.nonzero() };
-        count.value.set(W::get(next));
+        count.value.set(next);
         Ok(())
     }
 
@@ -244,12 +242,10 @@ pub unsafe trait Edge<W: Counter = u32> {
         // SAFETY: the caller transfers one live edge from this exact domain.
         let current = unsafe { count.value.get().nonzero() };
         let next = W::get(current) - W::ONE;
-        let (next, release) = if next == W::ZERO {
-            (W::ZERO, rc::Release::Last)
+        let release = if next == W::ZERO {
+            rc::Release::Last
         } else {
-            // SAFETY: the last-owner zero case was excluded.
-            let next = unsafe { next.nonzero() };
-            (W::get(next), rc::Release::Shared)
+            rc::Release::Shared
         };
         count.value.set(next);
         release

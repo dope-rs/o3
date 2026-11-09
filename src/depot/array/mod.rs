@@ -340,6 +340,11 @@ impl<T, const N: usize> ExactSizeIterator for IntoIter<T, N> {}
 
 impl<T, const N: usize> Drop for IntoIter<T, N> {
     fn drop(&mut self) {
-        crate::depot::raw::Drain::destroy::<false>(&mut self.raw);
+        let raw = &mut self.raw;
+        let start = raw.front.get();
+        let end = raw.back.get();
+        raw.front = raw.back;
+        // SAFETY: the exhausted iterator transfers exactly its unread initialized suffix.
+        unsafe { raw.entries.get_unchecked_mut(start..end).assume_init_drop() };
     }
 }

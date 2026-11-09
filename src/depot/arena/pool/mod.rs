@@ -273,7 +273,7 @@ impl<T, C> Entry<T, C> {
                 free: cell::Cell::new(ptr::null_mut()),
                 context: mem::ManuallyDrop::new(context),
             });
-        let indices = 0..block.extent().raw();
+        let indices = 0..capacity.raw();
         let (header, entries) = block.parts_mut();
         let mut free: *mut Self = ptr::null_mut();
         for (index, slot) in indices.zip(entries) {

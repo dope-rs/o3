@@ -172,15 +172,3 @@ impl<T, const N: usize> Iterator for IntoIter<T, N> {
 }
 
 impl<T, const N: usize> ExactSizeIterator for IntoIter<T, N> {}
-
-// SAFETY: the iterator owns exactly its unread suffix; detachment exhausts it before destruction.
-unsafe impl<T, const N: usize> crate::depot::raw::Drain<T> for IntoIter<T, N> {
-    type Slots = [mem::MaybeUninit<T>; N];
-
-    fn detach(&mut self) -> (&mut Self::Slots, ops::Range<usize>) {
-        let start = self.front;
-        let end = self.back;
-        self.front = self.back;
-        (&mut self.entries, start.get()..end.get())
-    }
-}

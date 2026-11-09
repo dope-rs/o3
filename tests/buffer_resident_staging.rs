@@ -142,15 +142,16 @@ fn preserves_accounted_growth_owners() {
     let plan = staging::Plan::new(4, 16).expect("staging capacity");
     let layout = staging::Layout::new(1, plan, 1, 0).expect("staging layout");
     for append in [false, true] {
-        let mut domains = [resident::Domain::new(), resident::Domain::new()];
+        let mut domains = [const { resident::Domain::new() }; 3];
         region::Token::scope_pinned(Pin::new(&mut domains), |token, domains| {
-            let [storage, retained] = domains.get_mut();
+            let [storage, retained, copied] = domains.get_mut();
             let budget = storage
                 .try_budget(layout.resident().get(), token.proof())
                 .expect("storage budget");
             let retained = retained
                 .try_budget(16, token.proof())
                 .expect("retained budget");
+            let copied = copied.try_budget(5, token.proof()).expect("copy budget");
             let pool = staging::Pool::try_account(&budget, layout).expect("staging pool");
             let mut source = staging::Buf::try_from(&pool).expect("staging owner");
             source.try_reserve(12).expect("initial backing");
@@ -162,6 +163,16 @@ fn preserves_accounted_growth_owners() {
                 .bind(hold::Policy::share())
                 .try_into()
                 .expect("retained suffix");
+            let copy = Input::new(&source, &copied)
+                .defer_all()
+                .bind(hold::Policy::share())
+                .try_into()
+                .expect("foreign budget copy");
+            assert_eq!(copy.as_slice(), b"cdefg");
+            assert_ne!(copy.as_slice().as_ptr(), pointer);
+            assert_eq!(copied.resident(), 5);
+            drop(copy);
+            assert_eq!(copied.resident(), 0);
             let grow = |source: &mut staging::Buf<'_>| {
                 if append {
                     source.write_slices([&b"ABCDE"[..], &[], &b"FGHIJK"[..]])

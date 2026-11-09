@@ -378,9 +378,7 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
             State::Empty | State::Cold(_) => return Ok(resident::Shared::new().into()),
             State::Live(Backing::Warm(cursor) | Backing::Accounted(cursor)) => {
                 let Some(owner) = owners::Account::try_bind(cursor, budget)? else {
-                    return storage::Owned::try_from_slice(budget, view.as_slice())
-                        .map(Into::into)
-                        .map_err(hold::Error::Resident);
+                    return Self::try_copy(plan, budget).map(Into::into);
                 };
                 resident::State::Accounted(owner)
             }

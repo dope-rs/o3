@@ -13,7 +13,7 @@ use o3::{
     },
 };
 
-use crate::common::depot::index::Id;
+use crate::common::depot::index::{Id, id};
 
 pub struct Node {
     pub key: Id,
@@ -77,7 +77,7 @@ impl Slots {
                 // SAFETY: this range ends at or below the excluded sentinel.
                 let index = unsafe { <links::Index as depot::raw::Word>::from_offset(index) };
                 Node {
-                    key: Id::new(index.raw(), NonZero::<u32>::MIN),
+                    key: id(index.raw(), NonZero::<u32>::MIN),
                     link: Link::from(index),
                 }
             })?,

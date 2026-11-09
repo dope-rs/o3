@@ -114,8 +114,8 @@ impl Growing {
                 return Ok(None);
             };
             let seed = owners::Block::<owners::Plain, state::Uninit>::try_seed(layout)?;
-            let (core, active) = seed.take();
-            let group = pool::Pool { core };
+            let active = seed.take();
+            let group = pool::Pool { core: active.slots };
             if self.allocated.get() != before {
                 continue;
             }

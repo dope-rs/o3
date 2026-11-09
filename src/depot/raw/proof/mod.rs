@@ -130,11 +130,8 @@ mod phases;
 pub(in crate::depot) use phases::{Numeric, Sealed};
 
 mod values;
-pub(in crate::depot) use drain::Drain;
 
 mod count;
 pub(in crate::depot) use count::ChainCount;
-
-mod drain;
 
 type Domain<S, P> = marker::PhantomData<fn(S, P) -> (S, P)>;

@@ -1,9 +1,6 @@
 use std::{cell::Cell, collections, num::NonZero};
 
-use o3::depot::{
-    self,
-    index::{Stored, bitmap},
-};
+use o3::depot::{self, arena::slab::key as slab, index::bitmap};
 
 pub mod capacity;
 pub mod key;
@@ -26,37 +23,13 @@ unsafe impl depot::raw::Compact for Zero {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(C)]
-pub struct Id(NonZero<u32>, u32);
+pub type Id = slab::Handle;
 
-impl Id {
-    pub fn new(index: u32, epoch: NonZero<u32>) -> Self {
-        Self(epoch, index)
-    }
-}
-
-unsafe impl depot::raw::Key for Id {
-    type Raw = u64;
-
-    const VACANT: Self::Raw = 0;
-
-    fn index(self) -> usize {
-        self.1 as usize
-    }
-
-    fn into_raw(self) -> Self::Raw {
-        (u64::from(self.0.get()) << 32) | u64::from(self.1)
-    }
-
-    fn from_raw(raw: Stored<Self>) -> Self {
-        let raw = raw.into_raw();
-        // SAFETY: Stored retains this exact domain's nonzero high-half generation.
-        Self(
-            unsafe { NonZero::<u32>::new_unchecked((raw >> 32) as u32) },
-            raw as u32,
-        )
-    }
+pub fn id(index: u32, epoch: NonZero<u32>) -> Id {
+    let generation = slab::Generation::MIN
+        .checked_add(epoch.get() - 1)
+        .expect("fixture epoch");
+    Id::from_parts(slab::Parts::new(index, generation))
 }
 
 /// Exact owned planes for bitmap ownership and hierarchy contracts.

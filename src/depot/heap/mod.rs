@@ -108,14 +108,6 @@ impl<'a, S: heap::raw::Store> Slot<'a, S> {
         }
     }
 
-    fn occupied(self) -> Option<heap::Entry<&'a mut S, S::Key>> {
-        if self.position == <S::Position as crate::depot::raw::Link>::NONE {
-            return None;
-        }
-        // SAFETY: this admitted reverse-map position is occupied.
-        Some(unsafe { self.into_entry() })
-    }
-
     /// # Safety
     /// The retained reverse-map position is occupied, rather than NONE.
     unsafe fn into_entry(self) -> heap::Entry<&'a mut S, S::Key> {
@@ -155,18 +147,25 @@ impl<'a, S: heap::raw::Store> Slot<'a, S> {
     }
 
     pub(in crate::depot::heap) fn clear(self) {
-        if let Some(entry) = self.occupied() {
-            entry.with_key(()).clear();
-        }
+        self.map(
+            (),
+            |_, ()| {},
+            |entry, ()| {
+                entry.with_key(()).clear();
+            },
+        );
     }
 
     pub(in crate::depot::heap) fn retire(self) {
-        if let Some(entry) = self.occupied() {
-            if entry.value().identity != entry.next {
-                return;
-            }
-            entry.with_key(()).clear();
-        }
+        self.map(
+            (),
+            |_, ()| {},
+            |entry, ()| {
+                if entry.value().identity == entry.next {
+                    entry.with_key(()).clear();
+                }
+            },
+        );
     }
 }
 

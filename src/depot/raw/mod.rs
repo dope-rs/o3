@@ -3,7 +3,7 @@
 use std::{mem, num::NonZero, slice};
 
 pub use proof::Proof;
-pub(in crate::depot) use proof::{ChainCount, Drain, Numeric, Sealed};
+pub(in crate::depot) use proof::{ChainCount, Numeric, Sealed};
 
 /// Initialized membership retaining its exact source, key, and operation predicate.
 pub(in crate::depot) type Live<S, K, P = ()> = Proof<(S, K), Initialized<P>>;

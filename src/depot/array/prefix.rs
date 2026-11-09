@@ -1,4 +1,4 @@
-use std::{mem, num, ops};
+use std::{mem, num};
 
 use crate::depot::array::{self, Len, Vacancy};
 
@@ -66,7 +66,9 @@ impl<T, const N: usize> Prefix<T, N> {
     }
 
     pub(in crate::depot::array) fn drop_all(&mut self) {
-        crate::depot::raw::Drain::destroy::<false>(self);
+        let len = mem::replace(&mut self.len, Len::ZERO);
+        // SAFETY: the cleared length transfers this exact initialized prefix.
+        unsafe { len.prefix_mut(&mut self.entries).assume_init_drop() };
     }
 
     pub(super) fn as_slice(&self) -> &[T] {
@@ -90,16 +92,5 @@ impl<T, const N: usize> Prefix<T, N> {
 impl<T: Copy, const N: usize> Clone for Prefix<T, N> {
     fn clone(&self) -> Self {
         *self
-    }
-}
-
-// SAFETY: Prefix exclusively owns exactly 0..len, and detaches it before any destruction.
-unsafe impl<T, const N: usize> crate::depot::raw::Drain<T> for Prefix<T, N> {
-    type Slots = [mem::MaybeUninit<T>; N];
-
-    fn detach(&mut self) -> (&mut Self::Slots, ops::Range<usize>) {
-        let end = self.len;
-        self.len = Len::ZERO;
-        (&mut self.entries, 0..end.get())
     }
 }

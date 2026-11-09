@@ -84,14 +84,12 @@ impl<K: crate::buffer::raw::Backing, S> Seed<K, S> {
         Self { slots: core }
     }
 
-    pub(in crate::buffer::pool) fn take(self) -> (super::Ptr<K, S>, Active<K, S>) {
-        let core = self.slots;
+    pub(in crate::buffer::pool) fn take(self) -> Active<K, S> {
         // SAFETY: Seed proves index zero belongs to this exact freshly
         // initialized nonempty list and is its current free-list head.
         let key = unsafe { Key::new(0) };
         // SAFETY: Seed owns this initialized head until the first acquisition.
-        let active = unsafe { Active::take(core, key) };
-        (core, active)
+        unsafe { Active::take(self.slots, key) }
     }
 }
 
