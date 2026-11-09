@@ -261,10 +261,12 @@ impl<'a, T, C> Terminal<'a, T, C> {
 }
 
 impl<T, C> Entry<T, C> {
-    pub(crate) fn try_init(
+    /// # Safety
+    /// Each call must leave its exact slot fully initialized as `T`.
+    pub(crate) unsafe fn try_init(
         capacity: capacity::Count,
         context: C,
-        mut init: impl FnMut(u32) -> T,
+        mut init: impl FnMut(u32, &mut mem::MaybeUninit<T>),
     ) -> Result<tail::Block<recycle::Header<T, C>, Self, capacity::Count>, crate::alloc::Error>
     {
         let mut block = tail::Plan::try_new(capacity)?
@@ -277,10 +279,14 @@ impl<T, C> Entry<T, C> {
         let (header, entries) = block.parts_mut();
         let mut free: *mut Self = ptr::null_mut();
         for (index, slot) in indices.zip(entries) {
-            free = ptr::from_mut(slot.write(Self {
-                value: init(index),
-                state: cell::Cell::new(free.cast()),
-            }));
+            let entry: *mut Self = slot.as_mut_ptr();
+            // SAFETY: this exclusive final slot admits both fields; init establishes T.
+            unsafe {
+                let value = ptr::addr_of_mut!((*entry).value).cast::<mem::MaybeUninit<T>>();
+                init(index, &mut *value);
+                ptr::addr_of_mut!((*entry).state).write(cell::Cell::new(free.cast()));
+            }
+            free = entry;
         }
         // SAFETY: each initialized slot belongs to this retained pinned owner.
         header.free.set(free);

@@ -28,7 +28,12 @@ impl<T: recycle::Recycle, C> Store<T, C> {
         seed: T::Seed,
     ) -> Result<Self, crate::alloc::Error> {
         Ok(Self {
-            block: pool::Entry::try_init(capacity, context, |_| T::from_seed(seed))?,
+            // SAFETY: each call writes one fully initialized value into its final slot.
+            block: unsafe {
+                pool::Entry::try_init(capacity, context, |_, slot| {
+                    slot.write(T::from_seed(seed));
+                })
+            }?,
         })
     }
 

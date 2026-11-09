@@ -40,10 +40,26 @@ impl<T> Store<T> {
     /// The retained extent also admits zero residents without invoking `init`.
     pub fn try_from_fn(
         capacity: capacity::Count,
-        init: impl FnMut(u32) -> T,
+        mut init: impl FnMut(u32) -> T,
+    ) -> Result<Self, crate::alloc::Error> {
+        // SAFETY: each call writes one fully initialized value into its final slot.
+        unsafe {
+            Self::try_init(capacity, |index, slot| {
+                slot.write(init(index));
+            })
+        }
+    }
+
+    /// Visits each final slot once in index order before publication.
+    /// # Safety
+    /// Each call must leave its slot fully initialized as `T`.
+    pub unsafe fn try_init(
+        capacity: capacity::Count,
+        init: impl FnMut(u32, &mut mem::MaybeUninit<T>),
     ) -> Result<Self, crate::alloc::Error> {
         Ok(Self {
-            block: pool::Entry::try_init(capacity, (), init)?,
+            // SAFETY: the caller establishes every final value before publication.
+            block: unsafe { pool::Entry::try_init(capacity, (), init) }?,
         })
     }
 

@@ -15,15 +15,23 @@ use o3::depot::{
 
 #[test]
 fn reuses_pinned_value() {
-    let pool = recycle::Store::<Pinned>::try_new(Count::new(1)).expect("one pinned slot");
-    let address = {
+    let mut address = ptr::null();
+    // SAFETY: the initializer writes a complete Pinned into the borrowed final slot.
+    let pool = unsafe {
+        recycle::Store::<Pinned>::try_init(Count::new(1), |_, slot| {
+            address = slot.as_ptr();
+            slot.write(Pinned::default());
+        })
+    }
+    .expect("one pinned slot");
+    {
         let mut first = pool.take().expect("the slot is initially free");
+        assert_eq!(ptr::from_ref(first.get().get_ref()), address);
         assert!(pool.take().is_none());
         assert_eq!(mem::size_of_val(&first.get().pin), 0);
         first.get_mut().value.set(7);
         assert_eq!(first.get().value.get(), 7);
-        ptr::from_ref(first.get().get_ref())
-    };
+    }
 
     {
         let second = (pool.take()).expect("the released slot is free");
