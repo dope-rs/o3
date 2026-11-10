@@ -32,15 +32,19 @@ pub(in crate::depot) struct Core<T, Tag = ()> {
 }
 
 impl<T, Tag> Core<T, Tag> {
-    pub(in crate::depot) fn try_new(
-        layout: hash::Parts<T>,
-    ) -> Result<Self, crate::alloc::Exhausted> {
-        let capacity = layout.shape.capacity();
-        let fields = layout.bundle.try_allocate()?;
+    pub(in crate::depot) fn try_new(plan: hash::Plan) -> Result<Self, crate::alloc::Error> {
+        let shape = hash::Layout {
+            table: plan.table,
+            value: marker::PhantomData,
+        };
+        let capacity = shape.capacity();
+        let table = shape.table.layout();
+        let buckets = table.buckets();
+        let bundle = alloc::raw::Recipe::try_build(hash::Layout::<T>::recipe(table, capacity))?;
+        let fields = bundle.try_allocate()?;
         // SAFETY: the freshly allocated bundle carries exactly the directory planes
-        // admitted by `layout.buckets`, which one `Layout` proved for this recipe.
-        let dir =
-            unsafe { map::raw::Table::from_fields(fields.prior().prior().prior(), layout.buckets) };
+        // admitted by `buckets`, which one `Layout` proved for this recipe.
+        let dir = unsafe { map::raw::Table::from_fields(fields.prior().prior().prior(), buckets) };
         let meta = fields.prior().prior().tail();
         let dense = fields.prior().tail();
         let values = fields.tail();
@@ -61,7 +65,7 @@ impl<T, Tag> Core<T, Tag> {
             meta,
             dense,
             values,
-            shape: layout.shape,
+            shape,
             len: 0,
             free: if capacity == 0 {
                 None
@@ -195,7 +199,7 @@ unsafe impl<T, Tag> map::raw::Mutation for &mut Core<T, Tag> {
 
 impl<T, Tag> Drop for Core<T, Tag> {
     fn drop(&mut self) {
-        let recipe = hash::Parts::<T>::recipe(self.shape.table.layout(), self.shape.capacity());
+        let recipe = hash::Layout::<T>::recipe(self.shape.table.layout(), self.shape.capacity());
         // SAFETY: the value-bound layout proves this exact extension.
         let layout = unsafe { alloc::raw::Recipe::build(recipe) };
         let pointer = self.directory.base();

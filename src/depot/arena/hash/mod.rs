@@ -38,28 +38,9 @@ pub struct Layout<T> {
     value: marker::PhantomData<fn() -> T>,
 }
 
-pub(in crate::depot) struct Parts<T> {
-    pub(in crate::depot) bundle: alloc::raw::Bundle<Fields<T>>,
-    pub(in crate::depot) buckets: usize,
-    pub(in crate::depot) shape: Layout<T>,
-}
-
-impl<T> Parts<T> {
-    pub(in crate::depot) fn try_new(
-        table: map::raw::Shape<bounded::U32<0, { u32::MAX - 1 }>>,
-    ) -> Result<Self, alloc::Overflow> {
-        let cap = table.capacity().get();
-        let dir = table.layout();
-        let buckets = dir.buckets();
-        let bundle = alloc::raw::Recipe::try_build(Self::recipe(dir, cap))?;
-        Ok(Self {
-            bundle,
-            buckets,
-            shape: Layout {
-                table,
-                value: marker::PhantomData,
-            },
-        })
+impl<T> Layout<T> {
+    pub const fn capacity(self) -> usize {
+        self.table.capacity().get()
     }
 
     fn recipe(
@@ -71,12 +52,6 @@ impl<T> Parts<T> {
         alloc::raw::Recipe::tail::<Meta>(table, capacity)
             .tail::<bounded::U32<0, { u32::MAX - 1 }>>(capacity)
             .tail::<mem::MaybeUninit<T>>(capacity)
-    }
-}
-
-impl<T> Layout<T> {
-    pub const fn capacity(self) -> usize {
-        self.table.capacity().get()
     }
 }
 

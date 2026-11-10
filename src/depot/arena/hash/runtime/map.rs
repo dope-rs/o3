@@ -23,7 +23,7 @@ pub type Map<T, Tag = ()> = Store<T, Tag, entry::Occupied>;
 impl<T, Tag, P> Store<T, Tag, P> {
     pub fn try_new(plan: hash::Plan) -> Result<Self, crate::alloc::Error> {
         Ok(Self {
-            core: hash::Core::try_new(hash::Parts::try_new(plan.table)?)?,
+            core: hash::Core::try_new(plan)?,
             phase: marker::PhantomData,
         })
     }
