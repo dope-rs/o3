@@ -16,6 +16,24 @@ impl<'a, T> Cursor<'a, T> {
             start: 0,
         }
     }
+
+    pub(in crate::buffer::segments::queue) fn end(
+        &self,
+        offset: usize,
+        len: usize,
+    ) -> Result<u32, queue::Bounds> {
+        let floor = self.start as usize;
+        let ceiling = self.queue.len();
+        if offset < floor || offset > ceiling || len > ceiling - offset {
+            return Err(queue::Bounds {
+                offset,
+                amount: len,
+                floor,
+                ceiling,
+            });
+        }
+        Ok((offset + len) as u32)
+    }
 }
 
 /// Monotonic physical position tied to the queue it indexes.
@@ -32,8 +50,24 @@ impl<T> Cursor<'_, T> {
 
 impl<'a, T: buffer::raw::Segment> Cursor<'a, T> {
     pub fn seek(&mut self, offset: usize) -> Result<(), queue::Bounds> {
-        *self = queue::Position::try_new(self, offset, 0)?.locate();
+        self.end(offset, 0)?;
+        // SAFETY: admission retains this cursor and its inclusive queue bounds.
+        *self = unsafe { self.at(offset as u32) };
         Ok(())
+    }
+
+    /// # Safety
+    /// `offset` is between this cursor's start and its queue's byte length, inclusive.
+    pub(in crate::buffer::segments::queue) unsafe fn at(&self, offset: u32) -> Self {
+        if offset as usize == self.len() {
+            return Self {
+                queue: self.queue,
+                segment: self.queue.segments() as u32,
+                start: offset,
+            };
+        }
+        // SAFETY: the admitted offset is below the end handled above.
+        unsafe { self.locate(offset) }.0
     }
 
     /// # Safety
@@ -75,48 +109,3 @@ impl<'a, T: buffer::raw::Segment> Cursor<'a, T> {
 }
 
 const _: () = assert!(mem::size_of::<Cursor<'static, u64>>() == 2 * mem::size_of::<u64>());
-
-pub(in crate::buffer::segments::queue) struct Position<'p, 'a, T> {
-    pub(in crate::buffer::segments::queue) location: &'p queue::Cursor<'a, T>,
-    pub(in crate::buffer::segments::queue) start: u32,
-    pub(in crate::buffer::segments::queue) end: u32,
-}
-
-impl<'p, 'a, T> Position<'p, 'a, T> {
-    pub(in crate::buffer::segments::queue) fn try_new(
-        location: &'p queue::Cursor<'a, T>,
-        offset: usize,
-        len: usize,
-    ) -> Result<Self, queue::Bounds> {
-        let floor = location.start as usize;
-        let ceiling = location.queue.len();
-        if offset < floor || offset > ceiling || len > ceiling - offset {
-            return Err(queue::Bounds {
-                offset,
-                amount: len,
-                floor,
-                ceiling,
-            });
-        }
-        Ok(Self {
-            location,
-            start: offset as u32,
-            end: (offset + len) as u32,
-        })
-    }
-}
-
-impl<'a, T: buffer::raw::Segment> Position<'_, 'a, T> {
-    pub(in crate::buffer::segments::queue) fn locate(&self) -> queue::Cursor<'a, T> {
-        if self.start as usize == self.location.len() {
-            return queue::Cursor {
-                queue: self.location.queue,
-                segment: self.location.queue.segments() as u32,
-                start: self.start,
-            };
-        }
-        // SAFETY: Position retains the validated range and its exact queue;
-        // the end position was handled above.
-        unsafe { self.location.locate(self.start) }.0
-    }
-}

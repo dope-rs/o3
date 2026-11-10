@@ -4,7 +4,6 @@ use std::{mem, num::NonZero};
 
 pub use bounds::Bounds;
 pub use cursor::Cursor;
-pub(in crate::buffer::segments::queue) use cursor::Position;
 pub use error::Error;
 pub use fifo::Fifo;
 pub use slice::Slice;
@@ -32,9 +31,17 @@ impl<'a, T: buffer::raw::Segment, const N: usize> Array<'a, T, N> {
     /// Validates an exact array-sized range against this cursor without advancing it.
     /// The result retains the queue borrow, independently of the cursor borrow.
     pub fn try_new(location: &queue::Cursor<'a, T>, offset: usize) -> Result<Self, queue::Bounds> {
-        let position = queue::Position::try_new(location, offset, N)?;
+        let end = location.end(offset, N)?;
         Ok(Self {
-            source: Iter::at(position),
+            source: Iter {
+                location: queue::Cursor {
+                    queue: location.queue,
+                    segment: location.segment,
+                    start: location.start,
+                },
+                start: offset as u32,
+                end,
+            },
         })
     }
 
@@ -122,17 +129,6 @@ impl<'a, T: buffer::raw::Segment> Iter<'a, T> {
         chunk
     }
 
-    fn at(position: queue::Position<'_, 'a, T>) -> Self {
-        Self {
-            location: queue::Cursor {
-                queue: position.location.queue,
-                segment: position.location.segment,
-                start: position.location.start,
-            },
-            start: position.start,
-            end: position.end,
-        }
-    }
 }
 
 impl<'a, T: buffer::raw::Segment> Iterator for Iter<'a, T> {

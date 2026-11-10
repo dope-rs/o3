@@ -104,12 +104,8 @@ impl<'a, T> Slice<'a, T> {
             let first = if self.start == 0 {
                 self.queue.cursor()
             } else {
-                queue::Position {
-                    location: &self.queue.cursor(),
-                    start: self.start,
-                    end: self.end,
-                }
-                .locate()
+                // SAFETY: this slice retains its admitted range in the unchanged queue.
+                unsafe { self.queue.cursor().at(self.start) }
             };
             (
                 segments::Count::new(self.queue.segments() as u32 - first.segment),
