@@ -5,6 +5,7 @@ use std::{cell, mem};
 use crate::depot::{
     self,
     arena::linked::{fifo, fifo::ends, slots},
+    raw::EndsPop,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -62,7 +63,7 @@ impl<L: crate::depot::raw::Link> State<L> {
         self.tail = source.tail;
     }
 
-    pub(in crate::depot) fn pop<T, R>(
+    fn pop<T, R>(
         &mut self,
         front: L::Item,
         input: T,
@@ -189,15 +190,6 @@ impl<L: crate::depot::raw::Link> Exclusive<L> {
         unsafe { owner.0.append(chain, front, publish) };
         source.0 = State::EMPTY;
     }
-
-    pub(crate) unsafe fn detach<T, R>(
-        &mut self,
-        front: L::Item,
-        input: T,
-        pop: impl FnOnce(L::Item, T) -> (L, R),
-    ) -> R {
-        self.0.pop(front, input, pop)
-    }
 }
 
 impl<L: crate::depot::raw::Link> Cell<L> {
@@ -285,6 +277,46 @@ impl<L: crate::depot::raw::Link> Cell<L> {
     }
 }
 
+unsafe impl<Tag> crate::depot::raw::SlotOwner<Tag> for ends::Exclusive<slots::Index<Tag>> {
+    fn links(&self) -> &Self {
+        self
+    }
+
+    unsafe fn detach<'a, T>(
+        &mut self,
+        store: &'a slots::Store<T>,
+        index: slots::Index<Tag>,
+    ) -> slots::Live<T, &'a slots::Store<T>, Tag> {
+        let index = unsafe { self.detach_store(store, index) };
+        unsafe { store.detached(index) }
+    }
+}
+
+unsafe impl<L: depot::raw::Link> EndsPop<L> for &mut Exclusive<L> {
+    unsafe fn pop<T, R>(
+        self,
+        front: L::Item,
+        input: T,
+        pop: impl FnOnce(L::Item, T) -> (L, R),
+    ) -> R {
+        self.0.pop(front, input, pop)
+    }
+}
+
+unsafe impl<L: depot::raw::Link> EndsPop<L> for &Cell<L> {
+    unsafe fn pop<T, R>(
+        self,
+        front: L::Item,
+        input: T,
+        pop: impl FnOnce(L::Item, T) -> (L, R),
+    ) -> R {
+        let mut state = self.0.get();
+        let result = state.pop(front, input, pop);
+        self.0.set(state);
+        result
+    }
+}
+
 const _: () = {
     assert!(mem::size_of::<State<u16>>() == 2 * mem::size_of::<u16>());
     assert!(mem::size_of::<State<u32>>() == 2 * mem::size_of::<u32>());
@@ -355,7 +387,7 @@ impl<Tag> ends::Exclusive<slots::Index<Tag>> {
         store: &slots::Store<T>,
         index: slots::Index<Tag>,
     ) -> slots::Index<Tag> {
-        unsafe { self.detach(index, (), |index, ()| (store.next(index), index)) }
+        unsafe { self.pop(index, (), |index, ()| (store.next(index), index)) }
     }
 
     /// # Safety
