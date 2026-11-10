@@ -1,4 +1,4 @@
-use std::{mem, ptr};
+use std::{alloc::Layout, mem, ptr};
 
 pub use error::Error;
 pub use gap::Gap;
@@ -35,7 +35,12 @@ pub trait BoxExt<T>: Sized {
 
 impl<T> BoxExt<T> for Box<T> {
     fn try_new(value: T) -> Result<Self, Exhausted> {
-        Box::try_new(value).map_err(|_| Exhausted)
+        let entry =
+            crate::alloc::raw::LayoutExt::try_allocate::<mem::MaybeUninit<T>>(Layout::new::<T>())?;
+        // SAFETY: this uniquely owned allocation has the exact layout of
+        // MaybeUninit<T>, including its aligned dangling pointer for a ZST.
+        let entry = unsafe { Box::from_raw(entry.as_ptr()) };
+        Ok(Box::write(entry, value))
     }
 }
 
@@ -62,9 +67,10 @@ pub trait BoxArrayExt<T, const N: usize>: Sized {
 
 impl<T, const N: usize> BoxArrayExt<T, N> for Box<[mem::MaybeUninit<T>; N]> {
     fn try_uninit() -> Result<Self, Exhausted> {
-        let entries = Self::try_new_uninit().map_err(|_| Exhausted)?;
-        // SAFETY: every array element is MaybeUninit<T> and permits uninitialized storage.
-        Ok(unsafe { entries.assume_init() })
+        let data = crate::alloc::raw::LayoutExt::try_allocate(Layout::new::<[T; N]>())?;
+        // SAFETY: the allocation has this array's exact layout; MaybeUninit
+        // carries the uninitialized state until the caller writes each row.
+        Ok(unsafe { Box::from_raw(data.as_ptr()) })
     }
 }
 
