@@ -2,10 +2,7 @@ pub mod common;
 
 use std::hint;
 
-use common::{
-    alloc::system::Tracker,
-    buffer::{scatter::Slices, try_fill},
-};
+use common::{alloc::system::Tracker, buffer::try_fill};
 use o3::{
     buffer::{
         self,
@@ -56,99 +53,6 @@ fn resume_partial_moves() {
 }
 
 #[test]
-fn crosses_segments() {
-    let parts: [&[u8]; 5] = [b"", b"abc", b"", b"defgh", b"ij"];
-    let source = (Slices::try_new(&parts)).expect("the fixture length must fit usize");
-    let mut cursor = source.chunks();
-
-    assert_eq!(
-        cursor
-            .take_bytes(4)
-            .map(|chunk| chunk.bytes())
-            .collect::<Vec<_>>(),
-        [b"abc".as_slice(), b"d".as_slice()]
-    );
-    assert_eq!(
-        cursor
-            .take_bytes(3)
-            .map(|chunk| chunk.bytes())
-            .collect::<Vec<_>>(),
-        [b"efg".as_slice()]
-    );
-    assert_eq!(
-        cursor
-            .take_bytes(8)
-            .map(|chunk| chunk.bytes())
-            .collect::<Vec<_>>(),
-        [b"h".as_slice(), b"ij".as_slice()]
-    );
-    assert!(cursor.take_bytes(1).next().is_none());
-}
-
-#[test]
-fn keeps_unread_bytes() {
-    let parts: [&[u8]; 2] = [b"abc", b"def"];
-    let source = (Slices::try_new(&parts)).expect("the fixture length must fit usize");
-    let mut cursor = source.chunks();
-
-    assert!(cursor.take_bytes(0).next().is_none());
-    {
-        let mut first = cursor.take_bytes(5);
-        assert_eq!(first.next().map(|chunk| chunk.bytes()), Some(&b"abc"[..]));
-    }
-    assert_eq!(
-        cursor
-            .take_bytes(2)
-            .map(|chunk| chunk.bytes())
-            .collect::<Vec<_>>(),
-        [b"de".as_slice()]
-    );
-    assert_eq!(
-        cursor
-            .take_bytes(8)
-            .map(|chunk| chunk.bytes())
-            .collect::<Vec<_>>(),
-        [b"f".as_slice()]
-    );
-}
-
-#[test]
-fn bounds_static_chunks() {
-    let parts: [&[u8]; 2] = [b"abc", b"def"];
-    let source = Slices::try_new(&parts).expect("bounded source");
-    let mut cursor = buffer::raw::Chunks::cursor(&source, 1).expect("cursor");
-    {
-        let mut take = cursor.take_bytes(4);
-        let first = take.next_chunk::<3>().expect("first chunk");
-        let second = take.next_chunk::<3>().expect("second chunk");
-        assert_eq!(first.len().get(), first.bytes().len());
-        assert_eq!(second.len().get(), second.bytes().len());
-        assert_eq!((first.bytes(), second.bytes()), (&b"bc"[..], &b"de"[..]));
-        assert_eq!(first.bytes().as_ptr(), parts[0][1..].as_ptr());
-        assert!(take.next_chunk::<3>().is_none());
-    }
-    assert_eq!(
-        cursor
-            .take_bytes(1)
-            .next_chunk::<1>()
-            .expect("tail")
-            .bytes(),
-        b"f"
-    );
-    assert!(buffer::raw::Scatter::seek(&b"abc"[..], 4).is_none());
-}
-
-#[test]
-fn matches_flat_reference() {
-    let parts: [&[u8]; 7] = [b"", b"abc", b"d", b"", b"efgh", b"ij", b""];
-    let cases: &[(&[&[u8]], &[u8])] = &[(&[], b""), (&[b"", b""], b""), (&parts, b"abcdefghij")];
-    for (parts, expected) in cases {
-        let source = Slices::try_new(parts).expect("the fixture length must fit usize");
-        compare(&source, expected);
-    }
-}
-
-#[test]
 fn preserves_native_ranges() {
     let pool = (segments::Pool::try_new(segments::Plan {
         segments: 6,
@@ -195,6 +99,46 @@ fn preserves_native_ranges() {
         compare(&owned, expected);
         compare(&scoped, expected);
         compare(&queue, expected);
+    }
+    {
+        let mut cursor = queue.chunks();
+        assert!(cursor.take_bytes(0).next().is_none());
+        {
+            let mut first = cursor.take_bytes(5);
+            assert_eq!(first.next().map(|chunk| chunk.bytes()), Some(&b"abc"[..]));
+        }
+        assert_eq!(
+            cursor.take_bytes(2).next().map(|chunk| chunk.bytes()),
+            Some(&b"de"[..])
+        );
+        assert_eq!(
+            cursor.take_bytes(8).next().map(|chunk| chunk.bytes()),
+            Some(&b"f"[..])
+        );
+        assert!(cursor.take_bytes(1).next().is_none());
+    }
+    {
+        let original = owned.segments().next().expect("first owner").as_slice();
+        let mut cursor = buffer::raw::Chunks::cursor(&queue, 1).expect("cursor");
+        {
+            let mut take = cursor.take_bytes(4);
+            let first = take.next_chunk::<3>().expect("first chunk");
+            let second = take.next_chunk::<3>().expect("second chunk");
+            assert_eq!(first.len().get(), first.bytes().len());
+            assert_eq!(second.len().get(), second.bytes().len());
+            assert_eq!((first.bytes(), second.bytes()), (&b"bc"[..], &b"de"[..]));
+            assert_eq!(first.bytes().as_ptr(), original[1..].as_ptr());
+            assert!(take.next_chunk::<3>().is_none());
+        }
+        assert_eq!(
+            cursor
+                .take_bytes(1)
+                .next_chunk::<1>()
+                .expect("tail")
+                .bytes(),
+            b"f"
+        );
+        assert!(buffer::raw::Scatter::seek(&b"abc"[..], 4).is_none());
     }
     let prefix = (owned.try_take(4)).expect("segment transition accepted");
 

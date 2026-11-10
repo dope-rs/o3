@@ -80,7 +80,7 @@ impl<T, const G: usize> Lanes<T, G> {
     where
         T: Default,
     {
-        let capacity = stores::Capacity::new(capacity, lanes)?;
+        let capacity = stores::try_new(capacity, lanes)?;
         Self::allocate(capacity)
     }
 }
@@ -101,8 +101,7 @@ impl<T, const G: usize, const N: usize> Lanes<T, G, N> {
         T: Default,
     {
         const { assert!(N != 0 && N <= u32::MAX as usize, "lanes") };
-        let capacity =
-            stores::Capacity::new(capacity, num::NonZero::<usize>::MIN.saturating_add(N - 1))?;
+        let capacity = stores::try_new(capacity, num::NonZero::<usize>::MIN.saturating_add(N - 1))?;
         Self::allocate(capacity)
     }
 

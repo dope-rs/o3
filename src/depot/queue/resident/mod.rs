@@ -98,11 +98,12 @@ impl From<alloc::Error> for Error {
     }
 }
 
+#[derive(Debug)]
 #[repr(C)]
-struct Capacity<T, L = num::NonZero<usize>> {
+pub(in crate::depot::queue) struct Capacity<T, L = num::NonZero<usize>, E = ()> {
     count: capacity::Count,
     lanes: num::NonZero<u32>,
-    ownership: marker::PhantomData<(raw::Node<T>, raw::Node<links::Chain>, L)>,
+    ownership: marker::PhantomData<(raw::Node<T>, raw::Node<links::Chain>, L, E)>,
 }
 
 impl<T, L> Capacity<T, L> {
@@ -112,13 +113,7 @@ impl<T, L> Capacity<T, L> {
     {
         let count = capacity::Count::try_from(capacity).map_err(Error::Capacity)?;
         let lanes = capacity::Count::try_nonzero(lanes.count()).map_err(Error::Capacity)?;
-        alloc::raw::Bundle::try_layout::<Self>(count.get(), lanes.get() as usize)
-            .map_err(Error::Overflow)?;
-        Ok(Self {
-            count,
-            lanes,
-            ownership: marker::PhantomData,
-        })
+        Self::try_layout(count, lanes).map_err(Error::Overflow)
     }
 
     const fn lanes(&self) -> num::NonZero<u32> {
@@ -126,12 +121,26 @@ impl<T, L> Capacity<T, L> {
     }
 }
 
-// SAFETY: `new` admits both extents against this exact Bundle layout once;
+impl<T, L, E> Capacity<T, L, E> {
+    pub(in crate::depot::queue) fn try_layout(
+        count: capacity::Count,
+        lanes: num::NonZero<u32>,
+    ) -> Result<Self, alloc::Overflow> {
+        alloc::raw::Bundle::try_layout::<Self>(count.get(), lanes.get() as usize)?;
+        Ok(Self {
+            count,
+            lanes,
+            ownership: marker::PhantomData,
+        })
+    }
+}
+
+// SAFETY: `try_layout` admits both extents against this exact Bundle layout once;
 // the retained count and lane count remain unchanged through allocation.
-unsafe impl<T, L> alloc::raw::Shape for Capacity<T, L> {
+unsafe impl<T, L, E> alloc::raw::Shape for Capacity<T, L, E> {
     type Root = raw::Node<T>;
     type Tail = raw::Node<links::Chain>;
-    type Extra = ();
+    type Extra = E;
     type Last = ();
 
     fn len(&self) -> usize {

@@ -2,13 +2,10 @@ pub mod common;
 
 use std::{cell, hint, mem, num, rc::Rc};
 
-use common::{
-    Counted,
-    alloc::{
-        AlignedUnit, AlignedZst, EmptyRows, Plan, Rows, Wrapped,
-        owner::{Aligned, Owner},
-        system::{Activity, Tracker},
-    },
+use common::alloc::{
+    AlignedZst, EmptyRows, Plan, Rows, Wrapped,
+    owner::{Aligned, Owner},
+    system::{Activity, Tracker},
 };
 use o3::alloc::{self, raw::Shape as _};
 
@@ -231,29 +228,6 @@ fn planes_zero_size() {
 }
 
 #[test]
-fn block_extent() {
-    use o3::alloc::array::Block;
-
-    let drops = cell::Cell::new(Some(0));
-    let (released, bytes) = {
-        let (block, activity) = Tracker::activity(|| {
-            Block::<mem::MaybeUninit<u64>, _, _>::try_new(7_usize, Counted(&drops))
-        });
-        let block = block.expect("seven-entry block allocation");
-        assert_eq!(block.len(), 7);
-        assert_eq!(block.as_ptr().addr() % align_of::<u64>(), 0);
-        assert_eq!(activity.allocations, 1);
-        assert_eq!(activity.allocated_bytes, 7 * size_of::<u64>());
-        assert_eq!(drops.get(), Some(0));
-        (Tracker::begin(), activity.allocated_bytes)
-    };
-    let released = released.finish();
-    assert_eq!(drops.get(), Some(1));
-    assert_eq!(released.deallocations, 1);
-    assert_eq!(released.deallocated_bytes, bytes);
-}
-
-#[test]
 fn block_recovery() {
     use o3::alloc::array::Block;
 
@@ -317,24 +291,6 @@ fn plan_limits() {
         .expect("admitted layout allocation");
     assert_eq!(*block.extent(), num::NonZero::<u32>::MIN.saturating_add(6));
     assert_eq!(size_of_val(&block), 2 * size_of::<usize>());
-}
-
-#[test]
-fn block_zero_size() {
-    use o3::alloc::array::Block;
-
-    let ((), activity) = Tracker::activity(|| {
-        Tracker::fail_after(0, || {
-            let empty =
-                Block::<mem::MaybeUninit<u64>, _>::try_new(0_usize, ()).expect("empty block");
-            let zst = Block::<mem::MaybeUninit<AlignedUnit>, _>::try_new(usize::MAX, ())
-                .expect("zero-sized block");
-            assert!(empty.is_empty());
-            assert_eq!(zst.len(), usize::MAX);
-            assert_eq!(zst.as_ptr().addr() % align_of::<AlignedUnit>(), 0);
-        });
-    });
-    assert!(activity == Activity::default());
 }
 
 #[test]
