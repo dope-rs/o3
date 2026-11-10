@@ -29,20 +29,13 @@ use crate::{
 /// Inactive allocation; no item or charge exists outside its private scope.
 #[repr(transparent)]
 pub struct Arena<T, C = (), L = cell::Cell<u32>> {
-    entries: tail::Block<Header<C>, Space<T, L>, num::NonZero<u32>>,
+    entries: tail::Block<Header<C>, mem::MaybeUninit<Slot<'static, T, L>>, num::NonZero<u32>>,
 }
 
 #[repr(C)]
 struct Header<C> {
     memory: cell::UnsafeCell<mem::MaybeUninit<State<'static>>>,
     context: C,
-}
-
-#[repr(C, align(8))]
-struct Space<T, L> {
-    entry: cell::UnsafeCell<mem::MaybeUninit<Entry<'static>>>,
-    layout: marker::PhantomData<L>,
-    item: cell::UnsafeCell<mem::MaybeUninit<T>>,
 }
 
 #[repr(C)]
@@ -65,7 +58,7 @@ impl<T, C, L> Arena<T, C, L> {
     }
 
     fn initialize(
-        memory: tail::Uninit<Header<C>, Space<T, L>, num::NonZero<u32>>,
+        memory: tail::Uninit<Header<C>, Slot<'static, T, L>, num::NonZero<u32>>,
         context: C,
     ) -> Self {
         let header = Header {
@@ -73,11 +66,7 @@ impl<T, C, L> Arena<T, C, L> {
             context,
         };
         Self {
-            entries: memory.repeat_with(header, || Space {
-                entry: cell::UnsafeCell::new(mem::MaybeUninit::uninit()),
-                layout: marker::PhantomData,
-                item: cell::UnsafeCell::new(mem::MaybeUninit::uninit()),
-            }),
+            entries: memory.init(header),
         }
     }
 
@@ -107,14 +96,9 @@ impl<T, C, L> Arena<T, C, L> {
                 mem::offset_of!(Header<C>, context)
                     == mem::offset_of!(Active<'_, T, C, L>, context)
             );
-            assert!(size_of::<Space<T, L>>() == size_of::<arena::Slot<'_, T, L>>());
-            assert!(align_of::<Space<T, L>>() == align_of::<arena::Slot<'_, T, L>>());
-            assert!(
-                mem::offset_of!(Space<T, L>, item) == mem::offset_of!(arena::Slot<'_, T, L>, item)
-            );
         }
         let capacity = self.entries.extent();
-        let header = tail::View::new(&self.entries).header();
+        let (header, values) = self.entries.parts_mut();
         // SAFETY: this inactive memory is uninitialized and exclusively owned;
         // initialization preserves the original header and tail allocation.
         unsafe {
@@ -127,21 +111,19 @@ impl<T, C, L> Arena<T, C, L> {
         // SAFETY: the assertions preserve the live context's layout, and the
         // domain was initialized in the disjoint header storage immediately above.
         let header = unsafe { &*ptr::from_ref(header).cast::<Active<'d, T, C, L>>() };
-        let values = tail::View::new(&self.entries).as_slice();
-        for slot in values {
-            // SAFETY: this scope owns each complete slot for the whole generation;
-            // the asserted layout admits its Entry before linking the original slot.
+        for slot in values.iter_mut() {
+            let entry = ptr::NonNull::from(slot).cast::<arena::Entry<'d>>();
+            // SAFETY: this generation exclusively initializes each complete slot;
+            // its item remains in UnsafeCell<MaybeUninit<T>> until insertion.
             unsafe {
-                slot.entry
-                    .get()
-                    .cast::<arena::Entry<'d>>()
+                entry
+                    .as_ptr()
                     .write(arena::Entry::new(&header.domain.state, resident));
-                header.domain.state.push_free(arena::Empty {
-                    entry: ptr::NonNull::from(slot).cast(),
-                });
+                header.domain.state.push_free(arena::Empty { entry });
             };
         }
-        // SAFETY: the exact validated tail now contains initialized typed entries.
+        // SAFETY: every Entry is initialized; the remaining Slot fields are
+        // PhantomData and UnsafeCell<MaybeUninit<T>>, which admit uninitialized bytes.
         let slots = unsafe {
             slice::from_raw_parts(
                 values.as_ptr().cast::<arena::Slot<'d, T, L>>(),

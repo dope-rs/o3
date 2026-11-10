@@ -20,7 +20,9 @@ impl<'d, T, L, C: Copy> Vacant<'d, T, L, C> {
         // SAFETY: domain extraction retains the exact slot allocation for 'd.
         unsafe { &*self.node.sink().entry.cast::<Slot<'d, T, L>>().as_ptr() }
     }
+}
 
+impl<'d, T, C: Copy> Vacant<'d, T, (), C> {
     pub(in crate::buffer) fn insert_with(
         self,
         item: T,
@@ -30,7 +32,7 @@ impl<'d, T, L, C: Copy> Vacant<'d, T, L, C> {
         ) -> buffer::raw::Projection<'d, 'id>,
     ) -> provided::Unique<'d> {
         let pending = self.initialize(item);
-        // SAFETY: the pending owner retains this complete initialized slot and its layout.
+        // SAFETY: this admitted phase retains the fixed scope's or dynamic admission's resident.
         let resident = unsafe { arena::Entry::resident(pending.node.entry) };
         // SAFETY: the affine initialized slot and its allocation remain owned
         // through publication; only this projection can access its item.
@@ -39,7 +41,7 @@ impl<'d, T, L, C: Copy> Vacant<'d, T, L, C> {
         buffer::raw::Limit::scope(resident, |limit| pending.publish(project(item, limit)))
     }
 
-    fn initialize(self, item: T) -> Returned<'d, T, L> {
+    fn initialize(self, item: T) -> Returned<'d, T, ()> {
         // SAFETY: the vacancy exclusively owns one uninitialized detached item.
         unsafe { (*self.entry().item.get()).write(item) };
         let (node, ()) = self.node.into_parts();
@@ -56,14 +58,23 @@ const _: () = {
 };
 
 impl<'d, T> Vacant<'d, T> {
+    fn with_resident(self, resident: u32) -> Vacant<'d, T, ()> {
+        self.entry().set_resident(resident);
+        // Slot's repr(C) layout changes only its zero-sized PhantomData phase.
+        Vacant {
+            node: self.node,
+            domain: marker::PhantomData,
+            context: (),
+        }
+    }
+
     pub fn try_insert(
         self,
         item: T,
         resident: u32,
         project: impl for<'a> FnOnce(&'a mut T) -> &'a mut [u8],
     ) -> Result<provided::Unique<'d>, crate::mem::Rejected<T, view::LengthError>> {
-        self.entry().set_resident(resident);
-        let pending = self.initialize(item);
+        let pending = self.with_resident(resident).initialize(item);
         buffer::raw::Limit::scope(resident, |limit| {
             // SAFETY: this callback borrows the initialized item only for
             // projection; rejection moves it after that borrow ends.
@@ -81,7 +92,7 @@ impl<'d, T> Vacant<'d, T> {
         item: P,
         resident: u32,
     ) -> Result<provided::Unique<'d>, crate::mem::Rejected<P, view::LengthError>> {
-        self.entry().set_resident(resident);
+        let vacant = self.with_resident(resident);
         let len = item.bytes().len();
         if len > resident as usize {
             return Err(crate::mem::Rejected::new(
@@ -90,7 +101,7 @@ impl<'d, T> Vacant<'d, T> {
             ));
         }
         let (item, project) = item.into_item();
-        Ok(self.insert_with(item, |item, limit| {
+        Ok(vacant.insert_with(item, |item, limit| {
             // SAFETY: Input retains the original owner and checked projection through conversion.
             unsafe { limit.project(project(item)) }
         }))
