@@ -1,6 +1,3 @@
-pub mod common;
-
-use common::depot::queue::RingHooks;
 use o3::depot::{
     queue::{links, round},
     raw,
@@ -9,14 +6,14 @@ use o3::depot::{
 #[test]
 fn preserves_rotation() {
     let keys = [0, 1, 2].map(|index| links::Index::try_new(index).expect("index"));
-    let hooks = RingHooks(keys.map(links::Hook::new));
-    let lanes = RingHooks([keys[0], keys[1]].map(links::Hook::new));
+    let hooks = keys.map(|index| raw::Node::vacant((), index.raw(), u32::MAX));
+    let lanes = [keys[0], keys[1]].map(|index| raw::Node::vacant((), index.raw(), u32::MAX));
     let entries = [links::Chain::new(), links::Chain::new()];
     let active = links::Cycle::new();
     for (key, lane) in [(keys[0], 0), (keys[1], 0), (keys[2], 1)] {
         let join = round::Join {
-            hooks: &hooks,
-            lanes: &lanes,
+            hooks: hooks.as_slice(),
+            lanes: lanes.as_slice(),
             entries: &entries[lane],
             active: &active,
             index: keys[lane],
@@ -28,8 +25,8 @@ fn preserves_rotation() {
     for (lane, expected) in [(0, keys[0]), (1, keys[2]), (0, keys[1])] {
         assert_eq!(active.first(), Some(keys[lane]));
         let join = round::Join {
-            hooks: &hooks,
-            lanes: &lanes,
+            hooks: hooks.as_slice(),
+            lanes: lanes.as_slice(),
             entries: &entries[lane],
             active: &active,
             index: keys[lane],

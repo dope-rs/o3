@@ -3,17 +3,14 @@ pub mod common;
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
 
-use std::{cell, rc::Rc};
+use std::cell;
 
 use common::{
     Counted,
     alloc::system::Tracker,
     depot::{
         model::drops::Block,
-        queue::{
-            indexed::{DropValue, drop_values, storage},
-            try_sequence,
-        },
+        queue::{indexed::storage, try_sequence},
     },
 };
 use o3::depot::queue::indexed::planes::{
@@ -296,12 +293,16 @@ fn borrowed_lifetime() {
 fn topology_keeps_payloads() {
     use o3::depot::{capacity::Limit, heap::indexed};
 
-    let drops = Rc::new(cell::Cell::new(Some(0)));
+    let drops = cell::Cell::new(Some(0));
     {
-        let mut planes: planes::Set<DropValue, 3, groups::Index<u64, Limit<5>, (), 1, 1>> =
-            planes::Set::<DropValue, 3, indexed::Min<u64, Limit<5>>>::try_seed_in::<2>(
+        let seed = |index: o3::depot::queue::links::Index| common::Owner {
+            drops: Counted(&drops),
+            value: index.get(),
+        };
+        let mut planes: planes::Set<_, 3, groups::Index<u64, Limit<5>, (), 1, 1>> =
+            planes::Set::<_, 3, indexed::Min<u64, Limit<5>>>::try_seed_in::<2>(
                 Limit::fixed::<3>(),
-                drop_values(Rc::clone(&drops)),
+                seed,
             )
             .expect("the three-payload topology must allocate")
             .try_into()
@@ -309,7 +310,7 @@ fn topology_keeps_payloads() {
 
         let entry = planes.entry(0);
         let mut entry = entry.expect("entry zero must exist");
-        assert_eq!(entry.index.get(), 0);
+        assert_eq!(entry.value, 0);
         entry.plane::<0>().link_back();
         entry.plane::<1>().link_back();
         entry.plane::<2>().link_back();
@@ -323,7 +324,7 @@ fn topology_keeps_payloads() {
         let records = groups::Index::<u64, Limit<5>, (), 1, 1>::reserve(Limit::fixed::<5>())
             .expect("replacement rows");
         planes
-            .try_replace::<2>(records, drop_values(Rc::clone(&drops)))
+            .try_replace::<2>(records, seed)
             .expect("growth from three to five payloads must allocate")();
         assert_eq!((planes.len(), planes.limit().get()), (5, 5));
         assert_eq!(drops.get(), Some(0));

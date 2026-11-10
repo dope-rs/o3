@@ -22,15 +22,6 @@ impl PartialEq for Reentry {
     }
 }
 
-pub struct RingHooks<const N: usize>(pub [links::Hook; N]);
-
-unsafe impl<const N: usize> depot::raw::Hooks for RingHooks<N> {
-    unsafe fn hook_raw(&self, index: links::Index) -> &links::Hook {
-        // SAFETY: the test store contains every admitted index.
-        unsafe { self.0.get_unchecked(index.get()) }
-    }
-}
-
 pub fn try_sequence(factor: usize) -> Result<impl Fn(links::Index) -> usize, bounded::Error> {
     let factor =
         bounded::Usize::<{ usize::MAX / <links::Index as depot::raw::Word>::MAX.get() }>::ZERO
