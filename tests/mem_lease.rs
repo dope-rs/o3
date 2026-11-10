@@ -2,11 +2,8 @@ pub mod common;
 
 use std::cell::Cell;
 
-use common::{
-    Counted,
-    mem::{RefSink, Sink},
-};
-use o3::mem::{self, Lease, lease};
+use common::{Counted, mem::Sink};
+use o3::mem::{self, Lease};
 
 #[test]
 fn rejection_keeps_owner() {
@@ -66,27 +63,4 @@ fn returns_or_disarms() {
     }
     assert_eq!(slot.get(), Some(7));
     assert_eq!(calls.get(), Some(1));
-}
-
-#[test]
-fn keeps_reference_niche() {
-    let returns = Cell::new(Some(0));
-    assert_eq!(Lease::new(RefSink(&returns), ()).item(), &());
-    assert_eq!(returns.get(), Some(1));
-    assert_eq!(
-        std::mem::size_of::<Lease<RefSink<'_>>>(),
-        std::mem::size_of::<usize>()
-    );
-    assert_eq!(
-        std::mem::size_of::<Option<Lease<RefSink<'_>>>>(),
-        std::mem::size_of::<usize>()
-    );
-    assert_eq!(
-        std::mem::size_of::<Lease<RefSink<'_>, lease::Open>>(),
-        std::mem::size_of::<usize>()
-    );
-    assert_eq!(
-        std::mem::size_of::<Option<Lease<RefSink<'_>, lease::Open>>>(),
-        std::mem::size_of::<usize>()
-    );
 }

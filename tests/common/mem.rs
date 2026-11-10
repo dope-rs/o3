@@ -109,16 +109,6 @@ impl Return for Sink<'_> {
     }
 }
 
-pub struct RefSink<'a>(pub &'a Cell<Option<usize>>);
-
-impl Return for RefSink<'_> {
-    type Item = ();
-
-    fn return_item(self, (): ()) {
-        crate::common::bump(self.0);
-    }
-}
-
 pub struct Target<'a, W: mem::raw::Counter = u32> {
     pub refs: mem::raw::Count<W>,
     pub value: usize,

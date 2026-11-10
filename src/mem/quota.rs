@@ -212,6 +212,14 @@ const _: () = {
     assert!(
         mem::size_of::<Option<crate::mem::Lease<Return<'static>>>>() == mem::size_of::<usize>()
     );
+    assert!(
+        mem::size_of::<crate::mem::Lease<Return<'static>, lease::Open>>()
+            == mem::size_of::<usize>()
+    );
+    assert!(
+        mem::size_of::<Option<crate::mem::Lease<Return<'static>, lease::Open>>>()
+            == mem::size_of::<usize>()
+    );
     assert!(mem::size_of::<Shared<'static>>() == 2 * mem::size_of::<usize>());
     assert!(mem::size_of::<Shared<'static, (), lease::Open>>() == 2 * mem::size_of::<usize>());
     assert!(mem::size_of::<Lease<'static>>() == 2 * mem::size_of::<usize>());
