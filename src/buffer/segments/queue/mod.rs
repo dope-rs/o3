@@ -128,7 +128,6 @@ impl<'a, T: buffer::raw::Segment> Iter<'a, T> {
         self.start += chunk.len().get() as u32;
         chunk
     }
-
 }
 
 impl<'a, T: buffer::raw::Segment> Iterator for Iter<'a, T> {
