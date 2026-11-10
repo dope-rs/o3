@@ -152,6 +152,8 @@ fn rejects_unproved_keys() {
     let first = map
         .try_create(3, |stored| *stored == 3, |_| 3)
         .expect("hash key must own its original vacant slot");
+    assert!(map.key_value_at(first.index() as usize) == Some((first, &3)));
+    assert!(map.key_at(map.capacity()).is_none());
 
     let outside =
         key::Handle::<runtime::Domain>::from_parts(key::Parts::new(7, first.generation()));
@@ -163,11 +165,13 @@ fn rejects_unproved_keys() {
 
     assert_eq!(selected.remove(), 3);
     assert!(map.get(first).is_none());
+    assert!(map.key_value_at(first.index() as usize).is_none());
     assert!(
         matches!(entry::Live::<_, (), entry::Occupied>::try_new(&mut map, first), Err(errors::Lookup::Vacant { key, actual }) if key == first && Some(actual) == first.generation().checked_add(1))
     );
     let second = (map.try_create(5, |value| *value == 5, |_| 5))
         .expect("hash key must own its original vacant slot");
+    assert!(map.key_at(second.index() as usize) == Some(second));
 
     assert_eq!(second.index(), first.index());
     assert!(

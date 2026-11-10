@@ -6,7 +6,7 @@ use crate::{
     base::num::bounded,
     depot::{
         arena::{
-            hash::{self, Position, errors, runtime},
+            hash::{self, errors, runtime},
             slab::key,
         },
         index::Initialized,
@@ -80,9 +80,7 @@ impl<'a, T, Tag> entry::Live<'a, T, Tag, Occupied> {
         map: &'a mut runtime::Map<T, Tag>,
         key: key::Handle<runtime::Domain<Tag>>,
     ) -> Result<Self, errors::Lookup<Tag>> {
-        Ok(Position::try_live(&mut map.core, key)?
-            .into_entry()
-            .with_phase())
+        Ok(map.core.try_entry(key)?.with_phase())
     }
     pub fn at(map: &'a mut runtime::Map<T, Tag>, index: usize) -> Option<Self> {
         Some(map.core.entry_at(index)?.with_phase())

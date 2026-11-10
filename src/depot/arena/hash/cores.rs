@@ -11,7 +11,7 @@ use crate::{
     base::{marker::ThreadBound, num::bounded},
     depot::{
         arena::{
-            hash::{self, runtime},
+            hash::{self, errors, runtime},
             slab::key,
         },
         map,
@@ -81,6 +81,49 @@ impl<T, Tag> Core<T, Tag> {
         self.shape.capacity()
     }
 
+    fn position(&self, index: usize) -> Option<bounded::U32<0, { u32::MAX - 1 }>> {
+        if index >= self.capacity() {
+            return None;
+        }
+        // SAFETY: the admitted index is below capacity and therefore Index::END.
+        let index = unsafe { links::Index::new_usize(index) };
+        Some(bounded::U32::from_one(index.position()))
+    }
+
+    fn lookup(
+        &self,
+        key: key::Handle<runtime::Domain<Tag>>,
+    ) -> Result<bounded::U32<0, { u32::MAX - 1 }>, errors::Lookup<Tag>> {
+        let Some(index) = self.position(key.index() as usize) else {
+            return Err(errors::Lookup::Index {
+                key,
+                capacity: self.capacity(),
+            });
+        };
+        // SAFETY: position admitted this initialized slot under the same shared borrow.
+        let meta = unsafe { self.meta(index) };
+        if !meta.is_live() {
+            return Err(errors::Lookup::Vacant {
+                key,
+                actual: meta.generation,
+            });
+        }
+        if meta.generation != key.generation() {
+            return Err(errors::Lookup::Generation {
+                key,
+                actual: meta.generation,
+            });
+        }
+        Ok(index)
+    }
+
+    fn live_at(&self, index: usize) -> Option<bounded::U32<0, { u32::MAX - 1 }>> {
+        let index = self.position(index)?;
+        // SAFETY: position admitted this initialized slot under the same shared borrow.
+        let meta = unsafe { self.meta(index) };
+        meta.is_live().then_some(index)
+    }
+
     /// # Safety
     /// `index` must be below this core's capacity, so it addresses one initialized
     /// metadata slot of this allocation.
@@ -125,11 +168,23 @@ impl<T, Tag> Core<T, Tag> {
         &mut self,
         key: key::Handle<runtime::Domain<Tag>>,
     ) -> Option<entry::Live<'_, T, Tag>> {
-        Some(hash::Position::try_live(self, key).ok()?.into_entry())
+        self.try_entry(key).ok()
+    }
+
+    pub(in crate::depot) fn try_entry(
+        &mut self,
+        key: key::Handle<runtime::Domain<Tag>>,
+    ) -> Result<entry::Live<'_, T, Tag>, errors::Lookup<Tag>> {
+        let index = self.lookup(key)?;
+        // SAFETY: lookup admits this live slot under the same exclusive borrow;
+        // no mutation or callback intervenes before the loan is transferred.
+        Ok(unsafe { entry::Live::new(self, index) })
     }
 
     pub(in crate::depot) fn entry_at(&mut self, index: usize) -> Option<entry::Live<'_, T, Tag>> {
-        Some(hash::Position::new(self, index)?.live()?.into_entry())
+        let index = self.live_at(index)?;
+        // SAFETY: this unchanged exclusive owner retains the admitted live slot.
+        Some(unsafe { entry::Live::new(self, index) })
     }
 
     /// # Safety
@@ -227,22 +282,27 @@ impl<T, Tag> Core<T, Tag> {
     }
 
     pub(in crate::depot) fn get(&self, key: key::Handle<runtime::Domain<Tag>>) -> Option<&T> {
-        Some(hash::Position::try_live(self, key).ok()?.value())
+        let index = self.lookup(key).ok()?;
+        // SAFETY: this shared borrow preserves the slot admitted by lookup.
+        Some(unsafe { self.value(index) })
     }
 
     pub(in crate::depot) fn key_at(
         &self,
         index: usize,
     ) -> Option<key::Handle<runtime::Domain<Tag>>> {
-        Some(hash::Position::new(self, index)?.live()?.key())
+        let index = self.live_at(index)?;
+        // SAFETY: this shared borrow preserves the admitted slot and generation.
+        Some(unsafe { self.key_for(index) })
     }
 
     pub(in crate::depot) fn key_value_at(
         &self,
         index: usize,
     ) -> Option<(key::Handle<runtime::Domain<Tag>>, &T)> {
-        let present = hash::Position::new(self, index)?.live()?;
-        Some((present.key(), present.value()))
+        let index = self.live_at(index)?;
+        // SAFETY: this shared borrow retains the admitted slot and initialized value.
+        Some(unsafe { (self.key_for(index), self.value(index)) })
     }
 
     pub(in crate::depot) fn values(&self) -> impl Iterator<Item = &T> {

@@ -3,7 +3,6 @@
 
 use std::{marker, mem};
 
-pub(in crate::depot) use borrows::Position;
 pub use plan::Plan;
 
 use crate::{alloc, base::num::bounded, depot::map};
@@ -14,7 +13,6 @@ pub(in crate::depot) use cores::Core;
 pub(in crate::depot) use entries::{Bucket, Meta};
 pub use slot::Vacant;
 
-mod borrows;
 mod cores;
 mod entries;
 mod plan;
