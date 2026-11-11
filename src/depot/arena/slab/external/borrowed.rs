@@ -1,9 +1,8 @@
 use crate::depot::arena::slab;
 
 /// A logical identity projection of its native borrowed phase.
-pub struct Borrowed<B, Tag = (), const ROOT: bool = true> {
-    pub(in crate::depot::arena::slab) inner: slab::Borrowed<B, Tag, ROOT>,
-}
+pub type Borrowed<B, Tag = (), const ROOT: bool = true> =
+    super::Occupied<slab::Borrowed<B, Tag, ROOT>>;
 
 const _: () = {
     type Slot =

@@ -177,15 +177,6 @@ impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool>
 where
     cycle::Mode<RECYCLE>: Policy,
 {
-    pub(in crate::depot) fn new(
-        entry: entries::Occupied<'a, T, MAX, entries::Interior<RECYCLE>, 1>,
-    ) -> Self {
-        Self {
-            entry: entry.take(),
-            tag: marker::PhantomData,
-        }
-    }
-
     pub fn key(&self) -> key::Handle<Tag, MAX> {
         key::Handle::new(self.entry.index(), self.entry.generation())
     }

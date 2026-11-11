@@ -100,7 +100,7 @@ where
         slab::Occupied<entries::Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>, Tag>,
     > {
         let entry = entries::Occupied::at(&self.core, index)?;
-        Some(slab::Occupied::new(entry))
+        Some(slab::Occupied::new(entry.take()))
     }
 
     pub fn try_entry_at(
@@ -108,7 +108,7 @@ where
         index: u32,
     ) -> Occupied<'a, T, Tag, MAX, RECYCLE, PARTITIONS> {
         let entry = entries::Occupied::try_at(&self.core, index)?;
-        Ok(slab::Occupied::new(entry))
+        Ok(slab::Occupied::new(entry.take()))
     }
 }
 
@@ -155,7 +155,9 @@ where
     ) -> Borrowed<'a, T, Tag, MAX, RECYCLE> {
         // SAFETY: this maps the retained Cell directly to its original core.
         let live = unsafe { live.map(|(owner, index)| (&owner.core, index)) };
-        Ok(slab::Borrowed::new(entries::Core::try_occupied(live)?))
+        Ok(slab::Borrowed::new(
+            entries::Core::try_occupied(live)?.take(),
+        ))
     }
 
     pub fn entry_at(
@@ -163,16 +165,16 @@ where
         index: u32,
     ) -> Option<slab::Borrowed<entries::Busy<'a, T, MAX, entries::Interior<RECYCLE>>, Tag>> {
         let entry = entries::Occupied::at(&self.core, index)?;
-        Some(slab::Borrowed::new(entry))
+        Some(slab::Borrowed::new(entry.take()))
     }
 
     pub(in crate::depot::arena::slab) fn try_entry_at(
         &'a self,
         index: u32,
     ) -> Borrowed<'a, T, Tag, MAX, RECYCLE> {
-        Ok(slab::Borrowed::new(entries::Occupied::try_at(
-            &self.core, index,
-        )?))
+        Ok(slab::Borrowed::new(
+            entries::Occupied::try_at(&self.core, index)?.take(),
+        ))
     }
 }
 

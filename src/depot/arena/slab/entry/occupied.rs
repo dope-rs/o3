@@ -1,5 +1,3 @@
-use std::marker;
-
 use cycle::Policy;
 
 use crate::{
@@ -13,12 +11,6 @@ use crate::{
     },
     mem::lease,
 };
-
-/// An initialized slot held through its exclusive native owner.
-pub struct Occupied<B, Tag = (), const ROOT: bool = true> {
-    pub(in crate::depot::arena::slab) entry: B,
-    pub(in crate::depot::arena::slab) tag: marker::PhantomData<fn() -> Tag>,
-}
 
 impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize>
     slab::Occupied<entries::Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>, Tag>
@@ -35,22 +27,7 @@ where
         // SAFETY: the projection retains the original exclusive owner and context.
         let live = unsafe { live.map(|((slab, context), index)| ((&slab.core, context), index)) };
         let (busy, context) = live.into();
-        (
-            slab::Occupied {
-                entry: busy,
-                tag: marker::PhantomData,
-            },
-            context,
-        )
-    }
-
-    pub(in crate::depot::arena::slab) fn new(
-        entry: entries::Occupied<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>,
-    ) -> Self {
-        Self {
-            entry: entry.take(),
-            tag: marker::PhantomData,
-        }
+        (slab::Occupied::new(busy), context)
     }
 }
 
@@ -78,7 +55,10 @@ where
     /// Withdraws the value while retaining its owner, identity, and operation plane.
     pub fn take(self) -> Withdrawn<'a, T, Tag, P, MAX, RECYCLE, PARTITIONS, ROOT> {
         let (pending, value) = self.entry.withdraw();
-        (slab::Withdrawn::new(pending), value)
+        (
+            slab::Withdrawn::new(crate::mem::Lease::open(pending, ())),
+            value,
+        )
     }
 
     pub fn remove(self) -> T {

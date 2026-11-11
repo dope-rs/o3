@@ -30,12 +30,6 @@ pub enum Error<B = convert::Infallible, R = ()> {
 pub(in crate::depot) type Result<T, M> =
     std::result::Result<T, Error<<M as Mode>::Busy, <<M as Mode>::Cycle as Policy>::Retired>>;
 
-/// A live slot currently held by another interior borrow.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Busy {
-    pub index: u32,
-}
-
 const _: () = {
     assert!(mem::size_of::<Error>() == 3 * mem::size_of::<u32>());
     assert!(mem::size_of::<Error<()>>() == mem::size_of::<Error>());

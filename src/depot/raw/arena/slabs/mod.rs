@@ -5,10 +5,9 @@ use cycle::Policy;
 use crate::depot::{
     arena::slab::{
         self, entries,
-        entries::{Busy, Core, Exclusive, Interior, Occupied},
+        entries::{Busy, Core, Exclusive},
         external::{self, shared},
         key::cycle,
-        lookup,
         storage::{self, Plane as _},
     },
     index::Initialized,
@@ -59,30 +58,6 @@ unsafe impl<'a, T, G: external::Generation, Tag> crate::depot::raw::Project<u32>
         let (_, inner) = self.split();
         // SAFETY: the underlying pinned owner retains this same live slot and exclusive loan.
         unsafe { inner.project(index) }.into()
-    }
-}
-
-// SAFETY: Live retains initialization, the exact core, its outer owner, and the operation plane.
-unsafe impl<'a, T, const MAX: u32, C, P> crate::depot::raw::Project<links::Index, P>
-    for (&'a Core<T, MAX, Interior<false>>, C)
-{
-    type Output = Result<
-        crate::depot::raw::Proof<
-            ((Occupied<'a, T, MAX, Interior<false>, 1>, C), links::Index),
-            Initialized<P>,
-        >,
-        lookup::Busy,
-    >;
-
-    unsafe fn project(self, index: links::Index) -> Self::Output {
-        let (core, context) = self;
-        // SAFETY: the consumed Live proves initialized storage in this exact core.
-        let slot = unsafe { core.slots.as_ref().get_unchecked(index.get()) };
-        if matches!(slot.state.get(), slab::State::Busy(())) {
-            return Err(lookup::Busy { index: index.raw() });
-        }
-        // SAFETY: initialization excludes free states; the first borrow check excluded reentry.
-        Ok(unsafe { crate::depot::raw::Proof::new(((Occupied { core, slot }, context), index)) })
     }
 }
 
@@ -154,37 +129,6 @@ where
             entry,
             tag: marker::PhantomData,
         }
-    }
-}
-
-// SAFETY: the initialized slot, original owner context, and operation plane survive borrow admission.
-unsafe impl<'a, T, Tag, const MAX: u32, C, P> crate::depot::raw::Project<links::Index, P>
-    for (&'a slab::Cell<T, Tag, MAX, false>, C)
-{
-    type Output = Result<
-        crate::depot::raw::Proof<
-            (
-                (
-                    slab::Borrowed<entries::Busy<'a, T, MAX, entries::Interior>, Tag>,
-                    C,
-                ),
-                links::Index,
-            ),
-            Initialized<P>,
-        >,
-        lookup::Busy,
-    >;
-
-    unsafe fn project(self, index: links::Index) -> Self::Output {
-        let (owner, context) = self;
-        // SAFETY: Cell retains the exact core that owns the consumed live slot.
-        let live = unsafe {
-            crate::depot::raw::Proof::<(_, _), Initialized<P>>::new(((&owner.core, context), index))
-        };
-        Ok(unsafe {
-            live.into()?
-                .map(|((entry, context), index)| ((slab::Borrowed::new(entry), context), index))
-        })
     }
 }
 

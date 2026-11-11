@@ -90,13 +90,13 @@ where
         parts: key::Parts<MAX>,
     ) -> Option<slab::Borrowed<entries::Busy<'a, T, MAX, entries::Interior<RECYCLE>>, Tag>> {
         let entry = entries::Occupied::key(&self.core, parts.index(), parts.generation())?;
-        Some(slab::Borrowed::new(entry))
+        Some(slab::Borrowed::new(entry.take()))
     }
 
     pub fn try_entry(&'a self, key: key::Handle<Tag, MAX>) -> Lookup<'a, T, Tag, MAX, RECYCLE> {
-        Ok(slab::Borrowed::new(entries::Occupied::try_key(
-            &self.core, key,
-        )?))
+        Ok(slab::Borrowed::new(
+            entries::Occupied::try_key(&self.core, key)?.take(),
+        ))
     }
 }
 
@@ -154,6 +154,8 @@ impl<'a, T, Tag, const MAX: u32, C, P> crate::depot::raw::Admit
             slot,
         };
         // SAFETY: interior admission preserves initialization, exclusivity, and plane P.
-        unsafe { crate::depot::raw::Proof::new(((slab::Borrowed::new(entry), context), index)) }
+        unsafe {
+            crate::depot::raw::Proof::new(((slab::Borrowed::new(entry.take()), context), index))
+        }
     }
 }

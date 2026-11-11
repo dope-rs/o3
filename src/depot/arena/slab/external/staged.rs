@@ -4,9 +4,8 @@ use crate::{
 };
 
 /// A logical identity projection of its native staged phase.
-pub struct Staged<B, Tag = (), const ROOT: bool = true> {
-    pub(in crate::depot::arena::slab) inner: slab::Staged<B, Tag, ROOT>,
-}
+pub type Staged<B, Tag = (), const ROOT: bool = true> =
+    external::Occupied<slab::Staged<B, Tag, ROOT>>;
 
 impl<T, G: external::Generation, Tag, M: entries::Mode, const N: usize>
     external::Staged<crate::mem::Lease<external::Busy<'_, T, G, M, N>, lease::Open>, Tag, true>

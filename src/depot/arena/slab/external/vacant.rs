@@ -23,11 +23,11 @@ impl<'a, T, G: external::Generation, Tag, M: entries::Mode, const N: usize>
         self,
         value: T,
     ) -> external::Staged<crate::mem::Lease<external::Busy<'a, T, G, M, N>, lease::Open>, Tag> {
-        external::Staged {
-            inner: slab::Vacant::new(self.entry).stage(external::Stamped {
+        slab::Vacant::new(self.entry)
+            .stage(external::Stamped {
                 generation: self.state,
                 value,
-            }),
-        }
+            })
+            .into()
     }
 }

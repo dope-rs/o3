@@ -22,8 +22,8 @@ mod cell;
 mod entry;
 mod slots;
 pub use entry::{
-    anchor::Anchor, anchored::Anchored, borrowed::Borrowed, occupied::Occupied, restore::Withdrawn,
-    staged::Staged, vacant::Vacant,
+    Slot as Borrowed, Slot as Occupied, Slot as Staged, Slot as Vacant, Slot as Withdrawn,
+    anchor::Anchor, anchored::Anchored,
 };
 
 /// One issued identity retaining its reserved slot until installation or retirement.
@@ -238,7 +238,7 @@ where
         key: key::Handle<Tag, MAX>,
     ) -> Lookup<'_, T, Tag, MAX, RECYCLE, PARTITIONS> {
         let entry = entries::Occupied::try_key(&self.core, key)?;
-        Ok(slab::Occupied::new(entry))
+        Ok(slab::Occupied::new(entry.take()))
     }
 }
 
@@ -304,7 +304,7 @@ impl<'a, 'h, T, Tag, const MAX: u32>
         let entry = entries::Occupied::try_bound(unsafe {
             proof.map(|(source, key)| (&source.core, key))
         })?;
-        Ok(Self::new(entry))
+        Ok(Self::new(entry.take()))
     }
 }
 
@@ -413,13 +413,7 @@ impl<'a, T, Tag, const MAX: u32, const ROOT: bool> Reuse<'a, T, Tag, MAX, ROOT> 
     /// Replaces the value and advances its identity without rechecking capacity or generation.
     pub fn replace(self, value: T) -> (slab::Occupied<entries::Busy<'a, T, MAX>, Tag, ROOT>, T) {
         let (busy, prior) = self.entry.entry.replace(self.next, value);
-        (
-            slab::Occupied {
-                entry: busy,
-                tag: self.entry.tag,
-            },
-            prior,
-        )
+        (slab::Occupied::new(busy), prior)
     }
 }
 

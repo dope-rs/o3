@@ -132,6 +132,17 @@ where
 impl<'a, T, Tag, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, const ROOT: bool>
     slab::Vacant<entries::Pending<'a, T, MAX, M, PARTITIONS>, Tag, ROOT>
 {
+    pub(in crate::depot::arena::slab) fn with_state<S>(
+        self,
+        state: S,
+    ) -> external::Vacant<Pending<'a, T, MAX, M, PARTITIONS>, Tag, ROOT, S> {
+        external::Vacant {
+            entry: self.entry,
+            state,
+            tag: self.tag,
+        }
+    }
+
     pub fn insert(self, value: T) -> key::Handle<Tag, MAX> {
         let key = key::Handle::new(self.entry.index().raw(), self.entry.generation());
         self.commit(value);
@@ -150,10 +161,7 @@ impl<'a, T, Tag, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, cons
         Tag,
         ROOT,
     > {
-        slab::Staged {
-            entry: Lease::open(self.entry.install(value), ()),
-            tag: self.tag,
-        }
+        slab::Staged::new(Lease::open(self.entry.install(value), ()))
     }
 }
 
@@ -171,10 +179,7 @@ where
         self,
         value: T,
     ) -> slab::Borrowed<entries::Busy<'a, T, MAX, entries::Interior<RECYCLE>>, Tag> {
-        slab::Borrowed {
-            entry: self.entry.install(value),
-            tag: marker::PhantomData,
-        }
+        slab::Borrowed::new(self.entry.install(value))
     }
 
     pub fn reject(self) {
@@ -199,10 +204,7 @@ where
         self,
         value: T,
     ) -> slab::Borrowed<entries::Busy<'a, T, MAX, entries::Interior<RECYCLE>>, Tag> {
-        slab::Borrowed {
-            entry: self.entry.into_parts().0.install(value),
-            tag: self.tag,
-        }
+        slab::Borrowed::new(self.entry.into_parts().0.install(value))
     }
 }
 
@@ -234,15 +236,6 @@ impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, P
 where
     cycle::Mode<RECYCLE>: Policy,
 {
-    pub(in crate::depot::arena::slab) fn new(
-        pending: entries::Pending<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS, P>,
-    ) -> Self {
-        Self {
-            entry: Lease::open(pending, ()),
-            tag: marker::PhantomData,
-        }
-    }
-
     pub fn insert(
         self,
         value: T,
@@ -252,10 +245,7 @@ where
         ROOT,
     > {
         let (pending, ()) = self.entry.into_parts();
-        slab::Occupied {
-            entry: pending.install(value),
-            tag: marker::PhantomData,
-        }
+        slab::Occupied::new(pending.install(value))
     }
 }
 
@@ -326,10 +316,7 @@ where
         let entry = entries::Occupied::try_key(self.entry.core, key)?;
         Ok((
             slab::Vacant::new(self.entry),
-            slab::Occupied {
-                entry: entry.take(),
-                tag: marker::PhantomData,
-            },
+            slab::Occupied::new(entry.take()),
         ))
     }
 }

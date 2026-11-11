@@ -1,5 +1,3 @@
-use std::marker;
-
 use cycle::Policy;
 
 use crate::{
@@ -9,12 +7,6 @@ use crate::{
     },
     mem::lease,
 };
-
-/// An initialized insertion that rolls back unless committed.
-pub struct Staged<B, Tag = (), const ROOT: bool = true> {
-    pub(in crate::depot::arena::slab) entry: B,
-    pub(in crate::depot::arena::slab) tag: marker::PhantomData<fn() -> Tag>,
-}
 
 impl<T, Tag, const MAX: u32, M: entries::Mode, const PARTITIONS: usize, const ROOT: bool>
     slab::Staged<
@@ -57,10 +49,7 @@ where
         self,
     ) -> slab::Occupied<entries::Busy<'a, T, MAX, entries::Exclusive<RECYCLE>, PARTITIONS>, Tag, ROOT>
     {
-        slab::Occupied {
-            entry: self.take(),
-            tag: marker::PhantomData,
-        }
+        slab::Occupied::new(self.take())
     }
 
     pub fn reject(self) -> T {

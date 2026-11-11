@@ -51,7 +51,7 @@ impl<'a, T, G: external::Generation, Tag>
     pub fn try_entry(
         self,
     ) -> Result<Borrowed<'a, T, G, Tag>, lookup::Error<(), convert::Infallible>> {
-        Ok(slab::Cell::current(self.into_native())?.into_external())
+        Ok(slab::Cell::current(self.into_native())?.into())
     }
 
     pub fn try_key(self, epoch: G) -> Result<Borrowed<'a, T, G, Tag>, errors::Lookup<G, Tag, ()>> {
@@ -121,7 +121,7 @@ impl<T, G: external::Generation, Tag> Storage<T, G, Tag> {
         &self,
         index: u32,
     ) -> Result<Borrowed<'_, T, G, Tag>, lookup::Error<(), convert::Infallible>> {
-        Ok(self.inner.try_entry_at(index)?.into_external())
+        Ok(self.inner.try_entry_at(index)?.into())
     }
 }
 
