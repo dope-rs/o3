@@ -36,18 +36,15 @@ fn rollback_before_growth() {
     *entry.value().get_mut() = 13;
     assert_eq!(*entry.get(), 13);
     entry.discard();
-    assert!(store.parts(key.parts()).is_none());
+    assert!(store.as_mut().anchor(key.parts()).is_none());
     let vacant = store.as_mut().vacant().expect("discarded slot");
     assert_eq!(vacant.index(), index);
     let next = vacant.insert(11);
     assert_eq!(next.generation().get(), key.generation().get() + 1);
-    assert!(store.parts(key.parts()).is_none());
-    assert_eq!(store.parts(next.parts()), Some(&11));
-    store
-        .as_mut()
-        .anchor(next.parts())
-        .expect("live slot")
-        .discard();
-    assert!(store.parts(next.parts()).is_none());
+    assert!(store.as_mut().anchor(key.parts()).is_none());
+    let entry = store.as_mut().anchor(next.parts()).expect("live slot");
+    assert_eq!(*entry.get(), 11);
+    entry.discard();
+    assert!(store.as_mut().anchor(next.parts()).is_none());
     assert!(store.as_mut().vacant().is_none());
 }
