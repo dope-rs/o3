@@ -69,12 +69,7 @@ impl<T, M> Storage<T, M> {
 }
 
 /// Exclusive admission to initialize one value without inspecting old bytes.
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct Vacant<'a, T> {
-    value: &'a mut MaybeUninit<T>,
-    bound: ThreadBound,
-}
+pub type Vacant<'a, T> = Occupied<'a, MaybeUninit<T>>;
 
 impl<'a, T> Vacant<'a, T> {
     /// Borrows storage that does not own a value's destruction obligation.
@@ -85,18 +80,23 @@ impl<'a, T> Vacant<'a, T> {
         }
     }
 
+    /// # Safety
+    /// This slot contains one valid, exclusively owned T with no prior pinning obligation.
+    pub unsafe fn assume_init(self) -> Occupied<'a, T> {
+        // SAFETY: both transparent phases retain the same exclusive pointer and lifetime.
+        // T is initialized; moving this owner transfers its sole destruction obligation.
+        unsafe { std::mem::transmute(self) }
+    }
+
     /// Transfers the exact initialized value and its destruction to one owner.
     pub fn insert(self, value: T) -> Occupied<'a, T> {
         self.value.write(value);
-        Occupied {
-            value: self.value,
-            bound: self.bound,
-        }
+        // SAFETY: write initialized this exact exclusively borrowed slot.
+        unsafe { self.assume_init() }
     }
 }
 
 const _: () = {
-    assert!(size_of::<Vacant<'_, ()>>() == size_of::<usize>());
     assert!(size_of::<Occupied<'_, ()>>() == size_of::<usize>());
     assert!(size_of::<Option<Occupied<'_, ()>>>() == size_of::<usize>());
 };

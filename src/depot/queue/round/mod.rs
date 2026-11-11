@@ -142,22 +142,3 @@ const _: () = {
     assert!(mem::size_of::<Set<u64>>() == 6 * mem::size_of::<usize>());
     assert!(mem::size_of::<Option<Set<()>>>() == mem::size_of::<Set<()>>());
 };
-
-impl<'h, T, Tag, const MAX: u32> Set<T, Tag, MAX, capacity::Domain<'h>> {
-    /// # Safety
-    /// The key retains an occupied resident in this exact set and order.
-    pub(in crate::depot) unsafe fn project<C>(
-        &mut self,
-        key: capacity::Key<'h, key::Handle<Tag, MAX>>,
-        context: C,
-    ) -> (
-        set::Occupied<'_, T, Tag, MAX, true, capacity::Domain<'h>>,
-        C,
-    ) {
-        let source = self;
-        let index = unsafe { links::Index::new_usize(key.as_inner().index() as usize) };
-        let live = unsafe { crate::depot::raw::Proof::new(((&mut source.values, context), index)) };
-        let (entry, context) = slab::Occupied::from_live(live);
-        (set::Occupied::new(entry, &source.order), context)
-    }
-}

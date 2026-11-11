@@ -1,7 +1,10 @@
 use crate::depot::{
-    arena::slab::key,
+    arena::slab::{self, key},
     capacity,
-    queue::round::{self, set},
+    queue::{
+        links,
+        round::{self, set},
+    },
     raw::Live,
 };
 
@@ -29,13 +32,12 @@ impl<'a, 'h, T, Tag, const MAX: u32>
 {
     /// Consumes this exact resident's occupied, unscheduled source plane.
     pub fn from_live<C>(live: Admission<'a, 'h, T, Tag, MAX, C, Self>) -> (Self, C) {
-        let (source, key) = live.into_inner();
-        // SAFETY: the retained idle plane includes the complete occupied source proof.
-        let (entry, context): (
-            set::Occupied<'a, T, Tag, MAX, true, capacity::Domain<'h>>,
-            C,
-        ) = unsafe { crate::depot::raw::Proof::new((source, key)) }.into();
-        (entry.phase(), context)
+        let ((source, context), key) = live.into_inner();
+        // SAFETY: this admitted key retains an occupied resident in the same domain.
+        let index = unsafe { links::Index::new_usize(key.as_inner().index() as usize) };
+        let live = unsafe { crate::depot::raw::Proof::new(((&mut source.values, context), index)) };
+        let (entry, context) = slab::Occupied::from_live(live);
+        (Self::new(entry, &source.order), context)
     }
 }
 

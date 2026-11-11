@@ -69,19 +69,15 @@ fn projects_scheduled() {
                     };
                     let retry = heap.first_entry().expect("scheduled resident");
                     assert!(retry.key() == key);
-                    // SAFETY: this fixture co-owns both stores and retires the heap before its resident.
-                    let (mut entry, retry) =
-                        unsafe { depot::raw::Proof::new(((&mut source, retry), key)) }.into();
+                    // SAFETY: this fixture retains the idle resident and retires its heap entry first.
+                    let (mut entry, retry) = round::set::Occupied::from_live(unsafe {
+                        depot::raw::Proof::new(((&mut source, retry), key))
+                    });
                     assert_eq!(retry.remove(), value + 7);
                     assert_eq!(*entry.get(), value);
                     *entry.get_mut() += 1;
-                    match entry.state() {
-                        round::set::State::Idle(entry) => {
-                            assert_eq!(*entry.get(), value + 1);
-                            entry.discard();
-                        }
-                        round::set::State::Ready(_) => panic!("resident was idle"),
-                    }
+                    assert_eq!(*entry.get(), value + 1);
+                    entry.discard();
                 }
             });
             assert_eq!(allocs, [0; 4]);

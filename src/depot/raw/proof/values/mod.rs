@@ -130,7 +130,6 @@ unsafe impl crate::depot::raw::ChainCount for () {
 }
 
 mod key;
-mod rounds;
 mod word;
 
 // SAFETY: every u32 is its own complete compact identity; both conversions

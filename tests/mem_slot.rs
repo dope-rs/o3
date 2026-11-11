@@ -13,11 +13,16 @@ use o3::mem::slot::Vacant;
 #[test]
 fn retains_or_forgets_owner() {
     let drops = Cell::new(Some(0));
-    let mut backing = MaybeUninit::uninit();
-    let occupied = Vacant::new(&mut backing).insert(Owner {
-        drops: Counted(&drops),
-        value: 42,
-    });
+    let mut backing = MaybeUninit::<Owner<'_>>::uninit();
+    let mut vacant = Vacant::new(&mut backing);
+    let pointer = vacant.get_mut().as_mut_ptr();
+    unsafe {
+        ptr::addr_of_mut!((*pointer).drops).write(Counted(&drops));
+        ptr::addr_of_mut!((*pointer).value).write(41);
+    }
+    let mut occupied = unsafe { vacant.assume_init() };
+    occupied.get_mut().value += 1;
+    assert_eq!(ptr::from_ref(&*occupied), pointer);
     assert_eq!(occupied.value, 42);
     let value = occupied.into_inner();
     assert_eq!(drops.get(), Some(0));
