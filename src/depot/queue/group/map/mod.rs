@@ -71,72 +71,31 @@ pub(super) struct Tree<const LANES: usize> {
 }
 
 #[repr(transparent)]
-pub(super) struct Root<'a>(&'a mut Link);
+pub(super) struct Root<'a, const LANES: usize>(&'a mut Tree<LANES>);
 
-impl<'a> Root<'a> {
-    pub(in crate::depot::queue::group) fn remove<const LANES: usize>(
-        self,
-        owner: slab::Slot<
-            'a,
-            Entry<LANES>,
-            Tag,
-            { u32::MAX },
-            links::Hook,
-            0,
-            capacity::Count<LANES>,
-        >,
-        branch: Option<slab::Cursor<'a, Branch, BranchTag, { u32::MAX }, capacity::Count<LANES>>>,
-    ) {
-        let bits = owner.as_ref().key;
-        if let Some(branch) = branch {
-            branch.remove(|parent, removed| {
-                let sibling = removed.sibling(bits);
-                match parent {
-                    Some(parent) => *parent.child_mut(bits) = sibling,
-                    None => *self.0 = sibling,
-                }
-            });
-        }
-        owner.detach().discard();
-    }
+#[repr(C)]
+pub(super) struct Bound<'a, const LANES: usize, P = ()> {
+    tree: &'a mut Tree<LANES>,
+    owner: links::Index,
+    phase: P,
 }
 
-enum Start<'a> {
-    Empty(&'a mut mem::MaybeUninit<Link>),
-    Occupied(Root<'a>),
+#[repr(C)]
+pub(super) struct Change {
+    owner: links::Index,
+    branch: Option<Place>,
 }
 
-pub(super) struct Bound<'a, const LANES: usize> {
-    owner: slab::Slot<'a, Entry<LANES>, Tag, { u32::MAX }, links::Hook, 0, capacity::Count<LANES>>,
-    branches: &'a mut Branches<LANES>,
-    root: Root<'a>,
-}
+pub(super) type Place = (links::Index, Option<links::Index>);
+pub(super) type Rollback<'a, const N: usize> = Bound<'a, N, Option<Change>>;
+pub(super) type Added<'a, const N: usize> = Bound<'a, N, Option<Place>>;
 
 enum Position<'a, 'p, const LANES: usize> {
     Root(&'a mut Branches<LANES>),
     Branch(Path<'a, 'p, LANES>),
 }
 
-pub(super) struct Rollback<'a, const LANES: usize> {
-    added: Option<Added<'a, LANES>>,
-}
-
-pub(super) struct Added<'a, const LANES: usize> {
-    branch: Option<slab::Cursor<'a, Branch, BranchTag, { u32::MAX }, capacity::Count<LANES>>>,
-    root: Root<'a>,
-}
-
 impl<const LANES: usize> Tree<LANES> {
-    fn parts_mut(&mut self) -> (&mut Entries<LANES>, &mut Branches<LANES>, Start<'_>) {
-        let root = if self.map.is_empty() {
-            Start::Empty(&mut self.root)
-        } else {
-            // SAFETY: this joint owner initializes its root exactly while map is nonempty.
-            Start::Occupied(Root(unsafe { self.root.assume_init_mut() }))
-        };
-        (&mut self.map, &mut self.branches, root)
-    }
-
     pub(in crate::depot::queue::group) fn clear(&mut self) {
         while self.map.pop_front().is_some() {}
         while self.branches.pop_front().is_some() {}
@@ -161,12 +120,16 @@ impl<const LANES: usize> Tree<LANES> {
         })
     }
 
-    pub(in crate::depot::queue::group) fn find(&self, key: u64) -> Option<&Entry<LANES>> {
+    fn root(&self) -> Option<&Link> {
         if self.map.is_empty() {
             return None;
         }
-        // SAFETY: this shared tree borrow retains its nonempty owner slab.
-        let mut link = unsafe { self.root.assume_init_ref() };
+        // SAFETY: this joint owner initializes its root exactly while map is nonempty.
+        Some(unsafe { self.root.assume_init_ref() })
+    }
+
+    pub(in crate::depot::queue::group) fn find(&self, key: u64) -> Option<&Entry<LANES>> {
+        let mut link = self.root()?;
         loop {
             match link {
                 Link::Owner(owner) => {
@@ -186,30 +149,32 @@ impl<const LANES: usize> Tree<LANES> {
         key: u64,
         lane: Index<LANES>,
     ) -> Option<Lease<Added<'_, LANES>, lease::Open>> {
-        let (map, branches, Start::Occupied(root)) = self.parts_mut() else {
-            return None;
-        };
-        let (owner, branch) = match &*root.0 {
-            Link::Owner(owner) => (owner.bind(&mut *map).into(), None),
+        let (owner, phase) = match self.root()? {
+            Link::Owner(owner) => (owner, None),
             Link::Branch(branch) => {
-                let (owner, branch) =
-                    path::select(branches, branch, key, |owner| owner.bind(&mut *map).into());
+                let (owner, branch) = path::select(&self.branches, branch, key);
                 (owner, Some(branch))
             }
         };
-        if owner.as_ref().key != key || lane.get(&owner.as_ref().heads).is_none() {
+        let owner = owner.bind(&self.map).key().0;
+        let bound = Bound {
+            tree: self,
+            owner,
+            phase,
+        };
+        let entry = bound.get();
+        if entry.key != key || lane.get(&entry.heads).is_none() {
             return None;
         }
-        Some(Lease::open(Added { branch, root }, owner))
+        Some(Lease::open(bound, ()))
     }
 
     pub(in crate::depot::queue::group) fn entry(&mut self, owner: &Node<Tag>) -> Bound<'_, LANES> {
+        let owner = owner.bind(&self.map).key().0;
         Bound {
-            owner: owner.bind(&mut self.map).into(),
-            branches: &mut self.branches,
-            // SAFETY: the affine Node and occupied Slot retain an owner
-            // in this exact tree, so its root stays initialized until removal.
-            root: Root(unsafe { self.root.assume_init_mut() }),
+            tree: self,
+            owner,
+            phase: (),
         }
     }
 
@@ -217,22 +182,90 @@ impl<const LANES: usize> Tree<LANES> {
         &mut self,
         key: u64,
     ) -> Result<Lease<Rollback<'_, LANES>, lease::Open>, Error<LANES>> {
-        let (map, branches, start) = self.parts_mut();
-        let capacity = map.capacity();
-        let empty = Entry::new(key);
-        let root = match start {
-            Start::Empty(root) => {
-                let owner = map.vacant().ok_or(Error::Owners(capacity))?.insert(empty);
-                let root = Root(root.write(Link::Owner(Node::inserted(owner.key()))));
-                return Ok(Lease::open(
-                    Rollback {
-                        added: Some(Added { branch: None, root }),
-                    },
-                    owner,
-                ));
-            }
-            Start::Occupied(root) => root.0,
+        let mut phase = None;
+        let (root, owner) = self.start(key, &mut phase)?;
+        let owner = match owner {
+            Some(owner) => owner,
+            None => root.intern(key, &mut phase)?,
         };
+        let owner = owner.bind(&self.map).key().0;
+        Ok(Lease::open(
+            Bound {
+                tree: self,
+                owner,
+                phase,
+            },
+            (),
+        ))
+    }
+
+    #[inline(always)]
+    fn start(
+        &mut self,
+        key: u64,
+        change: &mut Option<Change>,
+    ) -> Result<(Root<'_, LANES>, Option<Node<Tag>>), Error<LANES>> {
+        let owner = if self.map.is_empty() {
+            let capacity = self.map.capacity();
+            let owner = self
+                .map
+                .vacant()
+                .ok_or(Error::Owners(capacity))?
+                .insert(Entry::new(key));
+            let handle = owner.key();
+            self.root.write(Link::Owner(Node::inserted(handle)));
+            *change = Some(Change {
+                owner: owner.index,
+                branch: None,
+            });
+            Some(Node::inserted(handle))
+        } else {
+            None
+        };
+        Ok((Root(self), owner))
+    }
+
+    fn remove(&mut self, change: Change, key: u64) {
+        if let Some(place) = change.branch {
+            // SAFETY: the consumed change retains its distinct initialized branch and parent;
+            // later insertions are removed first, before this exact exclusive tree is reclaimed.
+            let branch: slab::Cursor<'_, Branch, BranchTag, { u32::MAX }, capacity::Count<LANES>> =
+                unsafe { crate::depot::raw::Proof::new((&mut self.branches, place)) }.into();
+            // SAFETY: a retained branch keeps this tree's root initialized until unlink completes.
+            let root = unsafe { self.root.assume_init_mut() };
+            branch.remove(|parent, removed| {
+                let sibling = removed.sibling(key);
+                match parent {
+                    Some(parent) => *parent.child_mut(key) = sibling,
+                    None => *root = sibling,
+                }
+            });
+        }
+        // SAFETY: the consumed change owns this exact live owner, now unlinked from its branch.
+        let owner: slab::Slot<
+            '_,
+            Entry<LANES>,
+            Tag,
+            { u32::MAX },
+            links::Hook,
+            0,
+            capacity::Count<LANES>,
+        > = unsafe { crate::depot::raw::Proof::new((&mut self.map, change.owner)) }.into();
+        owner.detach().discard();
+    }
+}
+
+impl<const LANES: usize> Root<'_, LANES> {
+    #[inline(always)]
+    fn intern(self, key: u64, change: &mut Option<Change>) -> Result<Node<Tag>, Error<LANES>> {
+        let Tree {
+            map,
+            branches,
+            root,
+        } = self.0;
+        // SAFETY: Root is constructed only while its exclusive tree has a live owner.
+        let root = unsafe { root.assume_init_mut() };
+        let capacity = map.capacity();
         let mut indices = [mem::MaybeUninit::uninit(); u64::BITS as usize];
         let (owner, position) = match root {
             Link::Owner(owner) => (owner.bind(&mut *map).into(), Position::Root(branches)),
@@ -243,99 +276,105 @@ impl<const LANES: usize> Tree<LANES> {
             }
         };
         let Some(mask) = mask::Mask::between(key, owner.as_ref().key) else {
-            return Ok(Lease::open(Rollback { added: None }, owner));
+            return Ok(Node::inserted(owner.key()));
         };
         let owner = owner
             .into_owner()
             .0
             .vacant()
             .ok_or(Error::Owners(capacity))?
-            .insert(empty);
-        let mut build = |parent: Option<&mut Branch>, branch| {
-            Branch::insert(
-                parent,
-                root,
-                mask,
-                Node::inserted(branch),
-                Node::inserted(owner.key()),
-                key,
-            )
-        };
-        let inserted = match position {
+            .insert(Entry::new(key));
+        let (branches, parent) = match position {
+            Position::Root(branches) => (branches, None),
             Position::Branch(mut path) => {
-                let below = path.rewind(mask).is_some();
-                let cursor = path.into_cursor();
-                if below {
-                    cursor.try_insert(build)
-                } else {
-                    cursor.try_prepend(build)
-                }
-            }
-            Position::Root(branches) => {
-                let capacity = branches.capacity();
-                match branches.vacant() {
-                    Some(vacant) => Ok(slab::Cursor::new(
-                        vacant.insert_with(|branch| build(None, branch)),
-                    )),
-                    None => Err(capacity),
-                }
+                let parent = path.rewind(mask);
+                (path.source, parent)
             }
         };
-        let branch = match inserted {
-            Ok(branch) => branch,
-            Err(capacity) => {
-                owner.detach().discard();
-                return Err(Error::Branches(capacity));
-            }
+        let capacity = branches.capacity();
+        let Some(vacant) = branches.vacant() else {
+            owner.detach().discard();
+            return Err(Error::Branches(capacity));
         };
-        Ok(Lease::open(
-            Rollback {
-                added: Some(Added {
-                    branch: Some(branch),
-                    root: Root(root),
-                }),
-            },
-            owner,
-        ))
+        let handle = owner.key();
+        // SAFETY: the retained decreasing-mask path proves a live parent distinct from this vacancy.
+        let mut branch = unsafe { slab::Cursor::new(vacant, parent) };
+        let added = Node::inserted(branch.key());
+        let value = Branch::insert(
+            branch.parent_mut(),
+            root,
+            mask,
+            added,
+            Node::inserted(handle),
+            key,
+        );
+        let branch = branch.into_inner().insert(value);
+        *change = Some(Change {
+            owner: owner.index,
+            branch: Some((branch.index, parent)),
+        });
+        Ok(Node::inserted(handle))
     }
 }
 
-impl<const LANES: usize> Lease<Rollback<'_, LANES>, lease::Open> {
-    pub(in crate::depot::queue::group) fn commit(
-        self,
-        lane: Index<LANES>,
-        key: Node<group::EntryTag>,
-    ) {
-        let (Rollback { added: _ }, mut owner) = self.into_parts();
-        *lane.get_mut(&mut owner.as_mut().tails) = Some(key);
+impl<const LANES: usize, P> Bound<'_, LANES, P> {
+    pub(in crate::depot::queue::group) fn get(&self) -> &Entry<LANES> {
+        // SAFETY: this bound owner remains live in its retained exclusive tree.
+        unsafe { crate::depot::raw::Proof::new((&self.tree.map, self.owner)) }.into()
+    }
+
+    pub(in crate::depot::queue::group) fn get_mut(&mut self) -> &mut Entry<LANES> {
+        // SAFETY: this reborrow retains the admitted owner and excludes all other access.
+        let slot: slab::Slot<
+            '_,
+            Entry<LANES>,
+            Tag,
+            { u32::MAX },
+            links::Hook,
+            0,
+            capacity::Count<LANES>,
+        > = unsafe { crate::depot::raw::Proof::new((&mut self.tree.map, self.owner)) }.into();
+        slot.into_mut()
     }
 }
 
-impl<'a, const LANES: usize> Return for Rollback<'a, LANES> {
-    type Item =
-        slab::Slot<'a, Entry<LANES>, Tag, { u32::MAX }, links::Hook, 0, capacity::Count<LANES>>;
+impl<const LANES: usize> Return for Rollback<'_, LANES> {
+    type Item = ();
 
-    fn return_item(self, owner: Self::Item) {
-        if let Some(Added { branch, root }) = self.added {
-            root.remove(owner, branch);
+    fn return_item(self, (): ()) {
+        if let Some(change) = self.phase {
+            let owner = Bound {
+                tree: self.tree,
+                owner: self.owner,
+                phase: (),
+            };
+            let key = owner.get().key;
+            owner.tree.remove(change, key);
         }
     }
 }
 
-impl<'a, const LANES: usize> Return for Added<'a, LANES> {
-    type Item =
-        slab::Slot<'a, Entry<LANES>, Tag, { u32::MAX }, links::Hook, 0, capacity::Count<LANES>>;
+impl<const LANES: usize> Return for Added<'_, LANES> {
+    type Item = ();
 
-    fn return_item(self, owner: Self::Item) {
-        if owner.as_ref().heads.iter().all(Option::is_none) {
-            self.root.remove(owner, self.branch);
+    fn return_item(self, (): ()) {
+        let entry = self.get();
+        if entry.heads.iter().all(Option::is_none) {
+            let key = entry.key;
+            self.tree.remove(
+                Change {
+                    owner: self.owner,
+                    branch: self.phase,
+                },
+                key,
+            );
         }
     }
 }
 
-impl<'a, const LANES: usize> Bound<'a, LANES> {
+impl<const LANES: usize> Bound<'_, LANES> {
     pub(in crate::depot::queue::group) fn key(&self) -> u64 {
-        self.owner.as_ref().key
+        self.get().key
     }
 
     pub(in crate::depot::queue::group) fn detach(
@@ -343,16 +382,16 @@ impl<'a, const LANES: usize> Bound<'a, LANES> {
         lane: Index<LANES>,
         next: Option<Node<group::EntryTag>>,
     ) {
-        self.owner.as_mut().detach(lane, next);
+        self.get_mut().detach(lane, next);
     }
 
     pub(in crate::depot::queue::group) fn restore(
-        &mut self,
+        mut self,
         lane: Index<LANES>,
         key: slab::Handle<group::EntryTag>,
     ) -> (Node<Tag>, Option<Node<group::EntryTag>>) {
-        let owner_key = Node::inserted(self.owner.key());
-        let owner = self.owner.as_mut();
+        let owner_key = self.node();
+        let owner = self.get_mut();
         let next = lane.get_mut(&mut owner.heads).replace(Node::inserted(key));
         if next.is_none() {
             *lane.get_mut(&mut owner.tails) = Some(Node::inserted(key));
@@ -365,27 +404,34 @@ impl<'a, const LANES: usize> Bound<'a, LANES> {
         lane: Index<LANES>,
         next: Option<Node<group::EntryTag>>,
     ) {
-        let entry = self.owner.as_ref();
         if next.is_some()
-            || entry
+            || self
+                .get()
                 .heads
                 .iter()
                 .enumerate()
                 .any(|(index, head)| index != lane.index() && head.is_some())
         {
-            self.owner.as_mut().detach(lane, next);
+            self.detach(lane, next);
             return;
         }
         self.last()
     }
 
     fn last(self) {
-        let bits = self.owner.as_ref().key;
-        let branch = match &*self.root.0 {
+        let key = self.get().key;
+        // SAFETY: Bound retains an admitted owner, so the root remains initialized.
+        let branch = match unsafe { self.tree.root.assume_init_ref() } {
             Link::Owner(_) => None,
-            Link::Branch(branch) => Some(path::select(self.branches, branch, bits, |_| ()).1),
+            Link::Branch(branch) => Some(path::select(&self.tree.branches, branch, key).1),
         };
-        self.root.remove(self.owner, branch);
+        self.tree.remove(
+            Change {
+                owner: self.owner,
+                branch,
+            },
+            key,
+        );
     }
 }
 
@@ -393,16 +439,22 @@ impl<'a, const LANES: usize> Return for Bound<'a, LANES> {
     type Item = &'a mut u32;
 
     fn return_item(self, _: Self::Item) {
-        if self.owner.as_ref().heads.iter().all(Option::is_none) {
+        if self.get().heads.iter().all(Option::is_none) {
             self.last();
         }
     }
 }
 
 const _: () = {
-    assert!(mem::size_of::<Root<'static>>() == mem::size_of::<&mut Link>());
+    assert!(mem::size_of::<Root<'static, 1>>() == mem::size_of::<&mut Link>());
     assert!(mem::size_of::<Entry<1>>() == 2 * mem::size_of::<usize>());
     assert!(mem::size_of::<Entry<2>>() == 3 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Option<Place>>() == 2 * mem::size_of::<u32>());
+    assert!(mem::size_of::<Option<Change>>() == 3 * mem::size_of::<u32>());
+    assert!(mem::size_of::<Bound<'static, 1>>() == 2 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Lease<Rollback<'static, 1>>>() == 3 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Lease<Added<'static, 1>>>() == 3 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Result<Node<Tag>, Error<1>>>() <= 2 * mem::size_of::<usize>());
 };
 
 /// Radix nodes and branches share the same admitted lane capacity.

@@ -4,7 +4,7 @@ use crate::{
         queue::{
             group::{self, capacity, map},
             indexed::slab,
-            links, tagged,
+            tagged,
         },
     },
     mem::{Lease, lease},
@@ -28,15 +28,7 @@ pub struct Drain<'a, V, const LANES: usize> {
 /// A resolved record and the exact owner links changed by its removal.
 pub struct Item<'a, 'b, V, const LANES: usize> {
     entry: group::Slot<'a, V, LANES>,
-    owner: &'a mut slab::Slot<
-        'b,
-        map::Entry<LANES>,
-        map::Tag,
-        { u32::MAX },
-        links::Hook,
-        0,
-        capacity::Count<LANES>,
-    >,
+    owner: &'a mut Lease<map::Added<'b, LANES>, lease::Open>,
     length: &'a mut u32,
     lane: Index<LANES>,
 }
@@ -57,11 +49,11 @@ impl<'a, V, const LANES: usize> Drain<'a, V, LANES> {
     }
 
     pub fn next_entry(&mut self) -> Option<Item<'_, 'a, V, LANES>> {
-        let key = self.lane.get(&self.owner.item().as_ref().heads).as_ref()?;
+        let key = self.lane.get(&self.owner.sink().get().heads).as_ref()?;
         let entry = key.bind(&mut *self.entries).into();
         Some(Item {
             entry,
-            owner: self.owner.item_mut(),
+            owner: &mut self.owner,
             length: self.length,
             lane: self.lane,
         })
@@ -75,13 +67,17 @@ impl<V, const LANES: usize> Item<'_, '_, V, LANES> {
 
     pub fn remove(self) -> V {
         let entry = self.entry.remove();
-        self.owner.as_mut().detach(self.lane, entry.owner_next);
+        self.owner
+            .parts_mut()
+            .0
+            .get_mut()
+            .detach(self.lane, entry.owner_next);
         *self.length -= 1;
         entry.value
     }
 }
 
 const _: () = {
-    assert!(size_of::<Drain<'static, u64, 2>>() == 9 * size_of::<usize>());
+    assert!(size_of::<Drain<'static, u64, 2>>() == 6 * size_of::<usize>());
     assert!(size_of::<Item<'static, 'static, u64, 2>>() == 5 * size_of::<usize>());
 };

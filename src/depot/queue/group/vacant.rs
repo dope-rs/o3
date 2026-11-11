@@ -51,7 +51,7 @@ impl<'a, V, const LANES: usize> Entry<'a, V, LANES> {
         let owner = map
             .intern(key)
             .map_err(|cause| group::Error::owner(lane, key, cause))?;
-        let slot = Slot::new(slot, lane.get(&owner.item().as_ref().tails).as_ref());
+        let slot = Slot::new(slot, lane.get(&owner.sink().get().tails).as_ref());
         Ok(Self {
             slot,
             owner,
@@ -60,13 +60,15 @@ impl<'a, V, const LANES: usize> Entry<'a, V, LANES> {
         })
     }
 
-    pub fn insert(mut self, value: V) {
-        let owner = map::Node::inserted(self.owner.item().key());
-        let tail = self.slot.insert(owner, value, |head| {
-            *self.lane.get_mut(&mut self.owner.item_mut().as_mut().heads) = Some(head);
+    pub fn insert(self, value: V) {
+        let (mut owner, ()) = self.owner.into_parts();
+        let member = owner.node();
+        let entry = owner.get_mut();
+        let tail = self.slot.insert(member, value, |head| {
+            *self.lane.get_mut(&mut entry.heads) = Some(head);
         });
         *self.length += 1;
-        self.owner.commit(self.lane, tail);
+        *self.lane.get_mut(&mut entry.tails) = Some(tail);
     }
 }
 

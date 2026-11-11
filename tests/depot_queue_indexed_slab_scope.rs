@@ -4,104 +4,17 @@ pub mod common;
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
 
-use std::{cell::Cell, mem};
-
 use common::{
     alloc::system::Tracker,
     depot::{
         index::capacity::Count,
-        queue::indexed::slab::{Domain, Node, READY, Value, WAITING},
+        queue::indexed::slab::{Domain, Node, READY, WAITING},
     },
 };
 use o3::depot::{
     capacity,
     queue::{indexed::slab, tagged},
 };
-
-#[test]
-fn cancels_insertions() {
-    let dropped = Cell::new(Some(0));
-    {
-        let mut queue = (slab::Slab::<_, (), 2>::try_from(capacity::Count::new(3)))
-            .expect("three slots must allocate");
-        let slot = (queue.vacant()).expect("empty queue has room");
-        let old = slot
-            .insert(Value {
-                id: 1,
-                dropped: &dropped,
-            })
-            .key();
-        let ((), activity) = Tracker::measure(|| {
-            slab::Scope::with(&mut queue, |mut scope| {
-                let old =
-                    (scope.bind(old)).expect("queue handle must retain its original generation");
-
-                let second = (scope.try_insert(Value {
-                    id: 2,
-                    dropped: &dropped,
-                }))
-                .expect("queue scope must retain the inserted value");
-                let third = (scope.try_insert(Value {
-                    id: 4,
-                    dropped: &dropped,
-                }))
-                .expect("queue scope must retain the inserted value");
-                assert_eq!(scope.get(old).id, 1);
-                assert_eq!(scope.get(second).id, 2);
-                scope.get_mut(third).id = 8;
-            })
-        });
-        assert_eq!(activity, [0; 4]);
-        assert_eq!(dropped.get(), Some(10));
-        assert_eq!(queue.available(), 2);
-        assert_eq!(queue.front_pair().map(|(_, value)| value.id), Some(1));
-    }
-    assert_eq!(dropped.get(), Some(11));
-}
-
-#[test]
-fn rejects_exhausted_scope() {
-    let mut queue = (slab::Slab::<usize, (), 1>::try_from(capacity::Count::new(1)))
-        .expect("one slot must allocate");
-    slab::Scope::with(&mut queue, |mut scope| {
-        scope
-            .try_insert(5)
-            .as_ref()
-            .expect("required fixture outcome");
-    });
-    assert_eq!(queue.available(), 0);
-    slab::Scope::with(&mut queue, |mut scope| {
-        let rejected = scope
-            .try_insert(9)
-            .err()
-            .expect("the last generation cannot be reused");
-        let (value, capacity) = rejected.into_parts();
-        assert!(capacity == capacity::Count::new(1));
-        assert_eq!(value, 9);
-    });
-}
-
-#[test]
-fn commits_bound_slots() {
-    let mut queue =
-        (slab::Slab::<usize>::try_from(capacity::Count::new(2))).expect("two slots must allocate");
-    let (handles, activity) = Tracker::measure(|| {
-        slab::Scope::with(&mut queue, |mut scope| {
-            let first = (scope.try_insert(5)).expect("queue scope must retain the inserted value");
-            let second = (scope.try_insert(9)).expect("queue scope must retain the inserted value");
-            *scope.get_mut(first) = 7;
-            let keys = [scope.key(first), scope.key(second)];
-            scope.commit();
-            keys
-        })
-    });
-    assert_eq!(activity, [0; 4]);
-    let [first, second] = handles;
-    assert!((queue.try_get(first).copied()) == (Ok(7)));
-    assert!((queue.try_get(second).copied()) == (Ok(9)));
-    assert_eq!(queue.pop_front(), Some(7));
-    assert_eq!(queue.pop_front(), Some(9));
-}
 
 #[test]
 fn links_reserved_slots() {
@@ -153,78 +66,6 @@ fn links_reserved_slots() {
         queue.front_pair(SECOND).map(|(_, entry)| entry.value),
         Some(3)
     );
-}
-
-#[test]
-fn restores_spliced_parent() {
-    let dropped = Cell::new(Some(0));
-    {
-        let mut queue = slab::Slab::<_, (), 2>::try_from(capacity::Count::new(2))
-            .expect("parent and child slots must allocate");
-        let old = queue
-            .vacant()
-            .expect("parent slot")
-            .insert(Value {
-                id: 1,
-                dropped: &dropped,
-            })
-            .key();
-        let ((), activity) = Tracker::measure(|| {
-            slab::Scope::with(&mut queue, |mut scope| {
-                let parent =
-                    (scope.bind(old)).expect("queue handle must retain its original generation");
-
-                let edit = (scope.try_splice(Some(parent), |parent, _| {
-                    let parent = parent.expect("the supplied parent stays present");
-                    let id = mem::replace(&mut parent.id, 2);
-                    Value {
-                        id,
-                        dropped: &dropped,
-                    }
-                }))
-                .expect("queue must reserve the child before splicing");
-
-                let (parent, child) = edit.get(&mut scope);
-                let parent = parent.expect("the insertion retains its parent");
-                assert_ne!(std::ptr::from_ref(parent), std::ptr::from_ref(child));
-                assert_eq!((parent.id, child.id), (2, 1));
-                mem::swap(&mut parent.id, &mut child.id);
-            });
-        });
-        assert_eq!(activity, [0; 4]);
-        assert_eq!(dropped.get(), Some(2));
-        assert_eq!(queue.available(), 1);
-        assert!((queue.try_get(old).map(|value| value.id)) == (Ok(1)));
-    }
-    assert_eq!(dropped.get(), Some(3));
-}
-
-#[test]
-fn rejects_before_splice() {
-    let mut queue =
-        slab::Slab::<usize>::try_from(capacity::Count::new(1)).expect("parent slot must allocate");
-    let old = queue.vacant().expect("parent slot").insert(7).key();
-    let ((), activity) = Tracker::measure(|| {
-        slab::Scope::with(&mut queue, |mut scope| {
-            let parent =
-                (scope.bind(old)).expect("queue handle must retain its original generation");
-
-            let invoked = Cell::new(false);
-            let error = scope
-                .try_splice(Some(parent), |parent, _| {
-                    invoked.set(true);
-                    *parent.expect("existing parent") = 9;
-                    11
-                })
-                .err()
-                .expect("the child must reject full capacity");
-            assert!(error.capacity == capacity::Count::new(1));
-            assert!(!invoked.get());
-            assert_eq!(*scope.get(parent), 7);
-        });
-    });
-    assert_eq!(activity, [0; 4]);
-    assert_eq!(queue.pop_front(), Some(7));
 }
 
 #[test]

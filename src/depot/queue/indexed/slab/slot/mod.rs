@@ -2,7 +2,7 @@ use std::{mem, ops, ptr};
 
 use slab::{Vacant, phase};
 
-use crate::depot::{array::Index, queue::links, raw::Live};
+use crate::depot::{array::Index, queue::links};
 pub(super) mod vacant;
 
 use crate::depot::{
@@ -229,75 +229,6 @@ impl<
     type Target = slab::Slab<T, Tag, MAX, H, N, C>;
     fn deref(&self) -> &Self::Target {
         self.core
-    }
-}
-
-pub(in crate::depot) enum Splice<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count> {
-    Root(Vacant<'a, T, Tag, MAX, links::Hook, 0, C>),
-    Parent(Live<Vacant<'a, T, Tag, MAX, links::Hook, 0, C>, links::Index, links::Hook>),
-}
-
-impl<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count> Splice<'a, T, Tag, MAX, C> {
-    /// # Safety
-    /// A present parent is initialized in this slot's exact owner and distinct
-    /// from its vacancy; it remains live until this phase is consumed.
-    pub(in crate::depot) unsafe fn new(
-        slot: Vacant<'a, T, Tag, MAX, links::Hook, 0, C>,
-        parent: Option<links::Index>,
-    ) -> Self {
-        match parent {
-            Some(parent) => Self::Parent(unsafe { crate::depot::raw::Proof::new((slot, parent)) }),
-            None => Self::Root(slot),
-        }
-    }
-
-    pub(in crate::depot) fn insert(
-        self,
-        build: impl FnOnce(Option<&mut T>, slab::Handle<Tag, MAX>) -> T,
-    ) -> Slot<'a, T, Tag, MAX, links::Hook, 0, C> {
-        match self {
-            Self::Root(slot) => {
-                let key = slot.handle();
-                slot.insert(build(None, key))
-            }
-            Self::Parent(parent) => {
-                let (slot, index) = parent.into_inner();
-                let key = slot.handle();
-                let parent = Slot {
-                    core: &mut *slot.core,
-                    index,
-                    phase: phase::Occupied,
-                }
-                .into_mut();
-                let value = build(Some(parent), key);
-                slot.insert(value)
-            }
-        }
-    }
-    pub(in crate::depot) fn remove<R>(
-        self,
-        value: T,
-        unlink: impl FnOnce(Option<&mut T>, T) -> R,
-    ) -> R {
-        match self {
-            Self::Root(slot) => {
-                let result = unlink(None, value);
-                slot.cancel();
-                result
-            }
-            Self::Parent(parent) => {
-                let (slot, index) = parent.into_inner();
-                let parent = Slot {
-                    core: &mut *slot.core,
-                    index,
-                    phase: phase::Occupied,
-                }
-                .into_mut();
-                let result = unlink(Some(parent), value);
-                slot.cancel();
-                result
-            }
-        }
     }
 }
 

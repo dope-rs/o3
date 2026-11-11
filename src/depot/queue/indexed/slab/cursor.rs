@@ -1,4 +1,4 @@
-use slab::slot;
+use slab::phase;
 
 use crate::depot::{
     capacity,
@@ -12,60 +12,60 @@ pub struct Cursor<
     Tag = (),
     const MAX: u32 = { u32::MAX },
     C: crate::depot::raw::Count = capacity::Count,
+    P: phase::State = phase::Occupied,
 > {
-    pub(in crate::depot) entry: slab::Slot<'a, T, Tag, MAX, links::Hook, 0, C>,
-    pub(in crate::depot) parent: Option<links::Index>,
+    entry: slab::Slot<'a, T, Tag, MAX, links::Hook, 0, C, P>,
+    parent: Option<links::Index>,
+}
+
+impl<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count, P: phase::State>
+    Cursor<'a, T, Tag, MAX, C, P>
+{
+    /// # Safety
+    /// A present parent is initialized in this entry's exact owner and distinct
+    /// from the entry; it remains live until this cursor is consumed.
+    pub(in crate::depot) unsafe fn new(
+        entry: slab::Slot<'a, T, Tag, MAX, links::Hook, 0, C, P>,
+        parent: Option<links::Index>,
+    ) -> Self {
+        Self { entry, parent }
+    }
+}
+
+impl<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count>
+    Cursor<'a, T, Tag, MAX, C, phase::Vacant>
+{
+    pub(in crate::depot) fn key(&self) -> slab::Handle<Tag, MAX> {
+        self.entry.handle()
+    }
+
+    pub(in crate::depot) fn parent_mut(&mut self) -> Option<&mut T> {
+        let index = self.parent?;
+        Some(
+            slab::Slot {
+                core: &mut *self.entry.core,
+                index,
+                phase: phase::Occupied,
+            }
+            .into_mut(),
+        )
+    }
+
+    pub(in crate::depot) fn into_inner(self) -> slab::Vacant<'a, T, Tag, MAX, links::Hook, 0, C> {
+        self.entry
+    }
 }
 
 impl<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count> Cursor<'a, T, Tag, MAX, C> {
-    pub(in crate::depot) fn new(entry: slab::Slot<'a, T, Tag, MAX, links::Hook, 0, C>) -> Self {
-        Self {
-            entry,
-            parent: None,
-        }
-    }
-
-    pub fn try_insert(
-        self,
-        build: impl FnOnce(Option<&mut T>, slab::Handle<Tag, MAX>) -> T,
-    ) -> Result<Self, C> {
-        let parent = Some(self.entry.index);
-        self.splice(parent, build)
-    }
-
-    pub fn try_prepend(
-        self,
-        build: impl FnOnce(Option<&mut T>, slab::Handle<Tag, MAX>) -> T,
-    ) -> Result<Self, C> {
-        let parent = self.parent;
-        self.splice(parent, build)
-    }
-
-    fn splice(
-        self,
-        parent: Option<links::Index>,
-        build: impl FnOnce(Option<&mut T>, slab::Handle<Tag, MAX>) -> T,
-    ) -> Result<Self, C> {
-        let (core, _) = self.entry.into_owner();
-        let capacity = core.capacity();
-        let Some(slot) = core.vacant() else {
-            return Err(capacity);
-        };
-        // SAFETY: Cursor owns its initialized parent in the same allocation;
-        // the newly reserved slot is distinct and retained until insertion.
-        let splice = unsafe { slot::Splice::new(slot, parent) };
-        Ok(Self {
-            entry: splice.insert(build),
-            parent,
-        })
-    }
-
     pub fn remove<R>(self, unlink: impl FnOnce(Option<&mut T>, T) -> R) -> R {
-        let (value, slot) = self.entry.detach().into_spare();
-        // SAFETY: suspension retains the exact allocation and reserved slot;
-        // Cursor's distinct initialized parent remains live until unlink commits.
-        let splice = unsafe { slot::Splice::new(slot, self.parent) };
-        splice.remove(value, unlink)
+        let (value, entry) = self.entry.detach().into_spare();
+        let mut cursor = Cursor {
+            entry,
+            parent: self.parent,
+        };
+        let result = unlink(cursor.parent_mut(), value);
+        cursor.into_inner().cancel();
+        result
     }
 }
 

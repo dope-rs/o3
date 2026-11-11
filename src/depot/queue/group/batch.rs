@@ -43,7 +43,7 @@ impl<'a, V, const LANES: usize, const N: usize> Batch<'a, V, LANES, N> {
             let (commit, items) = input;
             ready(commit);
             self.slots.insert(bound, items, |slot, owner, item| {
-                let member = map::Node::inserted(map.key(owner));
+                let member = map.member(owner);
                 let entry = map.get_mut(owner);
                 *item.lane.get_mut(self.lengths) += 1;
                 let value = convert(item.value);

@@ -79,6 +79,26 @@ fn forgets_owner_vacancy() {
 }
 
 #[test]
+fn publishes_empty_batch() {
+    let capacity = capacity::Count::new(Count::new(0));
+    let mut ledger = Ledger::<usize, 1>::try_new(capacity).expect("empty ledger");
+    let mut ready = false;
+    let mut converted = false;
+    let result = group::Batch::<_, 1, 0>::new(&mut ledger)
+        .expect("empty batch")
+        .publish(
+            [],
+            (),
+            |()| ready = true,
+            |value| {
+                converted = true;
+                value
+            },
+        );
+    assert_eq!((result.is_ok(), ready, converted), (true, true, false));
+}
+
+#[test]
 fn publishes_linked_batch() {
     let capacity = capacity::Count::try_from(6).expect("tagged capacity");
     let mut ledger = Ledger::<usize, 2>::try_new(capacity).expect("ledger allocation");
@@ -120,7 +140,7 @@ fn publishes_linked_batch() {
 
 #[test]
 fn rolls_back_batch() {
-    let capacity = capacity::Count::try_from(4).expect("tagged capacity");
+    let capacity = capacity::Count::try_from(6).expect("tagged capacity");
     let mut ledger = Ledger::<Box<u64>, 1>::try_new(capacity).expect("ledger allocation");
     let lane = Index::at::<0>();
     for key in [1, 2] {
@@ -132,7 +152,8 @@ fn rolls_back_batch() {
     assert!(ledger.push_back(lane, 3, Box::new(3)).is_ok());
     let commit = String::from("retained commit");
     let pointer = commit.as_ptr();
-    let items = [4, 5, 6].map(|key| vacant::Item::new(lane, key, Box::new(key)));
+    let keys = [4, 4, 1 << 63, 5, 6];
+    let items = keys.map(|key| vacant::Item::new(lane, key, Box::new(key)));
     let mut called = false;
     let result = group::Batch::new(&mut ledger)
         .expect("entry capacity")
@@ -144,7 +165,7 @@ fn rolls_back_batch() {
         group::Error::Owners {
             lane,
             capacity,
-            key: 5,
+            key: 6
         }
     );
     assert_eq!(commit.as_ptr(), pointer);
@@ -153,19 +174,19 @@ fn rolls_back_batch() {
             let (lane, key, value) = item.into_parts();
             (lane, key, *value)
         }),
-        [(lane, 4, 4), (lane, 5, 5), (lane, 6, 6)]
+        keys.map(|key| (lane, key, key)),
     );
-    assert_eq!(ledger.available(), 3);
+    assert_eq!(ledger.available(), 5);
     assert_eq!(ledger.get(3, lane).map(|value| **value), Some(3));
-    assert!(ledger.push_back(lane, 7, Box::new(7)).is_ok());
-    assert_eq!(
-        ledger.pop_front(lane).map(|(key, value)| (key, *value)),
-        Some((3, 3))
-    );
-    assert_eq!(
-        ledger.pop_front(lane).map(|(key, value)| (key, *value)),
-        Some((7, 7))
-    );
+    for key in [7, 8, 9] {
+        assert!(ledger.push_back(lane, key, Box::new(key)).is_ok());
+    }
+    for expected in [3, 7, 8, 9] {
+        assert_eq!(
+            ledger.pop_front(lane).map(|(key, value)| (key, *value)),
+            Some((expected, expected)),
+        );
+    }
 }
 
 #[test]

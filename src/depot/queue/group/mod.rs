@@ -137,7 +137,7 @@ pub struct Vacancy<'a, V, const LANES: usize> {
 
 impl<V, const LANES: usize> Vacancy<'_, V, LANES> {
     pub fn restore(self, value: V) {
-        let (mut bound, length) = self.owner.into_parts();
+        let (bound, length) = self.owner.into_parts();
         let (owner, next) = bound.restore(self.slot.phase.0, self.slot.handle());
         *length += 1;
         self.slot.restore(Entry {
@@ -291,8 +291,8 @@ impl<V> Ledger<V, 1> {
 
 const _: () = {
     assert!(mem::size_of::<Entry<u64>>() == 2 * mem::size_of::<usize>());
-    assert!(mem::size_of::<Front<'static, u64, 2>>() == 8 * mem::size_of::<usize>());
-    assert!(mem::size_of::<Vacancy<'static, u64, 2>>() == 7 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Front<'static, u64, 2>>() == 6 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Vacancy<'static, u64, 2>>() == 5 * mem::size_of::<usize>());
     assert!(mem::size_of::<Index<2>>() == 1);
     assert!(mem::size_of::<Option<Index<2>>>() == 1);
 };

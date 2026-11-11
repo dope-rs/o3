@@ -1,7 +1,7 @@
 use std::marker;
 
 use crate::depot::{
-    queue::{indexed::slab, links},
+    queue::{group::map, indexed::slab, links},
     raw::Live,
 };
 
@@ -30,4 +30,19 @@ const _: () = {
 };
 
 /// A compact index retaining its slab's invariant tag without a stored generation.
-type Key<Tag> = (links::Index, marker::PhantomData<slab::Handle<Tag>>);
+pub(super) type Key<Tag> = (links::Index, marker::PhantomData<slab::Handle<Tag>>);
+
+impl<const LANES: usize, P> map::Bound<'_, LANES, P> {
+    pub(in crate::depot::queue::group) fn node(&self) -> Node<map::Tag> {
+        Node((self.owner, marker::PhantomData))
+    }
+}
+
+impl<'id, const LANES: usize> map::Draft<'_, 'id, LANES> {
+    pub(in crate::depot::queue::group) fn member(
+        &self,
+        key: map::draft::Key<'id>,
+    ) -> Node<map::Tag> {
+        Node(key.into_inner())
+    }
+}

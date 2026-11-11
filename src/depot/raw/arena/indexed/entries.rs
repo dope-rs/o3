@@ -109,28 +109,7 @@ unsafe impl<'a, T, Tag, const MAX: u32, C: crate::depot::raw::Count>
     type Output = slab::Cursor<'a, T, Tag, MAX, C>;
 
     unsafe fn project(self, (index, parent): (links::Index, Option<links::Index>)) -> Self::Output {
-        slab::Cursor {
-            entry: slab::Slot {
-                core: self,
-                index,
-                phase: phase::Occupied,
-            },
-            parent,
-        }
-    }
-}
-
-// SAFETY: the typed compact key remains initialized in this exact insertion-only scope.
-unsafe impl<'id, T, Tag, const MAX: u32, C: crate::depot::raw::Count>
-    crate::depot::raw::Project<&Typed<Tag, MAX>> for &slab::Scope<'_, 'id, T, Tag, MAX, C>
-{
-    type Output = slab::Key<'id, Tag>;
-
-    unsafe fn project(self, (index, _): &Typed<Tag, MAX>) -> Self::Output {
-        slab::Key {
-            index: *index,
-            brand: marker::PhantomData,
-        }
+        unsafe { slab::Cursor::new(crate::depot::raw::Proof::new((self, index)).into(), parent) }
     }
 }
 

@@ -6,8 +6,6 @@ pub use batch::Batch;
 use batch::reserved::Reserved;
 pub use cursor::Cursor;
 pub use error::Error;
-pub use full::Full;
-pub use scope::{Scope, edit::Edit, key::Key};
 pub use slot::{Slot, vacant::Vacant};
 
 use crate::depot::{
@@ -19,12 +17,10 @@ use crate::depot::{
 };
 
 mod error;
-mod full;
 
 mod batch;
 mod cursor;
 pub mod phase;
-mod scope;
 mod slot;
 
 pub struct Slab<

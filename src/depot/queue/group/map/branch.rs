@@ -36,14 +36,6 @@ impl Branch {
             &self.children.0
         }
     }
-    pub(in crate::depot::queue::group::map) fn collapse(&mut self, key: u64, target: &mut Link) {
-        let sibling = if self.mask.contains(key) {
-            &mut self.children.0
-        } else {
-            &mut self.children.1
-        };
-        mem::swap(sibling, target);
-    }
     pub(in crate::depot::queue::group::map) fn child_mut(&mut self, key: u64) -> &mut Link {
         if self.mask.contains(key) {
             &mut self.children.1
