@@ -47,12 +47,7 @@ impl<'a, V, const LANES: usize, const N: usize> Batch<'a, V, LANES, N> {
                 let entry = map.get_mut(owner);
                 *item.lane.get_mut(self.lengths) += 1;
                 let value = convert(item.value);
-                let slot =
-                    vacant::Slot::new(slot.select(item.lane), item.lane.get(&entry.tails).as_ref());
-                let tail = slot.insert(member, value, |head| {
-                    *item.lane.get_mut(&mut entry.heads) = Some(head);
-                });
-                *item.lane.get_mut(&mut entry.tails) = Some(tail);
+                vacant::insert(slot.select(item.lane), member, entry, value);
             });
         })
     }
@@ -69,7 +64,6 @@ impl<'a, V, const LANES: usize> Batch<'a, V, LANES, 1> {
             self.slots.into_entry(lane),
             self.map,
             lane.get_mut(self.lengths),
-            lane,
             owner,
         )
     }

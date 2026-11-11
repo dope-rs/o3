@@ -3,7 +3,6 @@ use std::marker;
 use slab::phase;
 
 use crate::depot::{
-    array::Index,
     index::Initialized,
     queue::{indexed::slab, links, tagged},
 };
@@ -127,27 +126,6 @@ unsafe impl<T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
     }
     fn hook(&self) -> &tagged::Hook {
         &unsafe { self.core.block.metadata.add(self.index.get()).as_ref() }.hook
-    }
-}
-
-// SAFETY: the typed compact key identifies a distinct initialized predecessor
-// retained by this exact exclusive reservation.
-unsafe impl<'a, T, Tag, const MAX: u32, const N: usize, C: crate::depot::raw::Count>
-    crate::depot::raw::Project<&Typed<Tag, MAX>>
-    for slab::Vacant<'a, T, Tag, MAX, tagged::Hook, N, C, phase::Target<N>>
-{
-    type Output = crate::depot::raw::Proof<
-        (
-            slab::Vacant<'a, T, Tag, MAX, tagged::Hook, N, C, phase::Vacant>,
-            (Index<N>, links::Index),
-        ),
-        Initialized<tagged::Hook>,
-    >;
-    unsafe fn project(self, (previous, _): &Typed<Tag, MAX>) -> Self::Output {
-        let lane = self.phase.0;
-        unsafe {
-            crate::depot::raw::Proof::new((self.into_phase(phase::Vacant), (lane, *previous)))
-        }
     }
 }
 
