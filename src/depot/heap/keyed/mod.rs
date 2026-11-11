@@ -7,14 +7,11 @@ mod occupied;
 pub use vacant::Vacant;
 mod vacant;
 
-use std::{marker, mem};
+use std::mem;
 
 use heap::{Live, keyed};
 
-use crate::{
-    alloc,
-    depot::{arena::slab::key, capacity, heap},
-};
+use crate::depot::{arena::slab::key, capacity, heap};
 
 #[must_use = "an entry state must be committed to change the heap"]
 pub enum Entry<'a, K: crate::depot::raw::Address, P: Ord, I: Position = u32> {
@@ -70,12 +67,7 @@ const _: () = assert!(
 );
 
 /// A fixed-domain minimum heap addressed by complete generation keys.
-#[repr(C)]
-pub struct Min<K: crate::depot::raw::Address, P: Ord, I: Position = u32, B = ()> {
-    pub(in crate::depot::heap) storage:
-        alloc::raw::Block<heap::Capacity<heap::Stored<K, P>, I, ()>, u32>,
-    key: Domain<K, B>,
-}
+pub type Min<K, P, I = u32, B = ()> = super::owner::Owner<K, P, (), I, (), B>;
 
 impl<K: crate::depot::raw::Address, P: Ord, I: Position, B> Min<K, P, I, B> {
     pub fn first_entry(&mut self) -> Option<keyed::Occupied<'_, K, P, I, B>> {
@@ -84,20 +76,6 @@ impl<K: crate::depot::raw::Address, P: Ord, I: Position, B> Min<K, P, I, B> {
         Some(keyed::Occupied {
             entry: entry.with_key(key),
         })
-    }
-
-    pub const fn len(&self) -> usize {
-        self.storage.state as usize
-    }
-    pub const fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
-impl<K: crate::depot::raw::Address, P: Ord, I: Position, B> Drop for Min<K, P, I, B> {
-    fn drop(&mut self) {
-        // SAFETY: Drop retains the terminal owner until its MaybeUninit backing is deallocated.
-        unsafe { heap::raw::Store::destroy(self) };
     }
 }
 
@@ -119,10 +97,7 @@ impl<K: crate::depot::raw::Address, P: Ord, I: Position> Min<K, P, I> {
     }
 
     pub fn try_new(capacity: capacity::Count) -> Result<Self, heap::Error> {
-        Ok(Self {
-            storage: heap::Capacity::try_new(capacity)?.allocate()?,
-            key: marker::PhantomData,
-        })
+        Ok(Self::new(heap::Capacity::try_new(capacity)?.allocate()?))
     }
 
     pub fn try_with<R>(
@@ -131,13 +106,7 @@ impl<K: crate::depot::raw::Address, P: Ord, I: Position> Min<K, P, I> {
     ) -> Result<R, heap::Error> {
         let storage = heap::Capacity::try_new(capacity)?.allocate()?;
         Ok(capacity::Domain::with(capacity, |domain| {
-            run(
-                Min {
-                    storage,
-                    key: marker::PhantomData,
-                },
-                domain,
-            )
+            run(Min::new(storage), domain)
         }))
     }
 
@@ -204,30 +173,6 @@ const _: () = {
             == mem::size_of::<keyed::Occupied<'static, key::Handle<(), 1>, usize>>()
     );
 };
-
-unsafe impl<K: crate::depot::raw::Address, P: Ord, I: Position, B> heap::raw::Store
-    for Min<K, P, I, B>
-{
-    type Key = K;
-    type Priority = P;
-    type Position = I;
-    type Storage = heap::Capacity<heap::Stored<K, P>, I, ()>;
-    type Extra = ();
-
-    fn precedes(left: &K, right: &K) -> bool {
-        left.index() < right.index()
-    }
-
-    fn storage(&self) -> &alloc::raw::Block<Self::Storage, u32, Self::Extra> {
-        &self.storage
-    }
-
-    fn storage_mut(&mut self) -> &mut alloc::raw::Block<Self::Storage, u32, Self::Extra> {
-        &mut self.storage
-    }
-}
-
-type Domain<K, B> = marker::PhantomData<(fn(K) -> K, B)>;
 
 /// Heap owner and identity share one admitted capacity domain.
 type Bound<'h, K, P, I> = keyed::Min<K, P, I, capacity::Domain<'h>>;

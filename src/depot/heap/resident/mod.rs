@@ -11,14 +11,9 @@ mod conflict;
 pub use removed::Removed;
 mod removed;
 
-use std::{marker, ptr};
-
 use heap::{Live, keyed::Error, resident};
 
-use crate::{
-    alloc,
-    depot::{arena::slab::key, capacity, heap},
-};
+use crate::depot::{arena::slab::key, capacity, heap};
 
 const _: () = assert!(
     std::mem::size_of::<Min<key::Handle<(), 1>, usize, usize>>()
@@ -35,11 +30,7 @@ const _: () = assert!(
 );
 
 /// One-allocation minimum heap with a stable resident for every index.
-#[repr(C)]
-pub struct Min<K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position = u32> {
-    pub(in crate::depot::heap) storage: Storage<K, P, R, I>,
-    key: marker::PhantomData<fn(K) -> K>,
-}
+pub type Min<K, P, R, I = u32> = super::owner::Owner<K, P, R, I, std::ptr::NonNull<R>>;
 
 #[must_use = "an entry state must be committed to change the heap"]
 pub enum Entry<'a, K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position = u32> {
@@ -84,12 +75,11 @@ impl<K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position> Entry<'_, K, P
 
 impl<K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position> Min<K, P, R, I> {
     pub fn try_repeat(capacity: capacity::Count, value: R) -> Result<Self, heap::Error> {
-        Ok(Self {
-            storage: heap::Capacity::try_new(capacity)?
+        Ok(Self::new(
+            heap::Capacity::try_new(capacity)?
                 .allocate()?
                 .enumerate(|_| value),
-            key: marker::PhantomData,
-        })
+        ))
     }
 
     pub fn entry(&mut self, key: K) -> Result<resident::Entry<'_, K, P, R, I>, Error<K>> {
@@ -122,14 +112,6 @@ impl<K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position> Min<K, P, R, I
             entry: entry.with_key(key),
         })
     }
-
-    pub const fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub const fn len(&self) -> usize {
-        self.storage.state as usize
-    }
 }
 
 impl<'a, K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position>
@@ -144,13 +126,6 @@ impl<'a, K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position>
     }
 }
 
-impl<K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position> Drop for Min<K, P, R, I> {
-    fn drop(&mut self) {
-        // SAFETY: Drop retains the terminal owner until its MaybeUninit backing is deallocated.
-        unsafe { heap::raw::Store::destroy(self) };
-    }
-}
-
 impl<K: crate::depot::raw::Address, P: Ord, R: Copy, C, I: Position>
     Live<(&'_ mut Min<K, P, R, I>, C), K, ()>
 {
@@ -161,30 +136,3 @@ impl<K: crate::depot::raw::Address, P: Ord, R: Copy, C, I: Position>
         (context, output)
     }
 }
-
-// SAFETY: the prefix and reverse map stay a bijection within this owner's resident domain.
-unsafe impl<K: crate::depot::raw::Address, P: Ord, R: Copy, I: Position> heap::raw::Store
-    for Min<K, P, R, I>
-{
-    type Key = K;
-    type Priority = P;
-    type Position = I;
-    type Storage = heap::Capacity<heap::Stored<K, P>, I, R>;
-    type Extra = ptr::NonNull<R>;
-
-    fn precedes(left: &K, right: &K) -> bool {
-        left.index() < right.index()
-    }
-
-    fn storage(&self) -> &alloc::raw::Block<Self::Storage, u32, Self::Extra> {
-        &self.storage
-    }
-
-    fn storage_mut(&mut self) -> &mut alloc::raw::Block<Self::Storage, u32, Self::Extra> {
-        &mut self.storage
-    }
-}
-
-/// One allocation retains heap entries and their resident values together.
-type Storage<K, P, R, I> =
-    alloc::raw::Block<heap::Capacity<heap::Stored<K, P>, I, R>, u32, ptr::NonNull<R>>;

@@ -13,6 +13,7 @@ mod capacity;
 pub mod hole;
 pub mod indexed;
 pub mod keyed;
+mod owner;
 pub mod queue;
 pub(in crate::depot) use capacity::Capacity;
 pub mod resident;
