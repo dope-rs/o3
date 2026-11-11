@@ -4,7 +4,7 @@ use std::{cell::Cell, marker::PhantomData};
 
 use crate::mem::{self, Return, lease::Open};
 
-pub(super) trait Target {
+pub trait Target {
     type Key: Copy;
 
     fn retire(&self, key: Self::Key);
@@ -23,13 +23,13 @@ impl<T: Target + ?Sized> Return for Bound<'_, T> {
 /// Two-word ownership of one slot in an exactly borrowed target.
 /// The invariant reference retains the original registration lifetime and !Sync.
 #[repr(transparent)]
-pub(super) struct Lease<'target, T: Target + ?Sized> {
+pub struct Lease<'target, T: Target + ?Sized> {
     active: Option<mem::Lease<Bound<'target, T>, Open>>,
     target: PhantomData<Cell<&'target T>>,
 }
 
 impl<'target, T: Target + ?Sized> Lease<'target, T> {
-    pub(super) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             active: None,
             target: PhantomData,
@@ -53,7 +53,13 @@ impl<'target, T: Target + ?Sized> Lease<'target, T> {
         }
     }
 
-    pub(super) fn is_active(&self) -> bool {
+    pub(super) fn is_bound(&self) -> bool {
         self.active.is_some()
+    }
+}
+
+impl<T: Target + ?Sized> Default for Lease<'_, T> {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -15,7 +15,7 @@ use crate::{
 
 /// One resident entry keyed by its exact index and current lane.
 #[derive(Clone, Copy)]
-pub(super) struct Key {
+pub struct Key {
     index: links::Index,
     lane: Lane,
 }

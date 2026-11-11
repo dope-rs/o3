@@ -83,10 +83,7 @@ impl<'scope> TryFrom<Index<'scope>> for Compact<'scope> {
 }
 
 /// Linear ownership of one slot, including after its value has been taken.
-#[repr(transparent)]
-pub struct Registration<'target, W, L = num::NonZero<usize>> {
-    lease: resident::Lease<'target, Fifo<W, L>>,
-}
+pub type Registration<'target, W, L = num::NonZero<usize>> = resident::Lease<'target, Fifo<W, L>>;
 
 /// A registration whose current queue binding rejected an update.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -217,7 +214,7 @@ impl<'a, W, L> Lane<'a, W, L> {
         if fifo.is_draining() {
             return Err(Reject::Draining { index });
         }
-        match slot.lease.active() {
+        match slot.active() {
             Some((active, key)) => {
                 if !ptr::eq(active, fifo) {
                     return Err(Reject::Active { index });
@@ -229,7 +226,7 @@ impl<'a, W, L> Lane<'a, W, L> {
             None => {
                 let (key, entry) = fifo.entries.try_push(lane, Reject::Full { index })?;
                 entry.initialize(value);
-                slot.lease.set(fifo, key);
+                slot.set(fifo, key);
             }
         }
         Ok(())
@@ -244,29 +241,17 @@ impl<'a, W, L> Lane<'a, W, L> {
     }
 }
 
-impl<W, L> Default for Registration<'_, W, L> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<W, L> Registration<'_, W, L> {
-    pub const fn new() -> Self {
-        Self {
-            lease: resident::Lease::new(),
-        }
-    }
-
     pub fn is_active(&self) -> bool {
-        self.lease.is_active()
+        self.is_bound()
     }
 
     /// Retires this slot. If its value was taken, returns the next value in its lane.
     /// During draining, retires without taking a successor.
     pub fn cancel(&mut self) -> Option<W> {
-        let (fifo, key) = self.lease.active()?;
+        let (fifo, key) = self.active()?;
         let key = *key;
-        self.lease.detach();
+        self.detach();
         let lane = fifo.entries.remove(key)?;
         if fifo.is_draining() {
             return None;

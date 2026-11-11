@@ -23,7 +23,7 @@ impl<'a, W, G, L> Lane<'a, W, G, L> {
         if registry.is_draining() {
             return Err(handoff::Reject::Draining { index });
         }
-        match slot.lease.active() {
+        match slot.active() {
             Some((active, key)) => {
                 if active.lanes.is_parked(*key) {
                     return Err(handoff::Reject::GrantPending { index });
@@ -40,7 +40,7 @@ impl<'a, W, G, L> Lane<'a, W, G, L> {
                     .lanes
                     .try_push(lane, handoff::Reject::Full { index })?;
                 entry.write_value(value);
-                slot.lease.set(registry, key);
+                slot.set(registry, key);
             }
         }
         Ok(())

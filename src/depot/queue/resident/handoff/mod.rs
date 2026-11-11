@@ -13,32 +13,17 @@ pub use registry::Registry;
 /// A linear registration in a [`Registry`]. Value and grant payloads are
 /// invariant, so safe code cannot widen borrowed ownership.
 ///
-#[repr(transparent)]
-pub struct Registration<'target, W, G, L> {
-    lease: resident::Lease<'target, Registry<W, G, L>>,
-}
-
-impl<W, G, L> Default for Registration<'_, W, G, L> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub type Registration<'target, W, G, L> = resident::Lease<'target, Registry<W, G, L>>;
 
 impl<W, G, L> Registration<'_, W, G, L> {
-    pub const fn new() -> Self {
-        Self {
-            lease: resident::Lease::new(),
-        }
-    }
-
     /// Cancels the registration, retiring a pending value at its registry and
     /// returning any delivered grant to the caller.
     pub fn cancel(&mut self) -> Cancel<G> {
-        let Some((registry, key)) = self.lease.active() else {
+        let Some((registry, key)) = self.active() else {
             return Cancel::Empty;
         };
         let key = *key;
-        self.lease.detach();
+        self.detach();
         match registry.lanes.remove(key) {
             resident::Removal::Linked => Cancel::Wake,
             resident::Removal::Parked(entry) => Cancel::Grant(entry.take_grant()),
@@ -47,13 +32,13 @@ impl<W, G, L> Registration<'_, W, G, L> {
     }
 
     pub fn take_grant(&mut self) -> Grant<G> {
-        let Some((registry, key)) = self.lease.active() else {
+        let Some((registry, key)) = self.active() else {
             return Grant::Empty;
         };
         let Some(entry) = registry.lanes.claim(*key) else {
             return Grant::Pending;
         };
-        self.lease.detach();
+        self.detach();
         Grant::Ready(entry.take_grant())
     }
 }
