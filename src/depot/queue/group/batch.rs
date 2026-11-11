@@ -8,26 +8,13 @@ use crate::depot::{
 
 /// N slots admitted before any value is accepted.
 pub struct Batch<'a, V, const LANES: usize, const N: usize> {
-    slots: slab::Batch<
-        'a,
-        group::Entry<V>,
-        group::EntryTag,
-        LANES,
-        N,
-        { u32::MAX },
-        capacity::Count<LANES>,
-    >,
-    map: &'a mut map::Tree<LANES>,
-    lengths: &'a mut [u32; LANES],
+    pub(super) ledger: &'a mut group::Ledger<V, LANES>,
 }
 
 impl<'a, V, const LANES: usize, const N: usize> Batch<'a, V, LANES, N> {
     pub fn new(ledger: &'a mut group::Ledger<V, LANES>) -> Result<Self, group::Error<LANES>> {
-        Ok(Self {
-            slots: slab::Batch::new(&mut ledger.entries).map_err(group::Error::Entries)?,
-            map: &mut ledger.map,
-            lengths: &mut ledger.lane_lengths,
-        })
+        Slots::<_, LANES, N>::new(&mut ledger.entries).map_err(group::Error::Entries)?;
+        Ok(Self { ledger })
     }
 
     /// Resolves the whole batch before consuming its commit capability or any value.
@@ -38,14 +25,21 @@ impl<'a, V, const LANES: usize, const N: usize> Batch<'a, V, LANES, N> {
         ready: impl FnOnce(C),
         mut convert: impl FnMut(T) -> V,
     ) -> Result<(), (group::Error<LANES>, Input<C, T, LANES, N>)> {
+        let group::Ledger {
+            entries,
+            map,
+            lane_lengths,
+        } = self.ledger;
+        // SAFETY: Batch retains the exclusive ledger after admitting these N slots.
+        let slots = unsafe { Slots::<_, LANES, N>::new_unchecked(entries) };
         let keys = items.each_ref().map(|item| (item.lane, item.owner));
-        map::Draft::with(self.map, keys, (commit, items), |map, bound, input| {
+        map::Draft::with(map, keys, (commit, items), |map, bound, input| {
             let (commit, items) = input;
             ready(commit);
-            self.slots.insert(bound, items, |slot, owner, item| {
+            slots.insert(bound, items, |slot, owner, item| {
                 let member = map.member(owner);
                 let entry = map.get_mut(owner);
-                *item.lane.get_mut(self.lengths) += 1;
+                *item.lane.get_mut(lane_lengths) += 1;
                 let value = convert(item.value);
                 vacant::insert(slot.select(item.lane), member, entry, value);
             });
@@ -60,14 +54,19 @@ impl<'a, V, const LANES: usize> Batch<'a, V, LANES, 1> {
         lane: Index<LANES>,
         owner: u64,
     ) -> Result<vacant::Entry<'a, V, LANES>, group::Error<LANES>> {
-        vacant::Entry::new(
-            self.slots.into_entry(lane),
-            self.map,
-            lane.get_mut(self.lengths),
-            owner,
-        )
+        vacant::Entry::new(self, lane, owner)
     }
 }
+
+pub(super) type Slots<'a, V, const LANES: usize, const N: usize> = slab::Batch<
+    'a,
+    group::Entry<V>,
+    group::EntryTag,
+    LANES,
+    N,
+    { u32::MAX },
+    capacity::Count<LANES>,
+>;
 
 /// A publication retains the commit capability and every original item on failure.
 type Input<C, T, const LANES: usize, const N: usize> = (C, [vacant::Item<T, LANES>; N]);

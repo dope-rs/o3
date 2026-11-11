@@ -1,12 +1,12 @@
-use crate::{
-    depot::{
-        array::Index,
-        queue::{
-            group::{self, map},
-            indexed::slab::phase,
-        },
+use std::mem;
+
+use crate::depot::{
+    array::Index,
+    queue::{
+        group::{self, map},
+        indexed::slab::phase,
+        links,
     },
-    mem::lease,
 };
 
 pub struct Item<V, const LANES: usize> {
@@ -27,34 +27,63 @@ impl<V, const LANES: usize> Item<V, LANES> {
 
 /// Holds the slot and owner until insertion or cancellation.
 pub struct Entry<'a, V, const LANES: usize> {
-    slot: group::Vacant<'a, V, LANES, phase::Target<LANES>>,
-    owner: crate::mem::Lease<map::Rollback<'a, LANES>, lease::Open>,
-    length: &'a mut u32,
+    ledger: &'a mut group::Ledger<V, LANES>,
+    index: links::Index,
+    lane: Index<LANES>,
+    owner: map::Node<map::Tag>,
+    change: Option<map::Change>,
+}
+
+impl<V, const LANES: usize> Drop for Entry<'_, V, LANES> {
+    fn drop(&mut self) {
+        drop(group::Vacant {
+            core: &mut self.ledger.entries,
+            index: self.index,
+            phase: phase::Target(self.lane),
+        });
+        if let Some(change) = self.change {
+            self.ledger.map.rollback(change);
+        }
+    }
 }
 
 impl<'a, V, const LANES: usize> Entry<'a, V, LANES> {
     pub(super) fn new(
-        slot: group::Vacant<'a, V, LANES, phase::Target<LANES>>,
-        map: &'a mut map::Tree<LANES>,
-        length: &'a mut u32,
+        batch: group::Batch<'a, V, LANES, 1>,
+        lane: Index<LANES>,
         key: u64,
     ) -> Result<Self, group::Error<LANES>> {
-        let lane = slot.phase.0;
-        let owner = map
-            .intern(key)
+        let ledger = batch.ledger;
+        // SAFETY: the consumed Batch retains its one admitted native slot.
+        let slot =
+            unsafe { group::batch::Slots::<_, LANES, 1>::new_unchecked(&mut ledger.entries) }
+                .into_entry(lane);
+        let mut change = None;
+        let owner = ledger
+            .map
+            .intern(key, &mut change)
             .map_err(|cause| group::Error::owner(lane, key, cause))?;
+        let (_, index) = slot.into_owner();
         Ok(Self {
-            slot,
+            ledger,
+            index,
+            lane,
             owner,
-            length,
+            change,
         })
     }
 
     pub fn insert(self, value: V) {
-        let (mut owner, ()) = self.owner.into_parts();
-        let member = owner.node();
-        insert(self.slot, member, owner.get_mut(), value);
-        *self.length += 1;
+        let slot = group::Vacant {
+            core: &mut self.ledger.entries,
+            index: self.index,
+            phase: phase::Target(self.lane),
+        };
+        let owner = map::Node::new(self.owner.index());
+        let entry = self.ledger.map.get_mut(&owner);
+        insert(slot, owner, entry, value);
+        *self.lane.get_mut(&mut self.ledger.lane_lengths) += 1;
+        mem::forget(self);
     }
 }
 

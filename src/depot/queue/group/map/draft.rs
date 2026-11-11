@@ -109,17 +109,7 @@ impl<'id, const LANES: usize> Draft<'_, 'id, LANES> {
         &mut self,
         key: Key<'id>,
     ) -> &mut map::Entry<LANES> {
-        // SAFETY: this invariant key names a live owner in the same exclusively retained draft.
-        let slot: crate::depot::queue::indexed::slab::Slot<
-            '_,
-            map::Entry<LANES>,
-            map::Tag,
-            { u32::MAX },
-            crate::depot::queue::links::Hook,
-            0,
-            group::capacity::Count<LANES>,
-        > = unsafe { crate::depot::raw::Proof::new((&mut self.tree.map, key.into_inner().0)) }
-            .into();
-        slot.into_mut()
+        let owner = self.member(key);
+        self.tree.get_mut(&owner)
     }
 }

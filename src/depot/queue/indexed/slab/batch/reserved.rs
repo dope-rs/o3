@@ -29,7 +29,16 @@ impl<
 > Reserved<'a, T, Tag, MAX, H, N, M, C>
 {
     pub(in crate::depot) fn admit(core: &'a mut slab::Slab<T, Tag, MAX, H, N, C>) -> Option<Self> {
-        (M <= core.available()).then_some(Self { core })
+        // SAFETY: the successful branch admits M slots under this exact source loan.
+        (M <= core.available()).then(|| unsafe { Self::new_unchecked(core) })
+    }
+
+    /// # Safety
+    /// The retained exclusive source has at least M available slots.
+    pub(in crate::depot) unsafe fn new_unchecked(
+        core: &'a mut slab::Slab<T, Tag, MAX, H, N, C>,
+    ) -> Self {
+        Self { core }
     }
 
     pub(in crate::depot) fn into_parts(

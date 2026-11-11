@@ -14,7 +14,6 @@ use crate::{
             links, tagged,
         },
     },
-    mem::{Lease, lease},
 };
 
 pub mod capacity;
@@ -66,33 +65,17 @@ pub struct Rejected<V, const LANES: usize> {
     pub value: V,
 }
 
-/// Exclusive wire head and its live owner affiliation.
+/// Exclusive wire head in its retained ledger.
 pub struct Front<'a, V, const LANES: usize> {
-    entry: Slot<'a, V, LANES>,
-    owner: map::Bound<'a, LANES>,
-    length: &'a mut u32,
+    ledger: &'a mut Ledger<V, LANES>,
+    entry: map::Node<EntryTag>,
     lane: Index<LANES>,
 }
 
 impl<'a, V, const LANES: usize> Front<'a, V, LANES> {
-    fn new(
-        entry: Slot<'a, V, LANES>,
-        map: &'a mut map::Tree<LANES>,
-        length: &'a mut u32,
-        lane: Index<LANES>,
-    ) -> Self {
-        let record = entry.as_ref();
-        let owner = map.entry(&record.owner);
-        Self {
-            entry,
-            owner,
-            length,
-            lane,
-        }
-    }
-
     pub fn get(&self) -> &V {
-        &self.entry.as_ref().value
+        let entry: &Entry<V> = self.entry.bind(&self.ledger.entries).into();
+        &entry.value
     }
 
     pub fn remove(self) -> V {
@@ -100,23 +83,34 @@ impl<'a, V, const LANES: usize> Front<'a, V, LANES> {
     }
 
     fn pop(self) -> (u64, V) {
-        let entry = self.entry.remove();
-        let owner = self.owner.key();
-        self.owner.remove(self.lane, entry.owner_next);
-        *self.length -= 1;
+        let entry = self.entry.bind(&mut self.ledger.entries).into().remove();
+        let owner = self.ledger.map.get(&entry.owner).key;
+        self.ledger
+            .map
+            .remove_member(entry.owner, self.lane, entry.owner_next);
+        *self.lane.get_mut(&mut self.ledger.lane_lengths) -= 1;
         (owner, entry.value)
     }
 
     pub fn take(self) -> (V, Vacancy<'a, V, LANES>) {
-        let (entry, slot) = self.entry.take(self.lane);
-        let mut owner = self.owner;
-        owner.detach(self.lane, entry.owner_next);
-        *self.length -= 1;
+        let (entry, slot) = self
+            .entry
+            .bind(&mut self.ledger.entries)
+            .into()
+            .take(self.lane);
+        let (_, index) = slot.into_owner();
+        self.ledger
+            .map
+            .get_mut(&entry.owner)
+            .detach(self.lane, entry.owner_next);
+        *self.lane.get_mut(&mut self.ledger.lane_lengths) -= 1;
         (
             entry.value,
             Vacancy {
-                slot,
-                owner: Lease::open(owner, self.length),
+                ledger: self.ledger,
+                index,
+                owner: entry.owner,
+                lane: self.lane,
             },
         )
     }
@@ -131,20 +125,39 @@ struct Entry<V> {
 /// An extracted value's slot and detached owner affiliation, retained together.
 #[must_use]
 pub struct Vacancy<'a, V, const LANES: usize> {
-    slot: Vacant<'a, V, LANES, phase::Restore<LANES>>,
-    owner: Lease<map::Bound<'a, LANES>, lease::Open>,
+    ledger: &'a mut Ledger<V, LANES>,
+    index: links::Index,
+    owner: map::Node<map::Tag>,
+    lane: Index<LANES>,
+}
+
+impl<V, const LANES: usize> Drop for Vacancy<'_, V, LANES> {
+    fn drop(&mut self) {
+        drop(Vacant {
+            core: &mut self.ledger.entries,
+            index: self.index,
+            phase: phase::Restore(self.lane),
+        });
+        self.ledger.map.prune(&self.owner);
+    }
 }
 
 impl<V, const LANES: usize> Vacancy<'_, V, LANES> {
     pub fn restore(self, value: V) {
-        let (bound, length) = self.owner.into_parts();
-        let (owner, next) = bound.restore(self.slot.phase.0, self.slot.handle());
-        *length += 1;
-        self.slot.restore(Entry {
+        let slot = Vacant {
+            core: &mut self.ledger.entries,
+            index: self.index,
+            phase: phase::Restore(self.lane),
+        };
+        let owner = map::Node::new(self.owner.index());
+        let (owner, next) = self.ledger.map.restore(owner, self.lane, slot.handle());
+        *self.lane.get_mut(&mut self.ledger.lane_lengths) += 1;
+        slot.restore(Entry {
             owner,
             value,
             owner_next: next,
         });
+        mem::forget(self);
     }
 }
 
@@ -211,13 +224,7 @@ impl<V, const LANES: usize> Ledger<V, LANES> {
     }
 
     pub fn bind_front(&mut self, lane: Index<LANES>) -> Option<Front<'_, V, LANES>> {
-        let ((), entry) = self.entries.select([(lane, ())])?;
-        Some(Front::new(
-            entry,
-            &mut self.map,
-            lane.get_mut(&mut self.lane_lengths),
-            lane,
-        ))
+        self.select([(lane, ())]).map(|((), front)| front)
     }
 
     /// Takes the first occupied lane while preserving its caller's policy value.
@@ -225,15 +232,24 @@ impl<V, const LANES: usize> Ledger<V, LANES> {
         &mut self,
         order: [(Index<LANES>, I); N],
     ) -> Option<(I, (V, Vacancy<'_, V, LANES>))> {
+        self.select(order).map(|(item, front)| (item, front.take()))
+    }
+
+    fn select<I, const N: usize>(
+        &mut self,
+        order: [(Index<LANES>, I); N],
+    ) -> Option<(I, Front<'_, V, LANES>)> {
         let order = order.map(|(lane, item)| (lane, (lane, item)));
         let ((lane, item), entry) = self.entries.select(order)?;
-        let front = Front::new(
-            entry,
-            &mut self.map,
-            lane.get_mut(&mut self.lane_lengths),
-            lane,
-        );
-        Some((item, front.take()))
+        let (_, index) = entry.into_owner();
+        Some((
+            item,
+            Front {
+                ledger: self,
+                entry: map::Node::new(index),
+                lane,
+            },
+        ))
     }
 
     pub fn push_back(
@@ -291,8 +307,8 @@ impl<V> Ledger<V, 1> {
 
 const _: () = {
     assert!(mem::size_of::<Entry<u64>>() == 2 * mem::size_of::<usize>());
-    assert!(mem::size_of::<Front<'static, u64, 2>>() == 6 * mem::size_of::<usize>());
-    assert!(mem::size_of::<Vacancy<'static, u64, 2>>() == 5 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Front<'static, u64, 2>>() == 2 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Vacancy<'static, u64, 2>>() == 3 * mem::size_of::<usize>());
     assert!(mem::size_of::<Index<2>>() == 1);
     assert!(mem::size_of::<Option<Index<2>>>() == 1);
 };

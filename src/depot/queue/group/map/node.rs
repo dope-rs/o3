@@ -10,8 +10,16 @@ use crate::depot::{
 pub(in crate::depot::queue::group) struct Node<Tag>(Key<Tag>);
 
 impl<Tag> Node<Tag> {
+    pub(in crate::depot::queue::group) fn new(index: links::Index) -> Self {
+        Self((index, marker::PhantomData))
+    }
+
+    pub(in crate::depot::queue::group) fn index(&self) -> links::Index {
+        self.0.0
+    }
+
     pub(in crate::depot::queue::group) fn inserted(key: slab::Handle<Tag>) -> Self {
-        Self((links::Index::from(key), marker::PhantomData))
+        Self::new(links::Index::from(key))
     }
 
     pub(in crate::depot::queue::group) fn bind<'a, S>(&'a self, source: S) -> Live<S, &'a Key<Tag>>
@@ -31,12 +39,6 @@ const _: () = {
 
 /// A compact index retaining its slab's invariant tag without a stored generation.
 pub(super) type Key<Tag> = (links::Index, marker::PhantomData<slab::Handle<Tag>>);
-
-impl<const LANES: usize, P> map::Bound<'_, LANES, P> {
-    pub(in crate::depot::queue::group) fn node(&self) -> Node<map::Tag> {
-        Node((self.owner, marker::PhantomData))
-    }
-}
 
 impl<'id, const LANES: usize> map::Draft<'_, 'id, LANES> {
     pub(in crate::depot::queue::group) fn member(
