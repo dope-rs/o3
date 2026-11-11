@@ -24,7 +24,7 @@ impl<W, G, L> Registration<'_, W, G, L> {
         };
         let key = *key;
         self.detach();
-        match registry.lanes.remove(key) {
+        match registry.remove(key) {
             resident::Removal::Linked => Cancel::Wake,
             resident::Removal::Parked(entry) => Cancel::Grant(entry.take_grant()),
             resident::Removal::Empty => Cancel::Empty,
@@ -35,7 +35,7 @@ impl<W, G, L> Registration<'_, W, G, L> {
         let Some((registry, key)) = self.active() else {
             return Grant::Empty;
         };
-        let Some(entry) = registry.lanes.claim(*key) else {
+        let Some(entry) = registry.claim(*key) else {
             return Grant::Pending;
         };
         self.detach();

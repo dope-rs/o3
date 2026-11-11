@@ -3,39 +3,14 @@ use std::{cell, mem};
 use crate::depot::queue::resident::{self, handoff};
 
 /// Registry-owned FIFO lanes for one-at-a-time affine handoff.
-pub struct Registry<W, G, L> {
-    pub(super) lanes: resident::Lanes<Entry<W, G>, resident::Parking, L>,
-    pub(super) draining: resident::Draining,
-}
+pub type Registry<W, G, L> = resident::Lanes<Entry<W, G>, resident::Parking, L>;
 
 impl<W, G, L> Registry<W, G, L> {
-    pub fn try_new(capacity: usize, lanes: L) -> Result<Self, resident::Error>
-    where
-        L: resident::Extent,
-    {
-        Ok(Self {
-            lanes: resident::Lanes::try_new(capacity, lanes)?,
-            draining: resident::Draining::default(),
-        })
-    }
-
-    pub fn has_waiters(&self) -> bool {
-        self.lanes.has_waiters()
-    }
-
-    pub fn begin_drain(&self) {
-        self.draining.begin();
-    }
-
-    pub fn is_draining(&self) -> bool {
-        self.draining.is_active()
-    }
-
     /// Takes the next value in drain order and ends draining at quiescence.
     #[must_use = "a drained item remains caller-owned"]
     pub fn drain_next(&self) -> Option<W> {
         self.draining
-            .drain(|| Some(self.lanes.take::<false>()?.take_value()))
+            .drain(|| Some(self.take::<false>()?.take_value()))
     }
 }
 
@@ -53,7 +28,7 @@ impl<W, G, L> resident::Target for Registry<W, G, L> {
 
     fn retire(&self, key: Self::Key) {
         // Only Copy values are linked; parked grants retain their drop obligation.
-        if let resident::Removal::Parked(entry) = self.lanes.remove(key) {
+        if let resident::Removal::Parked(entry) = self.remove(key) {
             entry.retire_grant();
         }
     }
@@ -64,7 +39,7 @@ union Payload<W, G> {
     grant: mem::ManuallyDrop<G>,
 }
 
-pub(in crate::depot::queue::resident::handoff) struct Entry<W, G> {
+pub struct Entry<W, G> {
     payload: cell::Cell<mem::MaybeUninit<Payload<W, G>>>,
 }
 

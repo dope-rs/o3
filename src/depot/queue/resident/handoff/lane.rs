@@ -25,20 +25,18 @@ impl<'a, W, G, L> Lane<'a, W, G, L> {
         }
         match slot.active() {
             Some((active, key)) => {
-                if active.lanes.is_parked(*key) {
+                if active.is_parked(*key) {
                     return Err(handoff::Reject::GrantPending { index });
                 }
                 if !ptr::eq(active, registry) {
                     return Err(handoff::Reject::Active { index });
                 }
-                let (next, entry) = active.lanes.relink_back(*key, lane);
+                let (next, entry) = active.relink_back(*key, lane);
                 entry.write_value(value);
                 *key = next;
             }
             None => {
-                let (key, entry) = registry
-                    .lanes
-                    .try_push(lane, handoff::Reject::Full { index })?;
+                let (key, entry) = registry.try_push(lane, handoff::Reject::Full { index })?;
                 entry.write_value(value);
                 slot.set(registry, key);
             }
@@ -50,7 +48,7 @@ impl<'a, W, G, L> Lane<'a, W, G, L> {
         if self.registry.is_draining() {
             return handoff::Offer::Draining(grant);
         }
-        let Some(entry) = self.registry.lanes.park(self.lane) else {
+        let Some(entry) = self.registry.park(self.lane) else {
             return handoff::Offer::Empty(grant);
         };
         let value = entry.take_value();
@@ -60,11 +58,11 @@ impl<'a, W, G, L> Lane<'a, W, G, L> {
 
     #[must_use = "a taken item remains caller-owned"]
     pub fn take_one(self) -> Option<W> {
-        let entry = self.registry.lanes.pop(self.lane)?;
+        let entry = self.registry.pop(self.lane)?;
         Some(entry.take_value())
     }
 
     pub fn is_empty(self) -> bool {
-        self.registry.lanes.is_empty(self.lane)
+        self.registry.is_empty(self.lane)
     }
 }

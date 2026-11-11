@@ -7,7 +7,7 @@ use crate::{
         self,
         queue::{
             links,
-            resident::{self, Bounds, Capacity, Error, Extent},
+            resident::{self, Bounds, Capacity, Draining, Error, Extent},
             round,
         },
     },
@@ -43,17 +43,18 @@ impl Lane {
 }
 
 /// Marker for lanes whose residents leave through `pop` or `take`.
-pub(super) enum Plain {}
+pub enum Plain {}
 
 /// Marker for lanes whose residents may park awaiting an explicit claim.
-pub(super) enum Parking {}
+pub enum Parking {}
 
 /// Stable resident values partitioned among runtime FIFO lanes and an active ring.
-pub(super) struct Lanes<T, M, L = num::NonZero<usize>> {
+pub struct Lanes<T, M, L = num::NonZero<usize>> {
     storage: alloc::raw::Block<Capacity<T, L>, (), (), resident::raw::Node<T>>,
     thread: marker::PhantomData<(ThreadBound, M)>,
     round: links::Cycle,
     free: links::Free,
+    pub(super) draining: Draining,
 }
 
 /// Exact outcome of removing one resident from a parking lane.
@@ -64,7 +65,7 @@ pub(super) enum Removal<'a, T> {
 }
 
 impl<T, M, L> Lanes<T, M, L> {
-    pub(super) fn try_new(capacity: usize, lanes: L) -> Result<Self, Error>
+    pub fn try_new(capacity: usize, lanes: L) -> Result<Self, Error>
     where
         T: Default,
         L: Extent,
@@ -91,10 +92,11 @@ impl<T, M, L> Lanes<T, M, L> {
             thread: marker::PhantomData,
             round: links::Cycle::new(),
             free: links::Free::seeded(capacity),
+            draining: Draining::default(),
         })
     }
 
-    pub(super) fn try_lane(&self, index: usize) -> Result<Lane, Bounds<num::NonZero<u32>>> {
+    pub(super) fn try_at(&self, index: usize) -> Result<Lane, Bounds<num::NonZero<u32>>> {
         let lanes = self.storage.extent().lanes();
         if index >= lanes.get() as usize {
             return Err(Bounds::new(index, lanes));
@@ -173,8 +175,16 @@ impl<T, M, L> Lanes<T, M, L> {
         Some(view.into_ref())
     }
 
-    pub(super) fn has_waiters(&self) -> bool {
+    pub fn has_waiters(&self) -> bool {
         !self.round.is_empty()
+    }
+
+    pub fn begin_drain(&self) {
+        self.draining.begin();
+    }
+
+    pub fn is_draining(&self) -> bool {
+        self.draining.is_active()
     }
 
     pub(super) fn is_empty(&self, lane: Lane) -> bool {
@@ -279,6 +289,6 @@ const _: () = {
     assert!(
         mem::size_of::<alloc::raw::Block<Capacity<()>, (), (), resident::raw::Node<()>>>() == 24
     );
-    assert!(mem::size_of::<Lanes<(), Plain>>() == 4 * mem::size_of::<usize>());
+    assert!(mem::size_of::<Lanes<(), Plain>>() == 5 * mem::size_of::<usize>());
     assert!(mem::size_of::<Option<Lanes<(), Plain>>>() == mem::size_of::<Lanes<(), Plain>>());
 };

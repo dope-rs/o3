@@ -5,10 +5,8 @@ use std::{marker, mem, num, ptr};
 use crate::depot::queue::resident;
 
 /// Bounded FIFO value slots with a constructor-proved lane extent.
-pub struct Fifo<W, L = num::NonZero<usize>> {
-    entries: resident::Lanes<resident::raw::Entry<W>, resident::Plain, L>,
-    draining: resident::Draining,
-}
+pub type Fifo<W, L = num::NonZero<usize>> =
+    resident::Lanes<resident::raw::Entry<W>, resident::Plain, L>;
 
 /// One lane borrowed from its exact immutable FIFO owner.
 #[derive(Clone, Copy)]
@@ -95,16 +93,6 @@ pub enum Reject {
 }
 
 impl<W, L> Fifo<W, L> {
-    pub fn try_new(capacity: usize, lanes: L) -> Result<Self, resident::Error>
-    where
-        L: resident::Extent,
-    {
-        Ok(Self {
-            entries: resident::Lanes::try_new(capacity, lanes)?,
-            draining: resident::Draining::default(),
-        })
-    }
-
     /// Borrows lane zero, retained by every constructor's nonzero extent.
     pub fn first(&self) -> Lane<'_, W, L> {
         Lane {
@@ -117,29 +105,17 @@ impl<W, L> Fifo<W, L> {
         if self.is_draining() {
             return None;
         }
-        let entry = self.entries.take::<true>()?;
+        let entry = self.take::<true>()?;
         // SAFETY: the removed linked entry was initialized by try_keep and
         // remains reserved by its registration while this value is consumed.
         Some(unsafe { entry.take() })
-    }
-
-    pub fn has_waiters(&self) -> bool {
-        self.entries.has_waiters()
-    }
-
-    pub fn begin_drain(&self) {
-        self.draining.begin();
-    }
-
-    pub fn is_draining(&self) -> bool {
-        self.draining.is_active()
     }
 
     /// Takes the next value in drain order and ends draining at quiescence.
     #[must_use = "a drained item remains caller-owned"]
     pub fn drain_next(&self) -> Option<W> {
         self.draining.drain(|| {
-            let entry = self.entries.take::<false>()?;
+            let entry = self.take::<false>()?;
             // SAFETY: only initialized values are linked; take removes
             // this link before the one owning value is consumed.
             Some(unsafe { entry.take() })
@@ -152,9 +128,7 @@ impl<W> Fifo<W> {
         &self,
         index: usize,
     ) -> Result<Lane<'_, W>, resident::Bounds<num::NonZero<u32>>> {
-        self.entries
-            .try_lane(index)
-            .map(|lane| Lane { fifo: self, lane })
+        self.try_at(index).map(|lane| Lane { fifo: self, lane })
     }
 
     /// Creates one FIFO and borrows its source under a fresh invariant scope.
@@ -179,7 +153,7 @@ impl<'scope, W> Fifo<W, Scope<'scope>> {
         index: usize,
     ) -> Result<Index<'scope>, resident::Bounds<num::NonZero<u32>>> {
         Ok(Index {
-            position: self.entries.try_lane(index)?.index().position(),
+            position: self.try_at(index)?.index().position(),
             brand: marker::PhantomData,
         })
     }
@@ -219,12 +193,12 @@ impl<'a, W, L> Lane<'a, W, L> {
                 if !ptr::eq(active, fifo) {
                     return Err(Reject::Active { index });
                 }
-                let (next, entry) = active.entries.relink_back(*key, lane);
+                let (next, entry) = active.relink_back(*key, lane);
                 entry.initialize(value);
                 *key = next;
             }
             None => {
-                let (key, entry) = fifo.entries.try_push(lane, Reject::Full { index })?;
+                let (key, entry) = fifo.try_push(lane, Reject::Full { index })?;
                 entry.initialize(value);
                 slot.set(fifo, key);
             }
@@ -234,7 +208,7 @@ impl<'a, W, L> Lane<'a, W, L> {
 
     #[must_use = "a taken item remains caller-owned"]
     pub fn take_one(self) -> Option<W> {
-        let entry = self.fifo.entries.pop(self.lane)?;
+        let entry = self.fifo.pop(self.lane)?;
         // SAFETY: pop removes one initialized linked value from this exact
         // owner; the registration keeps its now-empty slot reserved.
         Some(unsafe { entry.take() })
@@ -252,7 +226,7 @@ impl<W, L> Registration<'_, W, L> {
         let (fifo, key) = self.active()?;
         let key = *key;
         self.detach();
-        let lane = fifo.entries.remove(key)?;
+        let lane = fifo.remove(key)?;
         if fifo.is_draining() {
             return None;
         }
@@ -264,7 +238,7 @@ impl<W, L> resident::Target for Fifo<W, L> {
     type Key = resident::Key;
 
     fn retire(&self, key: Self::Key) {
-        let _ = self.entries.remove(key);
+        let _ = self.remove(key);
     }
 }
 
