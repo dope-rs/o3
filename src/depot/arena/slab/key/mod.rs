@@ -1,12 +1,13 @@
-use std::{marker, mem, num::NonZero};
+use std::{mem, num::NonZero};
 
 pub use error::Error;
 pub use stale::Stale;
 
-use crate::depot::{arena::slab::external, capacity, index::Stored};
+use crate::depot::{arena::slab::external, capacity};
 
 pub mod cycle;
 mod error;
+pub(in crate::depot) mod handle;
 mod stale;
 
 /// The physical observation paired with the original branded key.
@@ -22,12 +23,7 @@ pub enum Observation<const MAX: u32 = { u32::MAX }, B = (), R = ()> {
 
 const _: () = assert!(mem::size_of::<Observation>() == 2 * mem::size_of::<u32>());
 
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct Handle<Tag = (), const MAX: u32 = { u32::MAX }> {
-    parts: Parts<MAX>,
-    marker: marker::PhantomData<*mut Tag>,
-}
+pub type Handle<Tag = (), const MAX: u32 = { u32::MAX }> = handle::Handle<Tag, MAX, false>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
@@ -112,60 +108,6 @@ impl<const MAX: u32> Parts<MAX> {
         )
     }
 }
-
-impl<Tag, const MAX: u32> Handle<Tag, MAX> {
-    pub(crate) const fn new(index: u32, epoch: Generation<MAX>) -> Self {
-        Self::from_parts(Parts::new(index, epoch))
-    }
-
-    #[doc(hidden)]
-    pub const fn from_parts(parts: Parts<MAX>) -> Self {
-        Self {
-            parts,
-            marker: marker::PhantomData,
-        }
-    }
-
-    pub(in crate::depot) fn from_stored(raw: Stored<Self>) -> Self {
-        // SAFETY: Stored retains a complete identity emitted by this Handle domain.
-        let raw = unsafe { NonZero::<u64>::new_unchecked(raw.into_raw()) };
-        Self::from_parts(Parts { raw })
-    }
-
-    pub const fn index(self) -> u32 {
-        self.parts.index()
-    }
-
-    pub const fn generation(self) -> Generation<MAX> {
-        self.parts.generation()
-    }
-
-    pub const fn parts(self) -> Parts<MAX> {
-        self.parts
-    }
-}
-
-impl<Tag, const MAX: u32> From<Handle<Tag, MAX>> for Parts<MAX> {
-    fn from(key: Handle<Tag, MAX>) -> Self {
-        key.parts
-    }
-}
-
-impl<Tag, const MAX: u32> Clone for Handle<Tag, MAX> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<Tag, const MAX: u32> Copy for Handle<Tag, MAX> {}
-
-impl<Tag, const MAX: u32> PartialEq for Handle<Tag, MAX> {
-    fn eq(&self, other: &Self) -> bool {
-        self.parts == other.parts
-    }
-}
-
-impl<Tag, const MAX: u32> Eq for Handle<Tag, MAX> {}
 
 const _: () = {
     assert!(mem::size_of::<Generation>() == mem::size_of::<u32>());

@@ -1,6 +1,6 @@
 //! Generation-keyed owned payloads with intrusive FIFO scheduling.
 
-use std::{marker, mem, ops};
+use std::{mem, ops};
 
 pub use batch::Batch;
 use batch::reserved::Reserved;
@@ -154,12 +154,7 @@ impl<T, Tag, const MAX: u32, C: crate::depot::raw::Count> Slab<T, Tag, MAX, link
 }
 
 /// A compact physical index and generation in one typed slab domain.
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct Handle<Tag = (), const MAX: u32 = { u32::MAX }> {
-    parts: key::Parts<MAX>,
-    marker: marker::PhantomData<*mut Tag>,
-}
+pub type Handle<Tag = (), const MAX: u32 = { u32::MAX }> = key::handle::Handle<Tag, MAX, true>;
 
 impl<Tag, const MAX: u32> Handle<Tag, MAX> {
     pub(in crate::depot) fn resolve<
@@ -207,45 +202,14 @@ impl<Tag, const MAX: u32> Handle<Tag, MAX> {
         // SAFETY: the retained owner fixes this initialized, live generation and hook domain.
         Ok(unsafe { crate::depot::raw::Proof::new((owner, links::Index::from(key))) })
     }
-
-    pub(in crate::depot) const fn new(index: links::Index, epoch: key::Generation<MAX>) -> Self {
-        Self {
-            parts: key::Parts::new(index.raw(), epoch),
-            marker: marker::PhantomData,
-        }
-    }
-
-    pub const fn index(self) -> u32 {
-        self.parts.index()
-    }
-
-    pub const fn generation(self) -> key::Generation<MAX> {
-        self.parts.generation()
-    }
 }
 
 impl<Tag, const MAX: u32> From<Handle<Tag, MAX>> for links::Index {
     fn from(handle: Handle<Tag, MAX>) -> Self {
         // SAFETY: the sole Handle constructor retains a compact index excluding END.
-        unsafe { Self::new_raw(handle.parts.index()) }
+        unsafe { Self::new_raw(handle.index()) }
     }
 }
-
-impl<Tag, const MAX: u32> Clone for Handle<Tag, MAX> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<Tag, const MAX: u32> Copy for Handle<Tag, MAX> {}
-
-impl<Tag, const MAX: u32> PartialEq for Handle<Tag, MAX> {
-    fn eq(&self, other: &Self) -> bool {
-        self.parts == other.parts
-    }
-}
-
-impl<Tag, const MAX: u32> Eq for Handle<Tag, MAX> {}
 
 const _: () = {
     assert!(mem::size_of::<crate::depot::raw::IndexedState>() == 4 * mem::size_of::<u32>());
