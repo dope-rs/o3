@@ -1,7 +1,6 @@
 use std::mem;
 
 pub(in crate::depot::queue::group) use branch::Branch;
-pub(in crate::depot::queue::group) use draft::Draft;
 pub(in crate::depot::queue::group) use node::Node;
 use path::Path;
 
@@ -18,7 +17,6 @@ use crate::{
 };
 
 mod branch;
-mod draft;
 mod mask;
 mod node;
 mod path;
@@ -170,7 +168,7 @@ impl<const LANES: usize> Tree<LANES> {
         key: u64,
         change: &mut Option<Change>,
     ) -> Result<Node<Tag>, Error<LANES>> {
-        let (root, owner) = self.start(key, change)?;
+        let (mut root, owner) = self.start(key, change)?;
         match owner {
             Some(owner) => Ok(owner),
             None => root.intern(key, change),
@@ -178,7 +176,7 @@ impl<const LANES: usize> Tree<LANES> {
     }
 
     #[inline(always)]
-    fn start(
+    pub(super) fn start(
         &mut self,
         key: u64,
         change: &mut Option<Change>,
@@ -203,7 +201,7 @@ impl<const LANES: usize> Tree<LANES> {
         Ok((Root(self), owner))
     }
 
-    fn remove(&mut self, change: Change, key: u64) {
+    pub(super) fn remove(&mut self, change: Change, key: u64) {
         if let Some(place) = change.branch {
             // SAFETY: the consumed change retains its distinct initialized branch and parent;
             // later insertions are removed first, before this exact exclusive tree is reclaimed.
@@ -233,14 +231,22 @@ impl<const LANES: usize> Tree<LANES> {
     }
 }
 
-impl<const LANES: usize> Root<'_, LANES> {
+impl<'a, const LANES: usize> Root<'a, LANES> {
+    pub(super) fn into_inner(self) -> &'a mut Tree<LANES> {
+        self.0
+    }
+
     #[inline(always)]
-    fn intern(self, key: u64, change: &mut Option<Change>) -> Result<Node<Tag>, Error<LANES>> {
+    pub(super) fn intern(
+        &mut self,
+        key: u64,
+        change: &mut Option<Change>,
+    ) -> Result<Node<Tag>, Error<LANES>> {
         let Tree {
             map,
             branches,
             root,
-        } = self.0;
+        } = &mut *self.0;
         // SAFETY: Root is constructed only while its exclusive tree has a live owner.
         let root = unsafe { root.assume_init_mut() };
         let capacity = map.capacity();
