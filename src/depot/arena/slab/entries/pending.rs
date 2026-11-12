@@ -277,6 +277,11 @@ impl<'a, T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, c
 where
     cycle::Mode<RECYCLE>: Policy,
 {
+    /// Returns the reserved physical index without issuing an identity.
+    pub fn index(&self) -> links::Index {
+        self.entry.index()
+    }
+
     pub fn insert_with(
         self,
         build: impl FnOnce(key::Handle<Tag, MAX>) -> T,

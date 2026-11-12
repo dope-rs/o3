@@ -16,8 +16,10 @@ fn retains_partition_order() {
         array::from_fn(|_| entries.next().expect("four free slots"));
     assert!(entries.next().is_none());
     drop(entries);
+    let indices = slots.each_ref().map(|entry| entry.index().raw());
     let keys = slots.map(|entry| entry.insert(20));
-    assert_eq!(keys.map(|key| key.index()), [0, 1, 2, 3]);
+    assert_eq!(keys.map(|key| key.index()), indices);
+    assert_eq!(indices, [0, 1, 2, 3]);
     assert_eq!(keys.map(|key| key.generation().get()), [2, 1, 1, 1]);
 }
 
