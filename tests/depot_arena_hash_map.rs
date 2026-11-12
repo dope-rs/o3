@@ -30,7 +30,7 @@ fn borrows_keep_shape() {
         .expect("the four-slot borrowed registry must allocate");
     let key = store
         .insert(Borrowed(&value))
-        .ok()
+        .map_err(|value| *value.0)
         .expect("borrowed resident");
     assert_eq!(store.get(key).map(|stored| *stored.0), Some(value));
 }

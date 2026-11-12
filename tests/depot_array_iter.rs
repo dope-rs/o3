@@ -183,7 +183,7 @@ fn mapped_prefix_reuses() {
             let guard = init::Guard::<_, 4>::try_map(&mut backing, source, |value| {
                 Ok::<_, Fault>(Some(Counted(value)))
             })
-            .ok()
+            .map_err(|(_, error)| error)
             .expect("complete mapping");
             assert_eq!(guard.as_slice().as_ptr().cast::<()>(), pointer);
             drop(guard);

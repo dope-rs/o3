@@ -466,9 +466,7 @@ fn binds_vector() {
     };
     let (result, activity) = Tracker::measure(|| sibling.try_detach());
     assert_eq!(activity, [0; 4]);
-    let sibling = result
-        .map_err(|owner| owner.as_slice().len())
-        .expect("sole buffer owner must detach");
+    let sibling = result.expect("sole buffer owner must detach");
     assert_eq!(sibling.as_slice(), b"payload");
 }
 

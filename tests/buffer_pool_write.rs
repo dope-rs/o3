@@ -124,9 +124,8 @@ fn bounds_admitted_writes() {
     let identity = String::from("frame");
     let origin = identity.as_ptr();
     let result = Limit::try_from(span, 7, identity);
-    assert!(result.is_err(), "the initialized prefix leaves six bytes");
     let Err((span, identity, error)) = result else {
-        return;
+        panic!("quota admitted");
     };
     let (required, room) = error.into_parts();
     assert_eq!((required.get(), room), (7, 6));

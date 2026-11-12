@@ -6,7 +6,7 @@ use crate::depot::{
 };
 
 /// A bounded identity whose resident state or generation no longer matches.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stale<'h, Tag = (), const MAX: u32 = { u32::MAX }> {
     Free {
         key: capacity::Key<'h, key::Handle<Tag, MAX>>,

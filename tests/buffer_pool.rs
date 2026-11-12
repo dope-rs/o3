@@ -33,13 +33,7 @@ fn recycles_pool_leases() {
             .as_ref()
             .expect("required fixture outcome");
         let pushed = buffer.write_byte(b'e');
-        assert!(
-            pushed.is_err(),
-            "full fixed buffer must reject another byte"
-        );
-        let Err(error) = pushed else {
-            return;
-        };
+        let error = pushed.expect_err("full fixed buffer must reject another byte");
         assert_eq!(buffer.as_ref(), block);
         assert_eq!(
             {
@@ -266,11 +260,9 @@ fn rolls_back_growth() {
     let mut growing = (pool::Growing::try_new(plan))
         .expect("the growth rollback fixture must allocate initially");
     let observed = growing.try_acquire();
-    assert!(
-        matches!(observed, Ok(Some(_))),
-        "the initial growing-pool slot must be available without growth"
-    );
-    let Ok(Some(lease)) = observed else { return };
+    let lease = observed
+        .expect("initial acquisition must not grow")
+        .expect("the initial growing-pool slot must be available without growth");
     let (growth, trace) = Tracker::activity(|| Tracker::fail_after(0, || growing.try_acquire()));
     assert!(matches!(growth, Err(alloc::Exhausted)));
     assert!(trace == Activity::default());

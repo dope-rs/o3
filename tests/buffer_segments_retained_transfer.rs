@@ -445,7 +445,7 @@ fn transfers_complete_front() {
     let pointer = chunk.front().as_slice().as_ptr();
     let (result, count) = Tracker::count(|| chunk.try_pop(usize::MAX));
     let (head, rest) = result
-        .ok()
+        .map_err(|(error, _)| error)
         .expect("a complete front must move without retaining");
     assert_eq!(count, 0);
     assert_eq!(head.as_slice(), first);
@@ -482,7 +482,7 @@ fn preserves_partial_front() {
     let chunk = segments::Nonempty::Many(owners);
     let (result, activity) = Tracker::measure(|| chunk.try_pop(2));
     let (head, rest) = result
-        .ok()
+        .map_err(|(error, _)| error)
         .expect("the partial front must preserve its original chain");
     assert_eq!(activity, [0; 4]);
     assert_eq!(rest.len(), 6);
@@ -510,7 +510,7 @@ fn preserves_remainder() {
         let chunk = segments::Nonempty::One(segments::Item::from(&data));
         let (result, activity) = Tracker::measure(|| chunk.try_pop(limit));
         let (head, rest) = result
-            .ok()
+            .map_err(|(error, _)| error)
             .expect("a borrowed prefix needs no retention capacity");
         assert_eq!(activity, [0; 4]);
         let split = limit.min(data.len());

@@ -186,13 +186,7 @@ fn rejects_resident_pool() {
 
             let (detached, count) = Tracker::count(|| shared.try_detach());
             assert_eq!(count, 0);
-            assert!(
-                detached.is_err(),
-                "resident ownership must reject zero-copy detachment"
-            );
-            let Err(shared) = detached else {
-                return;
-            };
+            let shared = detached.expect_err("resident ownership must reject zero-copy detachment");
             let (result, count) = Tracker::count(|| storage::Shared::try_copy(shared.as_slice()));
             let escaped = result.expect("resident bytes must copy into plain storage");
 

@@ -106,18 +106,7 @@ fn retains_generations() {
                 heap.replace(first_id, 10);
                 heap.replace(other_id, 20);
                 let entry = records.try_entry(first_id);
-                let entry = entry
-                    .map_err(|error| match error {
-                        key::Stale::Free { key, actual } => ("free", *key.as_inner(), actual),
-                        key::Stale::Reserved { key, actual } => {
-                            ("reserved", *key.as_inner(), actual)
-                        }
-                        key::Stale::Retired { key, actual } => ("retired", *key.as_inner(), actual),
-                        key::Stale::Generation { key, actual } => {
-                            ("generation", *key.as_inner(), actual)
-                        }
-                    })
-                    .expect("the occupied source must be available");
+                let entry = entry.expect("the occupied source must be available");
                 let entry = round::set::Reuse::try_from(entry);
                 let entry = entry
                     .map_err(|entry| *entry.key().as_inner())

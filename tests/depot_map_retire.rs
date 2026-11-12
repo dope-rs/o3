@@ -112,7 +112,7 @@ fn resident_keeps_records() {
         let (retained, _) = entry.insert((2, Counted(&drops[2]))).publish();
         let (again, repeated) = scope
             .exact(lease.key(), first)
-            .ok()
+            .map_err(|_| (lease.key(), first))
             .expect("published entry")
             .publish();
         assert!(repeated.is_none());
@@ -139,7 +139,7 @@ fn resident_keeps_records() {
     assert_eq!(
         owner
             .exact(retained, second)
-            .ok()
+            .map_err(|_| (retained, second))
             .expect("owner retained")
             .get()
             .0,

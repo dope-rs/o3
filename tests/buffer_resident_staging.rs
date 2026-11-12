@@ -370,9 +370,8 @@ fn preserves_growth() {
                         (buf.write_slice(b"b"), 1, 0),
                         (buf.try_reserve(usize::MAX), usize::MAX, 13),
                     ] {
-                        assert!(matches!(result, Err(reserve::Error::Capacity(_))));
                         let Err(reserve::Error::Capacity(error)) = result else {
-                            return;
+                            panic!("capacity error");
                         };
                         let (required, free) = error.into_parts();
                         assert_eq!((required.get(), free), (need, room));
