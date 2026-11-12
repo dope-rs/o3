@@ -1,4 +1,4 @@
-use std::{num::NonZero, slice};
+use std::{mem::MaybeUninit, num::NonZero, slice};
 
 use o3::{
     base::num::bounded,
@@ -268,6 +268,74 @@ fn checks_slice_completion() {
     write::Slice::new(&mut [])
         .try_complete()
         .expect("empty slice is complete");
+}
+
+#[test]
+fn lent_slices_keep_parent_progress() {
+    let mut first = [MaybeUninit::uninit(); 8];
+    let mut second = [MaybeUninit::uninit(); 8];
+    let mut first = Slice::uninit(&mut first);
+    let mut second = Slice::uninit(&mut second);
+    {
+        let mut loan = first.reborrow();
+        loan.write_slice(b"a").expect("prefix");
+        let error = loan
+            .write_slices([b"12345".as_slice(), b"678"])
+            .expect_err("atomic rejection");
+        let (required, available) = error.into_parts();
+        assert_eq!((required.get(), available), (3, 2));
+        loan = second.reborrow();
+        loan.write_slice(b"bc").expect("other parent");
+    }
+    assert_eq!(first.into_mut(), b"a");
+    assert_eq!(second.into_mut(), b"bc");
+}
+
+#[test]
+fn split_requires_complete_head() {
+    let mut bytes = [MaybeUninit::uninit(); 10];
+    let mut parent = Slice::uninit(&mut bytes);
+    parent.write_byte(b'p').expect("existing prefix");
+    let error = parent.try_split(3, usize::MAX).err().expect("overflow");
+    let (required, available) = error.into_parts();
+    assert_eq!((required.get(), available), (usize::MAX, 6));
+    let mut split = parent.try_split(3, 4).expect("partition");
+    split.body().write_slice(b"bc").expect("body first");
+    assert_eq!(split.body().into_mut(), b"bc");
+    split.head().write_slice(b"ab").expect("partial head");
+    let error = split.try_commit().expect_err("head gap");
+    let (expected, actual) = error.into_parts();
+    assert_eq!((expected.get(), actual), (3, 2));
+    assert_eq!(parent.len(), 1);
+
+    let mut split = parent.try_split(3, 4).expect("retry partition");
+    split.body().write_slice(b"de").expect("body first");
+    split.head().write_slice(b"abc").expect("complete head");
+    split.try_commit().expect("contiguous prefix");
+    assert_eq!(parent.into_mut(), b"pabcde");
+}
+
+#[test]
+fn abandoned_split_allows_longer_reframe() {
+    let mut bytes = [MaybeUninit::uninit(); 16];
+    let mut parent = Slice::uninit(&mut bytes);
+    parent.write_byte(b'p').expect("common fields");
+    {
+        let mut split = parent.try_split(0, 15).expect("staged framing");
+        {
+            let mut framing = split.body();
+            framing.write_slice(b"old").expect("plain framing");
+            let mut body = framing.try_split(0, 4).expect("nested body");
+            body.body().write_slice(b"body").expect("body bytes");
+            assert_eq!(body.body().into_mut(), b"body");
+            body.try_commit().expect("head-first body");
+        }
+    }
+    assert_eq!(parent.len(), 1);
+    parent
+        .write_slice(b"much-longer")
+        .expect("larger gzip head");
+    assert_eq!(parent.into_mut(), b"pmuch-longer");
 }
 
 #[test]

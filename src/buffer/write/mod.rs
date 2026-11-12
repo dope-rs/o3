@@ -7,7 +7,7 @@ use std::{
 
 pub use array::Array;
 pub use reserved::Reserved;
-pub use slice::Slice;
+pub use slice::{Slice, Split};
 pub use staged::Staged;
 use staged::publish_suffix;
 pub(in crate::buffer) use staged::staging::Staging;
