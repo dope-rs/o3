@@ -1,8 +1,7 @@
-use std::mem;
+use std::{mem, num::NonZero};
 
 pub(in crate::depot::queue::group) use branch::Branch;
 pub(in crate::depot::queue::group) use node::Node;
-use path::Path;
 
 use crate::{
     alloc,
@@ -78,11 +77,6 @@ pub(super) struct Change {
 }
 
 pub(super) type Place = (links::Index, Option<links::Index>);
-
-enum Position<'a, 'p, const LANES: usize> {
-    Root(&'a mut Branches<LANES>),
-    Branch(Path<'a, 'p, LANES>),
-}
 
 impl<const LANES: usize> Tree<LANES> {
     pub(in crate::depot::queue::group) fn clear(&mut self) {
@@ -251,12 +245,29 @@ impl<'a, const LANES: usize> Root<'a, LANES> {
         let root = unsafe { root.assume_init_mut() };
         let capacity = map.capacity();
         let mut indices = [mem::MaybeUninit::uninit(); u64::BITS as usize];
-        let (owner, position) = match root {
-            Link::Owner(owner) => (owner.bind(&mut *map).into(), Position::Root(branches)),
+        let (owner, length) = match root {
+            Link::Owner(owner) => (owner.bind(&mut *map).into(), None),
             Link::Branch(branch) => {
-                let mut path = Path::new(branches, branch, &mut indices);
-                let owner = path.walk(key).bind(&mut *map).into();
-                (owner, Position::Branch(path))
+                let mut current = branch.bind(&*branches).key().0;
+                indices[0].write(current);
+                let mut len = NonZero::<usize>::MIN;
+                let owner = loop {
+                    // SAFETY: every stored identity was bound in this unchanged source.
+                    let branch: &Branch =
+                        unsafe { crate::depot::raw::Proof::new((&*branches, current)) }.into();
+                    let branch = match branch.child(key) {
+                        Link::Owner(owner) => break owner.bind(&mut *map).into(),
+                        Link::Branch(branch) => branch,
+                    };
+                    current = branch.bind(&*branches).key().0;
+                    // SAFETY: decreasing one-bit masks bound the prefix to 64 entries,
+                    // and its incremented length remains nonzero.
+                    unsafe {
+                        indices.get_unchecked_mut(len.get()).write(current);
+                        len = NonZero::new_unchecked(len.get() + 1);
+                    }
+                };
+                (owner, Some(len))
             }
         };
         let Some(mask) = mask::Mask::between(key, owner.as_ref().key) else {
@@ -268,13 +279,24 @@ impl<'a, const LANES: usize> Root<'a, LANES> {
             .vacant()
             .ok_or(Error::Owners(capacity))?
             .insert(Entry::new(key));
-        let (branches, parent) = match position {
-            Position::Root(branches) => (branches, None),
-            Position::Branch(mut path) => {
-                let parent = path.rewind(mask);
-                (path.source, parent)
+        let mut parent = None;
+        if let Some(mut position) = length {
+            loop {
+                // SAFETY: this position retains an initialized index in this exact path.
+                let index = unsafe { indices.get_unchecked(position.get() - 1).assume_init_read() };
+                // SAFETY: the path retains this live branch under the exclusive tree loan.
+                let branch: &Branch =
+                    unsafe { crate::depot::raw::Proof::new((&*branches, index)) }.into();
+                if branch.mask > mask {
+                    parent = Some(index);
+                    break;
+                }
+                let Some(next) = NonZero::new(position.get() - 1) else {
+                    break;
+                };
+                position = next;
             }
-        };
+        }
         let capacity = branches.capacity();
         let Some(vacant) = branches.vacant() else {
             owner.detach().discard();
