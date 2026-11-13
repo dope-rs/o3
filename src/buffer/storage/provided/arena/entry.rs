@@ -85,10 +85,12 @@ impl<'d> Entry<'d> {
         unsafe { pointer.as_ref().resident.get().assume_init() }
     }
 
-    pub(in crate::buffer::storage::provided) fn try_account(
+    #[inline]
+    pub(in crate::buffer::storage::provided) fn try_account<A: account::Admission>(
         owner: &provided::Owner<'d>,
         budget: resident::Budget<'d>,
-    ) -> Result<provided::Account<'d>, account::Cause> {
+        admission: A,
+    ) -> Result<ops::ControlFlow<A::Declined, provided::Account<'d>>, account::Cause> {
         let pointer = owner.entry;
         // SAFETY: the owner retains this scope's stable slot. Occupied
         // registrations remain shared; admission invokes no user callbacks.
@@ -100,10 +102,16 @@ impl<'d> Entry<'d> {
             if !ptr::eq(charge.budget().core(), budget.core()) {
                 return Err(account::Cause::Foreign);
             }
+            if let ops::ControlFlow::Break(declined) = admission.check(budget, 0) {
+                return Ok(ops::ControlFlow::Break(declined));
+            }
             // SAFETY: the slot owner retains this proved live registration;
             // no callbacks or edge releases intervene before the increment.
             unsafe { registration.try_retain() }.map_err(account::Cause::Retain)?;
         } else {
+            if let ops::ControlFlow::Break(declined) = admission.fresh() {
+                return Ok(ops::ControlFlow::Break(declined));
+            }
             let domain = entry.domain;
             let count = domain.accounted.0.get();
             let limit = domain.limit;
@@ -111,8 +119,12 @@ impl<'d> Entry<'d> {
                 return Err(account::Cause::Exhausted { count, limit });
             }
             // SAFETY: the owner retains the slot's original resident layout.
+            let resident = unsafe { Self::resident(pointer) } as usize;
+            if let ops::ControlFlow::Break(declined) = admission.check(budget, resident) {
+                return Ok(ops::ControlFlow::Break(declined));
+            }
             let charge = budget
-                .try_charge(unsafe { Self::resident(pointer) } as usize)
+                .try_charge(resident)
                 .map_err(account::Cause::Budget)?;
             domain.accounted.0.set(count + 1);
             // SAFETY: this empty registration has no issued account. Initialize
@@ -124,11 +136,11 @@ impl<'d> Entry<'d> {
         }
         // SAFETY: admission transferred one live embedded edge. Deriving its
         // address from the complete slot preserves provenance for finalization.
-        Ok(provided::Account {
+        Ok(ops::ControlFlow::Continue(provided::Account {
             registration: unsafe {
                 raw::Owner::from_raw(pointer.byte_add(offset_of!(Self, registration)).cast())
             },
-        })
+        }))
     }
 
     /// # Safety

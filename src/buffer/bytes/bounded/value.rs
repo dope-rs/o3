@@ -237,6 +237,19 @@ unsafe impl<'d> hold::raw::Retain<'d> for Value<storage::Shared<provided::Owner<
     {
         <storage::Shared<provided::Owner<'d>> as hold::raw::Retain<'d>>::try_retain(&plan.0, budget)
     }
+
+    fn try_retain_with<'a, const FRESH: bool>(
+        plan: &Self::View<'a>,
+        budget: &resident::Budget<'d>,
+        limit: usize,
+    ) -> Result<Option<hold::Retained<'d>>, hold::Error>
+    where
+        Self: 'a,
+    {
+        <storage::Shared<provided::Owner<'d>> as hold::raw::Retain<'d>>::try_retain_with::<FRESH>(
+            &plan.0, budget, limit,
+        )
+    }
 }
 
 impl<'a, 'd> provided::Mutable<'d> for Value<provided::Prefix<'a, 'd>> {

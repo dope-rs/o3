@@ -246,16 +246,38 @@ impl<'a, 'd> Frozen<'d> for Prefix<'a, 'd, &'a [u8]> {
         &self,
         budget: &resident::Budget<'d>,
     ) -> Result<storage::Shared<Option<provided::Account<'d>>>, account::Cause> {
+        match self.try_account_with(budget, ())? {
+            ops::ControlFlow::Continue(owner) => Ok(owner),
+            ops::ControlFlow::Break(never) => match never {},
+        }
+    }
+}
+
+impl<'d> Prefix<'_, 'd, &[u8]> {
+    #[inline]
+    pub(in crate::buffer) fn try_account_with<A: account::Admission>(
+        &self,
+        budget: &resident::Budget<'d>,
+        admission: A,
+    ) -> Result<
+        ops::ControlFlow<A::Declined, storage::Shared<Option<provided::Account<'d>>>>,
+        account::Cause,
+    > {
         if self.bytes.is_empty() {
-            return Ok(storage::Shared::<Option<provided::Account<'_>>>::new());
+            return Ok(ops::ControlFlow::Continue(storage::Shared::<
+                Option<provided::Account<'_>>,
+            >::new()));
         }
         use arena::Entry;
 
-        let owner = Entry::try_account(self.owner, *budget)?;
+        let owner = match Entry::try_account(self.owner, *budget, admission)? {
+            ops::ControlFlow::Continue(owner) => owner,
+            ops::ControlFlow::Break(declined) => return Ok(ops::ControlFlow::Break(declined)),
+        };
         // SAFETY: this prefix's private construction and disjoint projections
         // retain its original owner; admission extends that exact backing.
         let inner = unsafe { storage::Shared::assume(self.bytes, Some(owner)) };
-        Ok(inner)
+        Ok(ops::ControlFlow::Continue(inner))
     }
 }
 

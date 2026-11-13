@@ -187,6 +187,13 @@ fn keeps_foreign_charge() {
                     assert!(matches!(result.1, Err(account::Cause::Foreign)));
                     let input = scope::Input::new(&source, &second);
                     let bound = input.defer_all().bind(hold::Policy::share());
+                    {
+                        let _charge = second.try_charge(1).expect("foreign budget charge");
+                        std::assert_matches!(
+                            bound.try_retain_with::<false>(0),
+                            Err(hold::Error::Account(account::Cause::Foreign))
+                        );
+                    }
                     let (result, ops) = Tracker::measure(|| bound.try_retain());
                     assert_eq!(ops, [0; 4]);
                     let cause = result
@@ -213,6 +220,113 @@ fn keeps_foreign_charge() {
         assert_eq!(second.resident(), 0);
         assert!(matches!(arena.pop_returned(), Some([7])));
     });
+}
+
+#[test]
+fn optional_retention_reuses_registration() {
+    use buffer::bytes::bounded;
+
+    Item::try_scope(|unique, budget, arena| {
+        let source = bounded::Value::try_new(unique.into_shared())
+            .map_err(|rejected| rejected.into_parts().1)
+            .expect("bounded registration");
+        let bound = scope::Input::new(std::hint::black_box(&source), &budget)
+            .defer_all()
+            .bind(hold::Policy::share());
+        let limit = std::hint::black_box(7);
+        assert!(
+            bound
+                .try_retain_with::<false>(limit)
+                .expect("vacant")
+                .is_none()
+        );
+        assert!(
+            bound
+                .try_retain_with::<true>(limit - 1)
+                .expect("cap")
+                .is_none()
+        );
+        assert_eq!(budget.resident(), 0);
+        {
+            let _charge = budget.try_charge(1).expect("competing charge");
+            assert!(matches!(
+                bound.try_retain_with::<true>(limit + 1),
+                Err(hold::Error::Account(account::Cause::Budget(error)))
+                    if error.into_parts() == (NonZero::<usize>::MIN.saturating_add(6), 6)
+            ));
+        }
+        let first = bound
+            .try_retain_with::<true>(limit)
+            .expect("fresh")
+            .expect("admitted");
+        assert_eq!(first.as_slice().as_ptr(), source.as_ref().as_ptr());
+        assert!(
+            bound
+                .try_retain_with::<false>(limit - 1)
+                .expect("used cap")
+                .is_none()
+        );
+        let last = bound
+            .try_retain_with::<false>(limit)
+            .expect("reuse")
+            .expect("accounted");
+        drop(first);
+        assert_eq!(budget.resident(), 7);
+        assert_eq!(last.as_slice().as_ptr(), source.as_ref().as_ptr());
+        drop(last);
+        assert_eq!(budget.resident(), 0);
+        assert!(!arena.has_returned());
+        assert!(
+            bound
+                .try_retain_with::<false>(limit)
+                .expect("released")
+                .is_none()
+        );
+    })
+    .expect("provided charge fixture");
+}
+
+#[test]
+fn optional_retention_preserves_default_gate() {
+    Capacity(1)
+        .try_scope(|budget| {
+            let source = storage::Shared::try_copy(b"payload").expect("source backing");
+            let _charge = budget.try_charge(1).expect("other backing");
+            let bound = scope::Input::new(&source, &budget)
+                .defer_all()
+                .bind(hold::Policy::share());
+            assert!(
+                bound
+                    .try_retain_with::<false>(8)
+                    .expect("no fresh")
+                    .is_none()
+            );
+            assert!(
+                bound
+                    .try_retain_with::<true>(7)
+                    .expect("full ceiling")
+                    .is_none()
+            );
+            let held = bound
+                .try_retain_with::<true>(8)
+                .expect("legacy")
+                .expect("full ceiling fits");
+            assert_eq!(held.as_slice().as_ptr(), source.as_slice().as_ptr());
+            assert_eq!(budget.resident(), 1);
+            let compact = bound.defer().bind(hold::Policy::compact());
+            assert!(
+                compact
+                    .try_retain_with::<true>(8)
+                    .expect("compact")
+                    .is_none()
+            );
+            let empty = scope::Input::new(&source, &budget)
+                .try_plan(0..0)
+                .expect("empty range")
+                .bind(hold::Policy::share());
+            assert!(empty.try_retain_with::<true>(8).expect("empty").is_none());
+        })
+        .expect("resident domain");
 }
 
 #[test]
