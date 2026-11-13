@@ -126,6 +126,17 @@ impl<'d> Pool<state::Uninit, owners::Resident<'d>> {
     }
 }
 
+impl<'d> Pool<state::Uninit, owners::Charged<'d>> {
+    pub fn try_charged(
+        layout: Layout,
+        budget: resident::Budget<'d>,
+    ) -> Result<Self, resident::AllocError> {
+        Ok(Self {
+            core: owners::Block::try_charged(layout, budget)?,
+        })
+    }
+}
+
 const _: () =
     assert!(size_of::<Pool<state::Uninit, owners::Resident<'static>>>() == size_of::<usize>());
 

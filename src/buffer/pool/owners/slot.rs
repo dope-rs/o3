@@ -213,6 +213,7 @@ impl<K: crate::buffer::raw::Backing, S> Copy for Entry<'_, K, S> {}
 const _: () = {
     assert!(size_of::<Slot>() == 8);
     assert!(size_of::<Slot<super::Resident<'static>>>() == 16);
+    assert!(size_of::<Slot<super::Charged<'static>>>() == 8);
     assert!(align_of::<Slot>() == 8);
     assert!(size_of::<Seed<super::Plain, state::Uninit>>() == size_of::<usize>());
     assert!(size_of::<Active<super::Plain, state::Uninit>>() == 2 * size_of::<usize>());

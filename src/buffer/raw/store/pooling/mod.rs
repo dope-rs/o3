@@ -23,3 +23,13 @@ unsafe impl<'d> Backing for owners::Resident<'d> {
         unsafe { core.deallocate() };
     }
 }
+
+// SAFETY: Charged retains one root debit until every slot and the pool have ended.
+unsafe impl Backing for owners::Charged<'_> {
+    type Link = ();
+
+    unsafe fn release<S>(core: owners::Ptr<Self, S>) {
+        // SAFETY: the caller transfers the terminal charged allocation edge.
+        unsafe { core.destroy() };
+    }
+}

@@ -38,8 +38,8 @@ impl Tag {
         }
     }
     pub(in crate::buffer) fn pool<L, M>(owner: owners::Edge<owners::Plain<L>, M>) -> Option<Self> {
-        owner.into_raw().map(|pointer| Self {
-            pointer: pointer.cast().map_addr(|address| address | 0b100),
+        owner.map(|owner| Self {
+            pointer: owner.into_raw().cast().map_addr(|address| address | 0b100),
         })
     }
 

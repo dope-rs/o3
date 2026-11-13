@@ -345,6 +345,21 @@ impl<'d> From<regions::Shared<Option<provided::Account<'d>>>> for resident::Shar
     }
 }
 
+impl<'d> From<regions::Shared<owners::Edge<owners::Charged<'d>>>> for resident::Shared<'d> {
+    #[inline]
+    fn from(region: regions::Shared<owners::Edge<owners::Charged<'d>>>) -> Self {
+        match region.owner {
+            Some(owner) => Self {
+                region: regions::Shared {
+                    owner: resident::State::Pool(owner),
+                    bytes: region.bytes,
+                },
+            },
+            None => Self::new(),
+        }
+    }
+}
+
 impl<'d> regions::Shared<resident::State<'d>> {
     pub(in crate::buffer) fn try_own(
         mut self,

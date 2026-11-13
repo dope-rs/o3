@@ -81,9 +81,11 @@ impl<'d> Shared<'d> {
         match self.region.owner() {
             State::Owned(_) | State::Static => None,
             State::Slice if self.region.is_empty() => None,
-            State::Slice | State::Resident(_) | State::Accounted(_) | State::Provided(_) => {
-                Some(self)
-            }
+            State::Slice
+            | State::Resident(_)
+            | State::Accounted(_)
+            | State::Provided(_)
+            | State::Pool(_) => Some(self),
         }
     }
     pub fn try_clone(&self) -> Result<Self, rc::Error> {

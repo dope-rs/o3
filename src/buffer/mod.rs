@@ -109,7 +109,8 @@ impl View<'_, resident::Shared<'_>> {
             resident::State::Slice
             | resident::State::Resident(_)
             | resident::State::Accounted(_)
-            | resident::State::Provided(_) => return Ok(None),
+            | resident::State::Provided(_)
+            | resident::State::Pool(_) => return Ok(None),
         };
         // SAFETY: this view retains the exact source borrow and validated slice;
         // the selected independent edge keeps that same immutable extent live.

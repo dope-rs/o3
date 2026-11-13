@@ -57,6 +57,8 @@ const _: () = {
     assert!(size_of::<Header>() == 32);
     assert!(size_of::<Header<super::Accounted>>() == 32);
     assert!(size_of::<Header<super::Resident<'static>>>() == 32);
+    assert!(size_of::<Header<super::Charged<'static>>>() == 32);
+    assert!(align_of::<Header>() >= align_of::<crate::buffer::resident::Budget<'static>>());
     assert!(align_of::<Header>() == 8);
     assert!(align_of::<Header>() >= align_of::<super::Slot>());
     assert!(align_of::<Header>() >= align_of::<super::Slot<super::Resident<'static>>>());

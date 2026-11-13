@@ -50,9 +50,9 @@ impl<'pool, K: crate::buffer::raw::Backing, S> Span<K, pool::Borrowed<'pool>, S>
 }
 
 impl<K: crate::buffer::raw::Backing, M, S> Span<K, M, S> {
-    pub(in crate::buffer) fn into_edge(self) -> owners::Edge<K, M> {
+    pub(in crate::buffer) fn into_edge(self) -> owners::Owner<K, M> {
         let this = mem::ManuallyDrop::new(self);
-        owners::Edge::new(this.entry().owner())
+        owners::Owner::new(this.entry().owner())
     }
 
     pub(in crate::buffer::pool) fn new(active: owners::Active<K, S>, root: M) -> Self {

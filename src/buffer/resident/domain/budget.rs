@@ -103,6 +103,13 @@ impl<'d> Budget<'d> {
             capacity,
         })
     }
+
+    /// # Safety
+    /// Transfer exactly this counter's previously acquired credit once.
+    #[inline]
+    pub(in crate::buffer) unsafe fn release(self, capacity: usize) {
+        self.core().resident.refund(capacity);
+    }
 }
 
 const _: () = assert!(size_of::<Budget<'static>>() == size_of::<usize>());
@@ -152,15 +159,16 @@ impl<'d> Charge<'d> {
 
     pub(in crate::buffer) fn truncate(&mut self, capacity: usize) {
         let capacity = capacity.min(self.capacity);
-        self.budget.core().resident.refund(self.capacity - capacity);
+        // SAFETY: this charge transfers only its released debit.
+        unsafe { self.budget.release(self.capacity - capacity) };
         self.capacity = capacity;
     }
 }
 
 impl Drop for Charge<'_> {
     fn drop(&mut self) {
-        let core = self.budget.core();
-        core.resident.refund(self.capacity);
+        // SAFETY: dropping this charge transfers its complete remaining debit.
+        unsafe { self.budget.release(self.capacity) };
     }
 }
 
@@ -184,7 +192,8 @@ mod raw {
         }
 
         unsafe fn refund(self, amount: num::NonZero<u32>) {
-            self.core().resident.refund(amount.get() as usize);
+            // SAFETY: the caller transfers this policy's exact acquired debit.
+            unsafe { Budget::release(self, amount.get() as usize) };
         }
     }
 }

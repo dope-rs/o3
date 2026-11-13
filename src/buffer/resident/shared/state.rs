@@ -16,6 +16,7 @@ pub(in crate::buffer) enum State<'d> {
     Resident(crate::buffer::raw::Rc<resident::Budget<'d>>),
     Accounted(owners::Registered<'d>),
     Provided(provided::Account<'d>),
+    Pool(owners::Owner<owners::Charged<'d>, buffer::pool::Owned>),
 }
 
 impl buffer::Residency for State<'_> {
@@ -37,6 +38,7 @@ unsafe impl buffer::raw::Retain for State<'_> {
             Self::Resident(owner) => Self::Resident(owner.try_retain()?),
             Self::Accounted(owner) => Self::Accounted(owner.try_retain()?),
             Self::Provided(owner) => Self::Provided(owner.try_retain()?),
+            Self::Pool(owner) => Self::Pool(owner.try_retain()?),
         })
     }
 }
@@ -53,6 +55,7 @@ impl<'d> backing::Owner<'d> for State<'d> {
             Self::Resident(owner) => owner.root(),
             Self::Accounted(owner) => owner.root(),
             Self::Provided(owner) => owner.root(),
+            Self::Pool(owner) => owner.root(),
         }
     }
 }

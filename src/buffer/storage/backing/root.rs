@@ -11,6 +11,7 @@ pub(in crate::buffer) enum Root<'a, 'd> {
     Resident(&'a crate::buffer::raw::Header<resident::Budget<'d>>),
     Accounted(&'a owners::Account<'d>),
     Provided(&'a resident::Charge<'d>),
+    Charged(&'a owners::Slot<owners::Charged<'d>>),
 }
 
 impl<'a, 'd> Root<'a, 'd> {
@@ -26,6 +27,13 @@ impl<'a, 'd> Root<'a, 'd> {
             Self::Resident(owner) => owner.capacity().get() as usize,
             Self::Accounted(owner) => owner.bytes(),
             Self::Provided(owner) => owner.capacity(),
+            Self::Charged(owner) => {
+                // SAFETY: the charged edge retains this exact active slot.
+                unsafe {
+                    owners::capacity_of::<owners::Charged<'d>>(ptr::NonNull::from(owner).cast())
+                }
+                .get() as usize
+            }
         }
     }
 }
@@ -46,6 +54,9 @@ impl<'a, 'b, 'd, 'e> PartialEq<Root<'b, 'e>> for Root<'a, 'd> {
             }
             Self::Provided(left) => {
                 matches!(other, Root::Provided(right) if ptr::addr_eq(*left, *right))
+            }
+            Self::Charged(left) => {
+                matches!(other, Root::Charged(right) if ptr::addr_eq(*left, *right))
             }
         }
     }

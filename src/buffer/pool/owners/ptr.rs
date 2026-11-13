@@ -1,4 +1,4 @@
-use std::{marker, num, ptr};
+use std::{marker, mem, num, ptr};
 
 use crate::{
     alloc,
@@ -65,10 +65,17 @@ impl<'d> Base<super::Resident<'d>> {
     }
 }
 
+impl<'d> Base<super::Charged<'d>> {
+    unsafe fn budget(self, slots: u32) -> ptr::NonNull<resident::Budget<'d>> {
+        // SAFETY: the charged shape places its aligned budget after these slots.
+        unsafe { self.slots().add(slots as usize).cast() }
+    }
+}
+
 impl<K, S: state::State> Block<K, S> {
     #[inline(always)]
     pub(super) fn allocate(shape: super::Shape<K>) -> Result<Self, alloc::Exhausted> {
-        let layout = shape.allocation();
+        let (_, layout) = shape.allocation();
         // SAFETY: Shape proves a valid nonzero allocation including its Header.
         let block = unsafe { alloc::raw::try_new(layout, S::ZEROED) }?;
         // SAFETY: this exact shape supplies both allocation and initialization geometry.
@@ -119,7 +126,8 @@ impl<S: state::State> Block<Accounted, S> {
         tally: pool::Tally,
         budget: resident::Budget<'d>,
     ) -> Result<Ptr<super::Resident<'d>, S>, resident::AllocError> {
-        let shape = super::Shape::try_new(tally).map_err(resident::AllocError::Layout)?;
+        let shape =
+            super::Shape::<Accounted>::try_new(tally).map_err(resident::AllocError::Layout)?;
         let (layout, limit) = tally.into_parts();
         let charge = budget
             .try_charge(layout.bytes())
@@ -142,6 +150,28 @@ impl<S: state::State> Block<Accounted, S> {
         let base = unsafe { super::Accounts::initialize(self.base, slots, charge, limit) };
         // SAFETY: all cells are initialized and the transferred charge binds the published domain.
         unsafe { base.publish() }
+    }
+}
+
+impl<'d> Block<super::Charged<'d>, state::Uninit> {
+    pub(in crate::buffer::pool) fn try_charged(
+        public: pool::Layout,
+        budget: resident::Budget<'d>,
+    ) -> Result<Ptr<super::Charged<'d>>, resident::AllocError> {
+        let shape = super::Shape::<super::Charged<'d>>::try_new(public)
+            .map_err(resident::AllocError::Layout)?;
+        let charge = budget
+            .try_charge(public.bytes())
+            .map_err(resident::AllocError::Budget)?;
+        let block = Self::allocate(shape).map_err(resident::AllocError::Exhausted)?;
+        // SAFETY: this unpublished shape reserves exactly these unassociated slots.
+        unsafe { super::Slot::initialize(block.base, public.slots(), ()) };
+        let charge = mem::ManuallyDrop::new(charge);
+        // SAFETY: transfer the exact shape's debit before publishing any owner.
+        unsafe {
+            block.base.budget(public.slots()).write(charge.budget());
+            Ok(block.base.publish())
+        }
     }
 }
 
@@ -183,9 +213,27 @@ impl<K, S> Ptr<K, S> {
     }
 
     pub(in crate::buffer) unsafe fn deallocate(self) {
+        let (_, layout) = self.header().allocation();
         // SAFETY: terminal ownership pairs this allocation with its immutable
         // nonzero geometry, consumed directly at the foreign allocator boundary.
-        unsafe { alloc::raw::dealloc(self.header().allocation(), self.raw) };
+        unsafe { alloc::raw::dealloc(layout, self.raw) };
+    }
+}
+
+impl<'d, S> Ptr<super::Charged<'d>, S> {
+    pub(in crate::buffer) unsafe fn destroy(self) {
+        let (bytes, layout) = self.header().allocation();
+        // SAFETY: the terminal edge retains this initialized charged block.
+        let budget = unsafe {
+            Base::from_raw(self.raw)
+                .budget(self.header().slots())
+                .read()
+        };
+        // SAFETY: immutable geometry retains this root's exact debit; no owner remains.
+        unsafe {
+            budget.release(bytes);
+            alloc::raw::dealloc(layout, self.raw);
+        }
     }
 }
 

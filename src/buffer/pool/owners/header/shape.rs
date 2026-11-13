@@ -62,13 +62,42 @@ impl Shape<owners::Accounted> {
     }
 }
 
+impl Shape<owners::Charged<'_>> {
+    pub(in crate::buffer::pool::owners) fn try_new(
+        public: pool::Layout,
+    ) -> Result<Self, pool::LayoutError> {
+        let slots = public.slots();
+        let offset = size_of::<owners::Header>() as u128
+            + u128::from(slots) * size_of::<owners::Slot>() as u128
+            + size_of::<crate::buffer::resident::Budget<'_>>() as u128;
+        if offset + public.bytes() as u128 > alloc::raw::Layout::<owners::Header>::MAX {
+            return Err(pool::LayoutError::AccountedData {
+                slots,
+                capacity: public.capacity().get(),
+                tally: 0,
+            });
+        }
+        Ok(Self {
+            slots,
+            capacity: public.capacity(),
+            // SAFETY: the admitted extent includes its nonempty aligned header.
+            data_offset: unsafe { num::NonZero::new_unchecked(offset as usize) },
+            kind: marker::PhantomData,
+        })
+    }
+}
+
 impl<K> Shape<K> {
-    pub(in crate::buffer::pool::owners) const fn allocation(&self) -> Layout {
+    #[inline]
+    pub(in crate::buffer::pool::owners) const fn allocation(&self) -> (usize, Layout) {
         let bytes = self.slots as usize * self.capacity.get() as usize;
         let align = num::NonZero::<usize>::MIN.saturating_add(align_of::<owners::Header>() - 1);
         // SAFETY: the closed constructors admit the complete slot product,
         // metadata extent and padded Header alignment together.
-        unsafe { alloc::raw::Layout::<u8>::at(self.data_offset.get(), bytes, align).pad_to_align() }
+        let layout = unsafe {
+            alloc::raw::Layout::<u8>::at(self.data_offset.get(), bytes, align).pad_to_align()
+        };
+        (bytes, layout)
     }
 
     pub(in crate::buffer::pool::owners) const fn slots(&self) -> u32 {

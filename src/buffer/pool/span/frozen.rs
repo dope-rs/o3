@@ -15,3 +15,13 @@ impl<L> pool::Span<owners::Plain<L>, pool::Owned, Frozen> {
         unsafe { pool::raw::into_shared(self, 0, len) }.into()
     }
 }
+
+impl<'d, S: pool::state::State> pool::Span<owners::Charged<'d>, pool::Owned, S> {
+    #[must_use]
+    #[inline]
+    pub fn freeze(self) -> buffer::resident::Shared<'d> {
+        let len = self.len();
+        // SAFETY: consuming the exclusive span retains its initialized prefix.
+        unsafe { pool::raw::into_shared(self, 0, len) }.into()
+    }
+}

@@ -76,3 +76,21 @@ unsafe impl<L, M, S: state::State> buffer::raw::Exclusive for Span<owners::Plain
         self.capacity().get()
     }
 }
+
+// SAFETY: charged slots issue no accounts; freezing consumes the only writable
+// lease. Its inline length is disjoint from the retained fixed-capacity slot.
+unsafe impl<S: state::State> buffer::raw::Exclusive
+    for Span<owners::Charged<'_>, crate::buffer::pool::Owned, S>
+{
+    fn as_mut_ptr(&mut self) -> *mut mem::MaybeUninit<u8> {
+        self.entry().data().cast()
+    }
+
+    fn len_mut(&mut self) -> &mut u32 {
+        &mut self.len
+    }
+
+    fn capacity(&self) -> u32 {
+        self.capacity().get()
+    }
+}

@@ -2,7 +2,7 @@ use std::{marker, num::NonZero, ptr::NonNull};
 
 pub(in crate::buffer) use account::{Account, Accounts, Registered};
 pub use edge::Edge;
-pub(in crate::buffer) use edge::Measured;
+pub(in crate::buffer) use edge::{Measured, Owner};
 use free::Free;
 pub(in crate::buffer::pool) use header::Header;
 use header::Shape;
@@ -39,5 +39,10 @@ pub struct Plain<L = super::Layout>(marker::PhantomData<fn() -> L>);
 
 #[derive(Debug)]
 pub struct Resident<'d> {
+    brand: marker::PhantomData<fn(&'d ()) -> &'d ()>,
+}
+
+#[derive(Debug)]
+pub struct Charged<'d> {
     brand: marker::PhantomData<fn(&'d ()) -> &'d ()>,
 }
