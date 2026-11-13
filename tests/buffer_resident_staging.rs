@@ -83,6 +83,88 @@ fn accounted_geometry() {
 }
 
 #[test]
+fn optional_retention_preserves_staging_accounts() {
+    let plan = staging::Plan::new(4, 4).expect("staging capacity");
+    let layout = staging::Layout::new(1, plan, 1, 0).expect("staging layout");
+    let mut domains = [const { resident::Domain::new() }; 3];
+    region::Token::scope_pinned(Pin::new(&mut domains), |token, domains| {
+        let [storage, retained, foreign] = domains.get_mut();
+        let storage = storage
+            .try_budget(layout.resident().get(), token.proof())
+            .expect("storage budget");
+        let retained = retained
+            .try_budget(8, token.proof())
+            .expect("retained budget");
+        let foreign = foreign
+            .try_budget(4, token.proof())
+            .expect("foreign budget");
+        let pool = staging::Pool::try_account(&storage, layout).expect("staging pool");
+        let mut source = staging::Buf::try_from(&pool).expect("staging owner");
+        source.write_slice(b"abcd").expect("first backing");
+        let bound = Input::new(&source, &retained)
+            .defer_all()
+            .bind(hold::Policy::share());
+        assert!(bound.try_retain_with(3).expect("fresh cap").is_none());
+        {
+            let _charge = retained.try_charge(5).expect("competing charge");
+            assert!(matches!(
+                bound.try_retain_with(9),
+                Err(hold::Error::Resident(resident::AllocError::Budget(error)))
+                    if error.into_parts() == (NonZero::<usize>::MIN.saturating_add(3), 3)
+            ));
+            assert_eq!(retained.resident(), 5);
+        }
+        let (first, hot) = Tracker::activity(|| {
+            bound
+                .try_retain_with(4)
+                .expect("fresh account")
+                .expect("admitted")
+        });
+        assert!(hot == Activity::default());
+        let (reuse, hot) = Tracker::activity(|| {
+            bound
+                .try_retain_with(4)
+                .expect("same account")
+                .expect("reused")
+        });
+        assert!(hot == Activity::default());
+        assert_eq!(retained.resident(), 4);
+        assert_eq!(reuse.as_slice().as_ptr(), source.as_slice().as_ptr());
+        assert!(bound.try_retain_with(3).expect("occupied cap").is_none());
+        let foreign_bound = Input::new(&source, &foreign)
+            .defer_all()
+            .bind(hold::Policy::share());
+        let (declined, hot) = Tracker::activity(|| foreign_bound.try_retain_with(4));
+        assert!(declined.expect("foreign account").is_none());
+        assert!(hot == Activity::default());
+        drop(reuse);
+        source.try_consume(4).expect("first frame consumed");
+        source.write_slice(b"efgh").expect("second backing");
+        let bound = Input::new(&source, &retained)
+            .defer_all()
+            .bind(hold::Policy::share());
+        let (declined, hot) = Tracker::activity(|| bound.try_retain_with(8));
+        assert!(declined.expect("full account table").is_none());
+        assert!(hot == Activity::default());
+        let (copy, allocations) = Tracker::counts(|| bound.try_retain());
+        let copy = copy.expect("mandatory copy fallback");
+        assert_eq!(allocations, [1, 0]);
+        assert_eq!(copy.as_slice(), b"efgh");
+        assert_ne!(copy.as_slice().as_ptr(), source.as_slice().as_ptr());
+        assert_eq!(retained.resident(), 8);
+        drop(copy);
+        drop(first);
+        assert_eq!(retained.resident(), 0);
+        let (last, hot) = Tracker::activity(|| bound.try_retain_with(4));
+        let last = last.expect("released account").expect("readmitted");
+        assert!(hot == Activity::default());
+        assert_eq!(last.as_slice().as_ptr(), source.as_slice().as_ptr());
+        drop(last);
+        assert_eq!(retained.resident(), 0);
+    });
+}
+
+#[test]
 fn preserves_numeric_bounds() {
     let max = u32::MAX as usize;
     for (warm, limit) in [(1, 1), (1, max), (max - 1, max), (max, max)] {

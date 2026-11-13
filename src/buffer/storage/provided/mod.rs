@@ -255,7 +255,7 @@ impl<'a, 'd> Frozen<'d> for Prefix<'a, 'd, &'a [u8]> {
 
 impl<'d> Prefix<'_, 'd, &[u8]> {
     #[inline]
-    pub(in crate::buffer) fn try_account_with<A: account::Admission>(
+    pub(in crate::buffer) fn try_account_with<A: resident::Admission>(
         &self,
         budget: &resident::Budget<'d>,
         admission: A,

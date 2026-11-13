@@ -367,22 +367,62 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
     where
         Self: 'a,
     {
+        Self::try_share(plan, budget, (), |owner, plan, budget| match owner {
+            Some(owner) => Ok(owner),
+            None => Self::try_copy(plan, budget).map(Into::into),
+        })
+    }
+
+    fn try_retain_with<'a>(
+        plan: &Self::View<'a>,
+        budget: &resident::Budget<'d>,
+        limit: usize,
+    ) -> Result<Option<hold::Retained<'d>>, hold::Error>
+    where
+        Self: 'a,
+    {
+        Self::try_share(plan, budget, resident::Cap(limit), |owner, _, _| Ok(owner))
+    }
+}
+
+impl<'d> Buf<'d> {
+    fn try_share<'a, A: resident::Admission, R, F>(
+        plan: &buffer::View<'a, Self>,
+        budget: &resident::Budget<'d>,
+        admission: A,
+        finish: F,
+    ) -> Result<R, hold::Error>
+    where
+        F: FnOnce(
+            Option<hold::Retained<'d>>,
+            &buffer::View<'a, Self>,
+            &resident::Budget<'d>,
+        ) -> Result<R, hold::Error>,
+    {
         use buffer::raw::Retain as _;
         use storage::regions::NonEmpty;
 
         let Some(view) = NonEmpty::new(plan) else {
-            return Ok(resident::Shared::new().into());
+            return finish(Some(resident::Shared::new().into()), plan, budget);
         };
         let view = view.view();
         let owner = match &view.source.backing {
-            State::Empty | State::Cold(_) => return Ok(resident::Shared::new().into()),
+            State::Empty | State::Cold(_) => {
+                return finish(Some(resident::Shared::new().into()), plan, budget);
+            }
             State::Live(Backing::Warm(cursor) | Backing::Accounted(cursor)) => {
-                let Some(owner) = owners::Account::try_bind(cursor, budget)? else {
-                    return Self::try_copy(plan, budget).map(Into::into);
+                let Some(owner) = owners::Account::try_bind(cursor, budget, admission)? else {
+                    return finish(None, plan, budget);
                 };
                 resident::State::Accounted(owner)
             }
             State::Live(Backing::Local(state)) => {
+                if admission
+                    .check(*budget, state.capacity().get() as usize)
+                    .is_break()
+                {
+                    return finish(None, plan, budget);
+                }
                 let owner = state
                     .buf
                     .try_retain()
@@ -390,13 +430,22 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
                 resident::State::Resident(owner)
             }
         };
-        Ok(resident::Shared {
-            // SAFETY: the selected backing retains this exact initialized view.
-            region: unsafe {
-                regions::Shared::from_extent(owner, regions::Extent::from_bytes(view.as_slice()))
-            },
-        }
-        .into())
+        finish(
+            Some(
+                resident::Shared {
+                    // SAFETY: the selected backing retains this exact initialized view.
+                    region: unsafe {
+                        regions::Shared::from_extent(
+                            owner,
+                            regions::Extent::from_bytes(view.as_slice()),
+                        )
+                    },
+                }
+                .into(),
+            ),
+            plan,
+            budget,
+        )
     }
 }
 

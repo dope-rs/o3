@@ -1,5 +1,6 @@
 //! Allocation accounting tied to a stable generative lifetime root.
 
+pub(in crate::buffer) use domain::budget::{Admission, Cap};
 pub use domain::{
     Domain,
     budget::{BindError, Budget, Charge},

@@ -238,7 +238,7 @@ unsafe impl<'d> hold::raw::Retain<'d> for Value<storage::Shared<provided::Owner<
         <storage::Shared<provided::Owner<'d>> as hold::raw::Retain<'d>>::try_retain(&plan.0, budget)
     }
 
-    fn try_retain_with<'a, const FRESH: bool>(
+    fn try_retain_with<'a>(
         plan: &Self::View<'a>,
         budget: &resident::Budget<'d>,
         limit: usize,
@@ -246,7 +246,7 @@ unsafe impl<'d> hold::raw::Retain<'d> for Value<storage::Shared<provided::Owner<
     where
         Self: 'a,
     {
-        <storage::Shared<provided::Owner<'d>> as hold::raw::Retain<'d>>::try_retain_with::<FRESH>(
+        <storage::Shared<provided::Owner<'d>> as hold::raw::Retain<'d>>::try_retain_with(
             &plan.0, budget, limit,
         )
     }

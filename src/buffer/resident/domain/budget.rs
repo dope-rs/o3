@@ -1,4 +1,4 @@
-use std::num;
+use std::{convert::Infallible, num, ops::ControlFlow};
 
 use crate::{
     base::cell::region,
@@ -12,6 +12,33 @@ use crate::{
 #[derive(Clone, Copy, Debug)]
 pub struct Budget<'d> {
     core: (&'d Domain, region::Identity<'d>),
+}
+
+pub(in crate::buffer) trait Admission {
+    type Declined;
+
+    fn check(&self, _: Budget<'_>, _: usize) -> ControlFlow<Self::Declined> {
+        ControlFlow::Continue(())
+    }
+}
+
+impl Admission for () {
+    type Declined = Infallible;
+}
+
+pub(in crate::buffer) struct Cap(pub(in crate::buffer) usize);
+
+impl Admission for Cap {
+    type Declined = ();
+
+    fn check(&self, budget: Budget<'_>, additional: usize) -> ControlFlow<()> {
+        let used = budget.resident();
+        if used > self.0 || additional > self.0 - used {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -86,7 +86,7 @@ impl<'d> Entry<'d> {
     }
 
     #[inline]
-    pub(in crate::buffer::storage::provided) fn try_account<A: account::Admission>(
+    pub(in crate::buffer::storage::provided) fn try_account<A: resident::Admission>(
         owner: &provided::Owner<'d>,
         budget: resident::Budget<'d>,
         admission: A,
@@ -109,9 +109,6 @@ impl<'d> Entry<'d> {
             // no callbacks or edge releases intervene before the increment.
             unsafe { registration.try_retain() }.map_err(account::Cause::Retain)?;
         } else {
-            if let ops::ControlFlow::Break(declined) = admission.fresh() {
-                return Ok(ops::ControlFlow::Break(declined));
-            }
             let domain = entry.domain;
             let count = domain.accounted.0.get();
             let limit = domain.limit;

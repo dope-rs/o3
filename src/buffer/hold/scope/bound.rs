@@ -54,16 +54,13 @@ impl<'input, 'd, R: hold::raw::Retain<'d> + 'input> Bound<'input, 'd, R> {
         self.choice.try_retain::<R>(&self.input.0, self.input.1)
     }
 
-    /// Attempts optional Share retention; `FRESH` permits new backing or accounting.
+    /// Attempts optional Share retention without copying payload bytes.
     /// A decline or error preserves this bound for the caller's fallback.
-    pub fn try_retain_with<const FRESH: bool>(
-        &self,
-        limit: usize,
-    ) -> Result<Option<hold::Retained<'d>>, hold::Error> {
+    pub fn try_retain_with(&self, limit: usize) -> Result<Option<hold::Retained<'d>>, hold::Error> {
         if self.choice != Choice::Share {
             return Ok(None);
         }
-        R::try_retain_with::<FRESH>(&self.input.0, self.input.1, limit)
+        R::try_retain_with(&self.input.0, self.input.1, limit)
     }
 
     /// Retains this range and ends the bound if resident admission fails.

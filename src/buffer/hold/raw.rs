@@ -1,10 +1,10 @@
-use storage::provided::{self, account::Admission as _};
+use resident::Admission as _;
 
 use crate::buffer::{
     self,
     hold::{Error, Retained},
     resident, storage,
-    storage::{provided::Frozen as _, regions},
+    storage::{provided, provided::Frozen as _, regions},
 };
 
 pub(in crate::buffer) fn resident<S: buffer::Residency + ?Sized>(
@@ -51,26 +51,18 @@ pub unsafe trait Retain<'d>: buffer::Source {
         Self::try_copy(plan, budget).map(Into::into)
     }
 
-    /// Optional retention: `FRESH` permits admission against the full resident ceiling.
-    /// Overrides may reuse this budget's existing charge while its residency is at most `limit`.
-    /// `None` declines without retaining; other effects of an override remain its own contract.
-    fn try_retain_with<'a, const FRESH: bool>(
-        plan: &Self::View<'a>,
-        budget: &resident::Budget<'d>,
-        limit: usize,
+    /// Optionally retains the original backing without copying payload bytes.
+    /// Existing charges require residency at most `limit`; fresh charges must also fit.
+    /// A decline or error preserves the borrowed plan for fallback.
+    fn try_retain_with<'a>(
+        _: &Self::View<'a>,
+        _: &resident::Budget<'d>,
+        _: usize,
     ) -> Result<Option<Retained<'d>>, Error>
     where
         Self: 'a,
     {
-        let admission = provided::account::Cap::<FRESH>(limit);
-        if admission.fresh().is_break() {
-            return Ok(None);
-        }
-        let resident = buffer::Read::as_slice(plan).len().max(Self::resident(plan));
-        if admission.check(*budget, resident).is_break() {
-            return Ok(None);
-        }
-        Self::try_retain(plan, budget).map(Some)
+        Ok(None)
     }
 }
 
@@ -98,7 +90,7 @@ unsafe impl<'d> Retain<'d> for storage::Shared<provided::Owner<'d>> {
         Ok(resident::Shared::from(owner).into())
     }
 
-    fn try_retain_with<'a, const FRESH: bool>(
+    fn try_retain_with<'a>(
         plan: &Self::View<'a>,
         budget: &resident::Budget<'d>,
         limit: usize,
@@ -111,7 +103,7 @@ unsafe impl<'d> Retain<'d> for storage::Shared<provided::Owner<'d>> {
             owner: plan.source.owner(),
         };
         let std::ops::ControlFlow::Continue(owner) = prefix
-            .try_account_with(budget, provided::account::Cap::<FRESH>(limit))
+            .try_account_with(budget, resident::Cap(limit))
             .map_err(Error::Account)?
         else {
             return Ok(None);
@@ -149,5 +141,20 @@ where
             .map_err(resident::AllocError::Retain)?;
         let inner: resident::Shared<'d> = inner.into();
         Ok(inner.into())
+    }
+
+    fn try_retain_with<'a>(
+        plan: &Self::View<'a>,
+        budget: &resident::Budget<'d>,
+        limit: usize,
+    ) -> Result<Option<Retained<'d>>, Error>
+    where
+        Self: 'a,
+    {
+        let resident = plan.as_slice().len().max(Self::resident(plan));
+        if resident::Cap(limit).check(*budget, resident).is_break() {
+            return Ok(None);
+        }
+        Self::try_retain(plan, budget).map(Some)
     }
 }

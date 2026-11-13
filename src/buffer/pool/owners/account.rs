@@ -177,9 +177,10 @@ impl<'d> Account<'d> {
         unsafe { self.core.publish() }
     }
 
-    pub(in crate::buffer) fn try_bind<M>(
+    pub(in crate::buffer) fn try_bind<M, A: resident::Admission>(
         span: &pool::Span<super::Resident<'d>, M>,
         budget: &resident::Budget<'d>,
+        admission: A,
     ) -> Result<Option<Registered<'d>>, resident::AllocError> {
         use crate::mem::raw::Edge;
 
@@ -192,6 +193,9 @@ impl<'d> Account<'d> {
             // SAFETY: the linked account retains its initialized resident charge.
             let charge = unsafe { (*account.resident.get()).assume_init_ref() };
             if !ptr::eq(budget.core(), charge.budget().core()) {
+                return Ok(None);
+            }
+            if admission.check(*budget, 0).is_break() {
                 return Ok(None);
             }
             // SAFETY: this active account can issue one additional external edge.
@@ -208,8 +212,12 @@ impl<'d> Account<'d> {
         };
         // SAFETY: this key comes from the free list of the entry's exact table.
         let account = unsafe { Accounts::entry(entry, key) };
+        let resident = entry.capacity().get() as usize;
+        if admission.check(*budget, resident).is_break() {
+            return Ok(None);
+        }
         let charge = budget
-            .try_charge(entry.capacity().get() as usize)
+            .try_charge(resident)
             .map_err(resident::AllocError::Budget)?;
         let slot = entry.try_retain().map_err(resident::AllocError::Retain)?;
         let pointer = ptr::NonNull::from(account);
