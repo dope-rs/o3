@@ -20,10 +20,22 @@ impl<'a, T> Occupied<'a, T> {
 
     /// Moves out the initialized value, releasing its borrowed backing.
     pub fn into_inner(self) -> T {
-        let this = std::mem::ManuallyDrop::new(self);
-        // SAFETY: this consumed owner retains its initialized slot; suppressing
-        // its destructor transfers the value exactly once without a second drop.
-        unsafe { ptr::read(&raw const *this.value) }
+        self.take().0
+    }
+
+    /// Moves out the value while retaining its exact vacant backing.
+    pub fn take(self) -> (T, super::Vacant<'a, T>) {
+        let vacant = self.into_uninit();
+        // SAFETY: into_uninit retains the initialized bytes without their destructor.
+        // Reading transfers the value once; the vacant phase cannot drop it.
+        (unsafe { vacant.value.assume_init_read() }, vacant)
+    }
+
+    /// Returns the same backing without reading or dropping the stored value.
+    pub fn into_uninit(self) -> super::Vacant<'a, T> {
+        // SAFETY: both transparent phases retain the same exclusive pointer and
+        // lifetime. The backing has no independent T drop or surviving pin obligation.
+        unsafe { std::mem::transmute(self) }
     }
 
     /// Pins this initialized value until the callback returns, then drops it in place.

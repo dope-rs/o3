@@ -24,13 +24,19 @@ fn retains_or_forgets_owner() {
     occupied.get_mut().value += 1;
     assert_eq!(ptr::from_ref(&*occupied), pointer);
     assert_eq!(occupied.value, 42);
-    let value = occupied.into_inner();
+    let (value, mut vacant) = occupied.take();
     assert_eq!(drops.get(), Some(0));
-    mem::forget(Vacant::new(&mut backing).insert(Owner {
-        drops: Counted(&drops),
-        value: 1,
-    }));
+    assert_eq!(vacant.get_mut().as_mut_ptr(), pointer);
+    let vacant = vacant
+        .insert(Owner {
+            drops: Counted(&drops),
+            value: 1,
+        })
+        .into_uninit();
     assert_eq!(drops.get(), Some(0));
+    let restored = unsafe { vacant.assume_init() };
+    assert_eq!(restored.value, 1);
+    mem::forget(restored);
     let replaced = Vacant::new(&mut backing).insert(Owner {
         drops: Counted(&drops),
         value: 2,
