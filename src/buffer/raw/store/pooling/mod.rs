@@ -30,6 +30,8 @@ unsafe impl<const CAPACITY: usize> Backing for owners::Plain<pool::Width<CAPACIT
 unsafe impl<'d> Backing for owners::Resident<'d> {
     type Link = std::cell::Cell<u32>;
 
+    const COUNTED: bool = true;
+
     unsafe fn release<S>(core: owners::Ptr<Self, S>) {
         // SAFETY: the terminal resident edge retains the exact table lifetime.
         unsafe { core.uncharge() };

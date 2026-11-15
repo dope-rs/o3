@@ -1,4 +1,4 @@
-use std::{marker, num, ptr};
+use std::{marker, mem, num, ptr};
 
 use crate::{
     buffer::{
@@ -36,13 +36,6 @@ pub(in crate::buffer::pool) struct Seed<K, S> {
     slots: super::Ptr<K, S>,
 }
 
-/// One newly activated slot edge still carrying its exact pool identity.
-#[repr(C)]
-pub(in crate::buffer::pool) struct Active<K: crate::buffer::raw::Backing, S> {
-    pub(in crate::buffer::pool) slots: super::Ptr<K, S>,
-    pub(in crate::buffer::pool) key: Key,
-}
-
 /// Exact terminal slot state produced only by the last live edge.
 #[repr(C)]
 pub(super) struct Retired<K, S> {
@@ -50,7 +43,7 @@ pub(super) struct Retired<K, S> {
     key: Key,
 }
 
-impl<K: crate::buffer::raw::Backing, S> Active<K, S> {
+impl<K: crate::buffer::raw::Backing, S> pool::Span<K, pool::Owned, S> {
     pub(in crate::buffer::pool) fn acquire(slots: super::Ptr<K, S>) -> Option<Self> {
         let key = slots.header().free.head()?;
         // SAFETY: this exact vacant head is consumed without intervening reentry.
@@ -64,15 +57,22 @@ impl<K: crate::buffer::raw::Backing, S> Active<K, S> {
 
         let slot = slots.slot(key);
         let header = slots.header();
-        // SAFETY: the caller owns this exact vacant head; publish its live key
-        // before creating the first edge. Any resident association is already empty.
+        // SAFETY: the caller owns this exact vacant head. Any resident association
+        // is empty; only counted spans can issue an alias before publication.
         unsafe {
             header.free.pop(slot.prefix.word());
             slot.prefix.write(key.get());
-            slot.activate();
+            if K::COUNTED {
+                slot.activate();
+            }
         }
         header.available.set(header.available.get() - 1);
-        Self { slots, key }
+        Self {
+            slots,
+            key,
+            len: 0,
+            root: pool::Owned,
+        }
     }
 }
 
@@ -84,33 +84,39 @@ impl<K: crate::buffer::raw::Backing, S> Seed<K, S> {
         Self { slots: core }
     }
 
-    pub(in crate::buffer::pool) fn take(self) -> Active<K, S> {
+    pub(in crate::buffer::pool) fn take(self) -> pool::Span<K, pool::Owned, S> {
         // SAFETY: Seed proves index zero belongs to this exact freshly
         // initialized nonempty list and is its current free-list head.
         let key = unsafe { Key::new(0) };
         // SAFETY: Seed owns this initialized head until the first acquisition.
-        unsafe { Active::take(self.slots, key) }
+        unsafe { pool::Span::take(self.slots, key) }
     }
 }
 
-impl<K: crate::buffer::raw::Backing, S> Active<K, S> {
+impl<K: crate::buffer::raw::Backing> Slot<K> {
     /// # Safety
     /// The caller must transfer one live edge for this exact pool slot.
-    pub(super) unsafe fn release(slots: super::Ptr<K, S>, key: Key) {
+    pub(in crate::buffer::pool) unsafe fn release<S>(slots: super::Ptr<K, S>, key: Key) {
         use crate::mem::raw::Edge;
 
         // SAFETY: the caller transfers its one live edge to this exact slot.
-        if unsafe { slots.slot(key).release() } != rc::Release::Last {
+        if K::COUNTED && unsafe { Edge::release(slots.slot(key)) } != rc::Release::Last {
             return;
         }
         Retired { slots, key }.finish();
     }
 }
 
-impl<K: crate::buffer::raw::Backing, S> Drop for Active<K, S> {
-    fn drop(&mut self) {
-        // SAFETY: Active transfers its one live edge to this exact slot.
-        unsafe { Self::release(self.slots, self.key) };
+impl<K: crate::buffer::raw::Backing, M, S> pool::Span<K, M, S> {
+    pub(in crate::buffer) fn into_edge(self) -> super::Owner<K, M> {
+        use crate::mem::raw::Edge;
+
+        let this = mem::ManuallyDrop::new(self);
+        if !K::COUNTED {
+            // SAFETY: consuming this unique span publishes its first counted edge.
+            unsafe { this.entry().slot().activate() };
+        }
+        super::Owner::new(this.entry().owner())
     }
 }
 
@@ -169,28 +175,6 @@ impl<'span, K: crate::buffer::raw::Backing, S> Entry<'span, K, S> {
         self.slots.owner(self.key)
     }
 
-    pub(in crate::buffer::pool) fn is_unique(self) -> bool {
-        self.slots.is_unique(self.key)
-    }
-
-    pub(in crate::buffer::pool) fn try_retain(self) -> Result<Active<K, S>, rc::Error> {
-        use crate::mem::raw::Edge;
-
-        // SAFETY: the borrowed Span owns this exact active slot throughout admission.
-        unsafe { self.slot().prefix.try_retain() }?;
-        Ok(Active {
-            slots: self.slots,
-            key: self.key,
-        })
-    }
-
-    /// # Safety
-    /// The caller must transfer the Span edge projected by this Entry.
-    pub(in crate::buffer::pool) unsafe fn release(self) {
-        // SAFETY: Entry keeps the exact pool and key paired by its live Span.
-        unsafe { Active::release(self.slots, self.key) };
-    }
-
     pub(super) const fn core(self) -> super::Ptr<K, S> {
         self.slots
     }
@@ -210,13 +194,20 @@ impl<K: crate::buffer::raw::Backing, S> Clone for Entry<'_, K, S> {
 
 impl<K: crate::buffer::raw::Backing, S> Copy for Entry<'_, K, S> {}
 
+impl<S> Entry<'_, super::Resident<'_>, S> {
+    pub(in crate::buffer::pool) fn is_unique(self) -> bool {
+        use crate::mem::raw::Edge;
+
+        self.slot().is_unique()
+    }
+}
+
 const _: () = {
     assert!(size_of::<Slot>() == 8);
     assert!(size_of::<Slot<super::Resident<'static>>>() == 16);
     assert!(size_of::<Slot<super::Charged<'static>>>() == 8);
     assert!(align_of::<Slot>() == 8);
     assert!(size_of::<Seed<super::Plain, state::Uninit>>() == size_of::<usize>());
-    assert!(size_of::<Active<super::Plain, state::Uninit>>() == 2 * size_of::<usize>());
     assert!(size_of::<Retired<super::Plain, state::Uninit>>() == 2 * size_of::<usize>());
     assert!(size_of::<super::Binding<super::Plain>>() == 2 * size_of::<usize>());
     assert!(size_of::<super::Binding<super::Resident<'static>>>() == 2 * size_of::<usize>());

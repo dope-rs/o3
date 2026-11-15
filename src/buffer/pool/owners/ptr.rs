@@ -291,12 +291,6 @@ impl<K: crate::buffer::raw::Backing, S> Ptr<K, S> {
         }
     }
 
-    pub(super) fn is_unique(&self, key: super::Key) -> bool {
-        use crate::mem::raw::Edge;
-
-        self.slot(key).is_unique()
-    }
-
     pub(super) fn data(self, key: super::Key) -> *mut u8 {
         // SAFETY: Backing preserves the admitted geometry and Key retains this
         // pool-bound slot range, whether its dimensions are static or stored.

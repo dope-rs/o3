@@ -28,41 +28,27 @@ pub struct Span<K: crate::buffer::raw::Backing = owners::Plain, M = pool::Owned,
 }
 
 impl<K: crate::buffer::raw::Backing, S> Span<K, pool::Owned, S> {
-    pub(in crate::buffer::pool) fn acquire(core: owners::Ptr<K, S>) -> Option<Self> {
-        Some(Self::new(owners::Active::acquire(core)?, pool::Owned))
+    pub(in crate::buffer::pool) fn from_seed(seed: owners::Seed<K, S>) -> Self {
+        let span = seed.take();
+        // Seed transferred the sole root; span keeps the pool live through detachment.
+        owners::Header::detach(span.slots);
+        span
     }
 
-    pub(in crate::buffer::pool) fn from_seed(seed: owners::Seed<K, S>) -> Self {
-        let active = seed.take();
-        // Seed transferred the sole root; active keeps the pool live through detachment.
-        owners::Header::detach(active.slots);
-        Self::new(active, pool::Owned)
+    pub(in crate::buffer::pool) fn with_root<M>(self, root: M) -> Span<K, M, S> {
+        let this = mem::ManuallyDrop::new(self);
+        Span {
+            slots: this.slots,
+            key: this.key,
+            len: this.len,
+            root,
+        }
     }
 }
 
 impl<'pool, K: crate::buffer::raw::Backing, S> Span<K, pool::Borrowed<'pool>, S> {
     pub(in crate::buffer::pool) fn borrow(core: &'pool owners::Ptr<K, S>) -> Option<Self> {
-        Some(Self::new(
-            owners::Active::acquire(*core)?,
-            pool::Borrowed(marker::PhantomData),
-        ))
-    }
-}
-
-impl<K: crate::buffer::raw::Backing, M, S> Span<K, M, S> {
-    pub(in crate::buffer) fn into_edge(self) -> owners::Owner<K, M> {
-        let this = mem::ManuallyDrop::new(self);
-        owners::Owner::new(this.entry().owner())
-    }
-
-    pub(in crate::buffer::pool) fn new(active: owners::Active<K, S>, root: M) -> Self {
-        let active = mem::ManuallyDrop::new(active);
-        Self {
-            slots: active.slots,
-            key: active.key,
-            len: 0,
-            root,
-        }
+        Some(Span::acquire(*core)?.with_root(pool::Borrowed(marker::PhantomData)))
     }
 }
 

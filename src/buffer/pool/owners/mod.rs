@@ -11,7 +11,7 @@ pub(in crate::buffer) use ptr::Ptr;
 pub(in crate::buffer::pool) use ptr::{Accounted, Any, Block};
 use ptr::{Base, Binding};
 pub(in crate::buffer) use slot::Slot;
-pub(in crate::buffer::pool) use slot::{Active, Entry, Seed};
+pub(in crate::buffer::pool) use slot::{Entry, Seed};
 
 /// Capacity of the published pool allocation containing this live slot prefix.
 ///

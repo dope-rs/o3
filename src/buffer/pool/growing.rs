@@ -76,9 +76,7 @@ impl Growing {
 
     /// Acquires an owned lease, growing only when existing groups are full.
     pub fn try_acquire(&mut self) -> Result<Option<pool::Span>, alloc::Exhausted> {
-        Ok(self
-            .try_take()?
-            .map(|active| pool::Span::new(active, pool::Owned)))
+        self.try_take()
     }
 
     /// Acquires a slot tied to this pool borrow, retaining it through growth.
@@ -87,26 +85,24 @@ impl Growing {
     ) -> Result<Option<pool::Span<owners::Plain, pool::Borrowed<'_>>>, alloc::Exhausted> {
         Ok(self
             .try_take()?
-            .map(|active| pool::Span::new(active, pool::Borrowed(marker::PhantomData))))
+            .map(|span| span.with_root(pool::Borrowed(marker::PhantomData))))
     }
 
-    fn try_take(
-        &self,
-    ) -> Result<Option<owners::Active<owners::Plain, state::Uninit>>, alloc::Exhausted> {
+    fn try_take(&self) -> Result<Option<pool::Span>, alloc::Exhausted> {
         loop {
             let groups = self.initialized();
             let hint = usize::from(self.hint.get());
             if let Some(group) = groups.get(hint)
-                && let Some(active) = owners::Active::acquire(group.core)
+                && let Some(span) = pool::Span::acquire(group.core)
             {
-                return Ok(Some(active));
+                return Ok(Some(span));
             }
             for (index, group) in groups.iter().enumerate() {
                 if index != hint
-                    && let Some(active) = owners::Active::acquire(group.core)
+                    && let Some(span) = pool::Span::acquire(group.core)
                 {
                     self.hint.set(index as u8);
-                    return Ok(Some(active));
+                    return Ok(Some(span));
                 }
             }
             let before = self.allocated.get();
@@ -114,13 +110,13 @@ impl Growing {
                 return Ok(None);
             };
             let seed = owners::Block::<owners::Plain, state::Uninit>::try_seed(layout)?;
-            let active = seed.take();
-            let group = pool::Pool { core: active.slots };
+            let span = seed.take();
+            let group = pool::Pool { core: span.slots };
             if self.allocated.get() != before {
                 continue;
             }
             self.insert(group);
-            return Ok(Some(active));
+            return Ok(Some(span));
         }
     }
 

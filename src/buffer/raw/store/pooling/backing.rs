@@ -6,9 +6,11 @@ use crate::buffer::pool::owners;
 /// # Safety
 /// Release must destroy the allocation represented by this backing exactly once, after its final owner and every borrowed view have ended.
 /// Static dimensions match every allocation; a static slot count selects plain Header/Slot geometry.
+/// COUNTED is true whenever a live Span can share its slot before consuming publication.
 pub unsafe trait Backing {
     type Link: Clone;
 
+    const COUNTED: bool = false;
     const SLOTS: Option<u32> = None;
     const CAPACITY: Option<num::NonZero<u32>> = None;
 

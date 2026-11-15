@@ -27,7 +27,7 @@ impl<K: crate::buffer::raw::Backing, M, S> Span<K, M, S> {
 impl<K: crate::buffer::raw::Backing, M, S> Drop for Span<K, M, S> {
     fn drop(&mut self) {
         // SAFETY: dropping Span transfers its exact live slot edge once.
-        unsafe { self.entry().release() };
+        unsafe { owners::Slot::<K>::release(self.slots, self.key) };
     }
 }
 

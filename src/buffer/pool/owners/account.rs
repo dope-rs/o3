@@ -185,7 +185,8 @@ impl<'d> Account<'d> {
         use crate::mem::raw::Edge;
 
         let entry = span.entry();
-        let link = &entry.slot().link;
+        let slot = entry.slot();
+        let link = &slot.link;
         // SAFETY: the live slot's association is empty or its exact active account key.
         if let Some(key) = unsafe { Key::<true>::decode(link.get()) } {
             // SAFETY: this association was published after its account activated.
@@ -219,17 +220,18 @@ impl<'d> Account<'d> {
         let charge = budget
             .try_charge(resident)
             .map_err(resident::AllocError::Budget)?;
-        let slot = entry.try_retain().map_err(resident::AllocError::Retain)?;
         let pointer = ptr::NonNull::from(account);
         // SAFETY: the admitted vacant account still holds its exact free-list successor.
         unsafe { table.free.pop(account.prefix.word()) };
         // SAFETY: this unpublished account exclusively owns its uninitialized charge cell.
         unsafe { *account.resident.get() = mem::MaybeUninit::new(charge) };
-        let slot = mem::ManuallyDrop::new(slot);
-        // SAFETY: the claimed account owns the charge and slot edge; publish
-        // the retained slot key before creating its first external edge.
+        // SAFETY: the live Span and absent link prove one slot edge. Transfer it
+        // through empty ownership into the Span/account pair before publication.
+        // No allocation, callback or fallible operation intervenes.
         unsafe {
-            account.prefix.write(slot.key.get());
+            slot.retire();
+            slot.start_pair();
+            account.prefix.write(entry.key.get());
             account.prefix.activate();
         }
         // SAFETY: activation created the first external account edge.
@@ -285,7 +287,7 @@ unsafe impl crate::mem::raw::Target for Account<'_> {
             (core, slot)
         };
         // SAFETY: all allocation borrows ended; transfer the slot edge retained at activation.
-        unsafe { super::Active::release(core, slot) };
+        unsafe { super::Slot::release(core, slot) };
     }
 }
 
