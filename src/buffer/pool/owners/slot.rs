@@ -158,7 +158,7 @@ impl<'span, K: crate::buffer::raw::Backing, S> Entry<'span, K, S> {
     }
 
     pub(in crate::buffer::pool) fn capacity(self) -> num::NonZero<u32> {
-        self.slots.header().capacity()
+        self.slots.capacity()
     }
 
     pub(in crate::buffer) fn data(self) -> *mut u8 {

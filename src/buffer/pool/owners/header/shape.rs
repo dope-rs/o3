@@ -17,14 +17,10 @@ pub(in crate::buffer::pool) struct Shape<K> {
 impl<L: Into<pool::Layout>> Shape<owners::Plain<L>> {
     pub(in crate::buffer::pool::owners) fn new(logical: L) -> Self {
         let public = logical.into();
-        let cells = u128::from(public.slots()) * size_of::<owners::Slot>() as u128;
         Self {
             slots: public.slots(),
             capacity: public.capacity(),
-            // SAFETY: the admitted layout bounds this positive Header-plus-slots extent.
-            data_offset: unsafe {
-                num::NonZero::new_unchecked((size_of::<owners::Header>() as u128 + cells) as usize)
-            },
+            data_offset: pool::Layout::offset(public.slots()),
             kind: marker::PhantomData,
         }
     }
@@ -67,8 +63,7 @@ impl Shape<owners::Charged<'_>> {
         public: pool::Layout,
     ) -> Result<Self, pool::LayoutError> {
         let slots = public.slots();
-        let offset = size_of::<owners::Header>() as u128
-            + u128::from(slots) * size_of::<owners::Slot>() as u128
+        let offset = pool::Layout::offset(slots).get() as u128
             + size_of::<crate::buffer::resident::Budget<'_>>() as u128;
         if offset + public.bytes() as u128 > alloc::raw::Layout::<owners::Header>::MAX {
             return Err(pool::LayoutError::AccountedData {
@@ -84,6 +79,18 @@ impl Shape<owners::Charged<'_>> {
             data_offset: unsafe { num::NonZero::new_unchecked(offset as usize) },
             kind: marker::PhantomData,
         })
+    }
+}
+
+impl<K: crate::buffer::raw::Backing> Shape<K> {
+    #[inline]
+    pub(in crate::buffer::pool::owners) fn from_ptr<S>(core: owners::Ptr<K, S>) -> Self {
+        Self {
+            slots: core.slots() as u32,
+            capacity: core.capacity(),
+            data_offset: core.data_offset(),
+            kind: marker::PhantomData,
+        }
     }
 }
 

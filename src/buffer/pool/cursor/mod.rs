@@ -12,12 +12,18 @@ use crate::buffer::{
 };
 
 /// One consumable initialized range retaining its original pool root.
-pub struct Cursor<L = pool::Layout, M = pool::Owned> {
+pub struct Cursor<L = pool::Layout, M = pool::Owned>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     pub(in crate::buffer::pool) lease: pool::Span<owners::Plain<L>, M>,
     head: u32,
 }
 
-impl<L, M> Cursor<L, M> {
+impl<L, M> Cursor<L, M>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     fn into_shared(self) -> storage::Shared<owners::Edge<owners::Plain<L>, M>> {
         let start = self.head as usize;
         let len = self.lease.len() - start;
@@ -26,7 +32,10 @@ impl<L, M> Cursor<L, M> {
     }
 }
 
-impl<L, M> Cursor<L, M> {
+impl<L, M> Cursor<L, M>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     pub fn len(&self) -> usize {
         self.lease.len() - self.head as usize
     }
@@ -70,7 +79,10 @@ const _: () = {
     assert!(size_of::<Cursor<pool::Layout, pool::Borrowed<'static>>>() == 3 * size_of::<usize>());
 };
 
-impl<L, M> Cursor<L, M> {
+impl<L, M> Cursor<L, M>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     fn advance(prefix: buffer::raw::Selection<'_, Self>) {
         let (target, amount) = prefix.into_parts();
         let head = target.head + amount as u32;
@@ -108,21 +120,30 @@ impl<L, M> Cursor<L, M> {
     }
 }
 
-impl<L> Cursor<L> {
+impl<L> Cursor<L>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     #[must_use]
     pub fn freeze(self) -> storage::Shared {
         self.into_shared().into()
     }
 }
 
-impl<'pool, L> Cursor<L, pool::Borrowed<'pool>> {
+impl<'pool, L> Cursor<L, pool::Borrowed<'pool>>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     #[must_use]
     pub fn freeze(self) -> storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>> {
         self.into_shared()
     }
 }
 
-impl<L, M> AsRef<[u8]> for Cursor<L, M> {
+impl<L, M> AsRef<[u8]> for Cursor<L, M>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     fn as_ref(&self) -> &[u8] {
         // SAFETY: From, advance, clear, and compact keep head within this
         // owner's initialized prefix; append only extends that prefix.
@@ -130,7 +151,10 @@ impl<L, M> AsRef<[u8]> for Cursor<L, M> {
     }
 }
 
-impl<L, M> consume::Consume for Cursor<L, M> {
+impl<L, M> consume::Consume for Cursor<L, M>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     fn remaining(&self) -> usize {
         self.lease.len() - self.head as usize
     }
@@ -147,7 +171,10 @@ impl<L, M> consume::Consume for Cursor<L, M> {
     }
 }
 
-impl<L, M> write::Sink for Cursor<L, M> {
+impl<L, M> write::Sink for Cursor<L, M>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     type Error = consume::Error;
 
     fn write_slice(&mut self, source: &[u8]) -> Result<(), Self::Error> {
@@ -163,15 +190,24 @@ impl<L, M> write::Sink for Cursor<L, M> {
 }
 
 // SAFETY: this unique cursor cannot change its initialized extent through shared access.
-unsafe impl<L, M> buffer::raw::Source for Cursor<L, M> {}
+unsafe impl<L, M> buffer::raw::Source for Cursor<L, M> where
+    owners::Plain<L>: crate::buffer::raw::Backing
+{
+}
 
-impl<L, M> From<pool::Span<owners::Plain<L>, M, state::Uninit>> for Cursor<L, M> {
+impl<L, M> From<pool::Span<owners::Plain<L>, M, state::Uninit>> for Cursor<L, M>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     fn from(lease: pool::Span<owners::Plain<L>, M, state::Uninit>) -> Self {
         Self { lease, head: 0 }
     }
 }
 
-impl<L, M> AsMut<[u8]> for Cursor<L, M> {
+impl<L, M> AsMut<[u8]> for Cursor<L, M>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     fn as_mut(&mut self) -> &mut [u8] {
         let head = self.head as usize;
         // SAFETY: the same bounded suffix remains exclusively borrowed here.

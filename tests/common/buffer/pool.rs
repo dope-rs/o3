@@ -74,7 +74,10 @@ unsafe impl GlobalAlloc for Reentrant {
 pub fn try_fill<const N: usize, L>(
     mut output: buffer::raw::Output<'_, L>,
     fill: impl FnOnce(&mut [u8]),
-) -> Result<(), consume::Error> {
+) -> Result<(), consume::Error>
+where
+    pool::owners::Plain<L>: buffer::raw::Backing,
+{
     const { assert!(N > 0) };
     consume::Error::check(N, output.len())?;
     fill(&mut output.as_mut_slice()[..N]);

@@ -29,7 +29,10 @@ impl<T, B> Limit<T, B> {
     }
 }
 
-impl<L, M, B> Limit<pool::Span<owners::Plain<L>, M>, B> {
+impl<L, M, B> Limit<pool::Span<owners::Plain<L>, M>, B>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     pub fn try_extend(&mut self, src: &[u8]) -> Result<(), Error> {
         let input = owners::Measured::slice(src);
         Error::check(input.len(), self.remaining as usize)?;
@@ -43,7 +46,10 @@ impl<L, M, B> Limit<pool::Span<owners::Plain<L>, M>, B> {
     }
 }
 
-impl<L, B> Limit<pool::Span<owners::Plain<L>>, B> {
+impl<L, B> Limit<pool::Span<owners::Plain<L>>, B>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     pub fn try_from(
         target: pool::Span<owners::Plain<L>>,
         bytes: usize,
@@ -78,7 +84,10 @@ impl<L, B> Limit<pool::Span<owners::Plain<L>>, B> {
     }
 }
 
-impl<'pool, L, B> Limit<pool::Span<owners::Plain<L>, pool::Borrowed<'pool>>, B> {
+impl<'pool, L, B> Limit<pool::Span<owners::Plain<L>, pool::Borrowed<'pool>>, B>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     pub fn try_borrow(
         pool: &'pool pool::Pool<state::Uninit, owners::Plain<L>>,
         bytes: usize,

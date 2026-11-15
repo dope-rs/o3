@@ -5,9 +5,15 @@ use crate::buffer::{self, pool, pool::owners, storage};
 pub struct Frozen;
 
 // SAFETY: frozen ownership retains this exact initialized slot and visible range.
-unsafe impl<L> buffer::raw::Source for pool::Span<owners::Plain<L>, pool::Owned, Frozen> {}
+unsafe impl<L> buffer::raw::Source for pool::Span<owners::Plain<L>, pool::Owned, Frozen> where
+    owners::Plain<L>: crate::buffer::raw::Backing
+{
+}
 
-impl<L> pool::Span<owners::Plain<L>, pool::Owned, Frozen> {
+impl<L> pool::Span<owners::Plain<L>, pool::Owned, Frozen>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     #[must_use]
     pub fn into_shared(self) -> storage::Shared {
         let len = self.len();

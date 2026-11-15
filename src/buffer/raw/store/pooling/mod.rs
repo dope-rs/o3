@@ -1,16 +1,30 @@
-use crate::buffer::pool::owners;
+use std::num;
+
+use crate::buffer::pool::{self, owners};
 
 mod backing;
-pub(in crate::buffer) use backing::Backing;
+pub use backing::Backing;
 
 // SAFETY: Plain pool allocations contain no resident account table.
-unsafe impl<L> Backing for owners::Plain<L> {
+unsafe impl Backing for owners::Plain {
+    type Link = ();
+}
+
+// SAFETY: Fixed admission binds both dimensions to this plain allocation.
+unsafe impl<const SLOTS: usize, const CAPACITY: usize> Backing
+    for owners::Plain<pool::Fixed<SLOTS, CAPACITY>>
+{
     type Link = ();
 
-    unsafe fn release<S>(core: owners::Ptr<Self, S>) {
-        // SAFETY: the caller transfers the terminal plain allocation edge.
-        unsafe { core.deallocate() };
-    }
+    const SLOTS: Option<u32> = Some(SLOTS as u32);
+    const CAPACITY: Option<num::NonZero<u32>> = num::NonZero::new(CAPACITY as u32);
+}
+
+// SAFETY: Width admission binds this capacity to every plain allocation it issues.
+unsafe impl<const CAPACITY: usize> Backing for owners::Plain<pool::Width<CAPACITY>> {
+    type Link = ();
+
+    const CAPACITY: Option<num::NonZero<u32>> = num::NonZero::new(CAPACITY as u32);
 }
 // SAFETY: Resident preserves the lifetime-bound form of an accounted pool.
 unsafe impl<'d> Backing for owners::Resident<'d> {

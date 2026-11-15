@@ -236,17 +236,26 @@ impl<'a> Projection<'a, '_> {
 pub type Text<'d> = buffer::storage::Str<resident::Exact<'d>>;
 
 /// Exclusive initialized suffix retained through its output operation.
-pub struct Output<'a, L = pool::Layout> {
+pub struct Output<'a, L = pool::Layout>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     target: &'a mut pool::Span<owners::Plain<L>, pool::Owned, state::Initialized>,
 }
 
-impl<L> pool::Span<owners::Plain<L>, pool::Owned, state::Initialized> {
+impl<L> pool::Span<owners::Plain<L>, pool::Owned, state::Initialized>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     pub fn output(&mut self) -> Output<'_, L> {
         Output { target: self }
     }
 }
 
-impl<'a, L> Output<'a, L> {
+impl<'a, L> Output<'a, L>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -312,7 +321,8 @@ pub unsafe trait Initializer {
     unsafe fn initialize(&self, target: *mut mem::MaybeUninit<u8>);
 }
 
-pub(in crate::buffer) use store::{Backing, Debit, Header, Heap, Policy, Rc};
+pub use store::Backing;
+pub(in crate::buffer) use store::{Debit, Header, Heap, Policy, Rc};
 
 mod length;
 pub use length::Length;

@@ -34,7 +34,10 @@ impl<S: state::State> Pool<S, owners::Plain<Layout>> {
     }
 }
 
-impl<L: Into<Layout>, S: state::State> Pool<S, owners::Plain<L>> {
+impl<L: Into<Layout>, S: state::State> Pool<S, owners::Plain<L>>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing<Link = ()>,
+{
     pub fn try_from(layout: L) -> Result<Self, crate::alloc::Exhausted> {
         Ok(Self {
             core: owners::Block::<owners::Plain<_>, S>::try_new(layout)?,
@@ -78,7 +81,10 @@ impl<S: state::State, K: crate::buffer::raw::Backing> Pool<S, K> {
     }
 }
 
-impl<L> Pool<state::Uninit, owners::Plain<L>> {
+impl<L> Pool<state::Uninit, owners::Plain<L>>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     /// Copies one complete slice into a newly acquired slot.
     pub fn try_copy(
         &self,

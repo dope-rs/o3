@@ -67,7 +67,10 @@ impl<S> Owner<'_, S> {
     }
 }
 
-impl<'id, L> Owner<'id, pool::Span<owners::Plain<L>, pool::Owned, pool::Frozen>> {
+impl<'id, L> Owner<'id, pool::Span<owners::Plain<L>, pool::Owned, pool::Frozen>>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     pub fn into_shared(self) -> Owner<'id, storage::Shared> {
         Owner {
             storage: self.storage.into_shared(),

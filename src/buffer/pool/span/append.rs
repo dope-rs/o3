@@ -9,7 +9,10 @@ pub struct Append<'a, I, T> {
     pub(in crate::buffer::pool) input: owners::Measured<I>,
 }
 
-impl<'a, I, L, M> Append<'a, I, pool::Cursor<L, M>> {
+impl<'a, I, L, M> Append<'a, I, pool::Cursor<L, M>>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     pub(in crate::buffer::pool) fn try_input(
         target: &'a mut pool::Cursor<L, M>,
         input: owners::Measured<I>,
@@ -31,7 +34,10 @@ impl<'a, I, L, M> Append<'a, I, pool::Cursor<L, M>> {
     }
 }
 
-impl<L, M> Append<'_, &[u8], pool::Cursor<L, M>> {
+impl<L, M> Append<'_, &[u8], pool::Cursor<L, M>>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     /// Publishes the admitted source without checking its bounds again.
     pub fn commit(self) {
         self.copy();
@@ -46,7 +52,10 @@ const _: () = {
     );
 };
 
-impl<'a, I, L, M> Append<'a, I, pool::Span<owners::Plain<L>, M, state::Uninit>> {
+impl<'a, I, L, M> Append<'a, I, pool::Span<owners::Plain<L>, M, state::Uninit>>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     pub(in crate::buffer::pool) fn copy(self) -> &'a mut pool::Span<owners::Plain<L>, M>
     where
         I: crate::buffer::raw::SliceExt,
@@ -77,7 +86,10 @@ impl<'a, I, L, M> Append<'a, I, pool::Span<owners::Plain<L>, M, state::Uninit>> 
     }
 }
 
-impl<'a, L, M> Append<'a, &[u8], pool::Span<owners::Plain<L>, M, state::Uninit>> {
+impl<'a, L, M> Append<'a, &[u8], pool::Span<owners::Plain<L>, M, state::Uninit>>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     /// Publishes the admitted input and returns the same exclusive lease.
     pub fn commit(self) -> &'a mut pool::Span<owners::Plain<L>, M, state::Uninit> {
         self.copy()
@@ -86,6 +98,8 @@ impl<'a, L, M> Append<'a, &[u8], pool::Span<owners::Plain<L>, M, state::Uninit>>
 
 impl<'a, 'source, L, M, const P: usize, const N: usize>
     Append<'a, ([u8; P], [&'source [u8]; N]), pool::Span<owners::Plain<L>, M, state::Uninit>>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
 {
     /// Admits an owned prefix and every source as one indivisible write.
     pub fn try_prefixed(
@@ -98,7 +112,7 @@ impl<'a, 'source, L, M, const P: usize, const N: usize>
     }
 
     /// Publishes once and returns the original source borrows with their lease.
-    pub fn commit(self) -> Sources<'a, 'source, L, M, N> {
+    pub fn commit(self) -> Sources<'source, &'a mut pool::Span<owners::Plain<L>, M>, N> {
         let sources = self.input.input().1;
         (self.copy(), sources)
     }
@@ -109,7 +123,4 @@ const _: () = {
     assert!(size_of::<Append<'_, ([u8; 8], [&[u8]; 4]), pool::Span>>() == 11 * size_of::<usize>());
 };
 
-type Sources<'a, 'source, L, M, const N: usize> = (
-    &'a mut pool::Span<owners::Plain<L>, M, state::Uninit>,
-    [&'source [u8]; N],
-);
+type Sources<'a, T, const N: usize> = (T, [&'a [u8]; N]);

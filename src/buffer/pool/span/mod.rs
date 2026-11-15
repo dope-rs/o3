@@ -95,7 +95,10 @@ impl<K: crate::buffer::raw::Backing, M, S> AsRef<[u8]> for Span<K, M, S> {
     }
 }
 
-impl<S: state::State, L> pool::Span<owners::Plain<L>, pool::Owned, S> {
+impl<S: state::State, L> pool::Span<owners::Plain<L>, pool::Owned, S>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     #[must_use]
     pub fn freeze(self) -> pool::Span<owners::Plain<L>, pool::Owned, pool::Frozen> {
         let this = mem::ManuallyDrop::new(self);
@@ -108,7 +111,10 @@ impl<S: state::State, L> pool::Span<owners::Plain<L>, pool::Owned, S> {
     }
 }
 
-impl<'pool, S: state::State, L> pool::Span<owners::Plain<L>, pool::Borrowed<'pool>, S> {
+impl<'pool, S: state::State, L> pool::Span<owners::Plain<L>, pool::Borrowed<'pool>, S>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     #[must_use]
     pub fn freeze(self) -> storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>> {
         let len = self.len();
@@ -117,7 +123,10 @@ impl<'pool, S: state::State, L> pool::Span<owners::Plain<L>, pool::Borrowed<'poo
     }
 }
 
-impl<L, M> pool::Span<owners::Plain<L>, M, state::Uninit> {
+impl<L, M> pool::Span<owners::Plain<L>, M, state::Uninit>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     pub fn try_append<'a, 'source>(
         &'a mut self,
         source: &'source [u8],

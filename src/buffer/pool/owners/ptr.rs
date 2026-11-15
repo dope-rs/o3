@@ -90,7 +90,10 @@ impl<K, S: state::State> Block<K, S> {
     }
 }
 
-impl<L: Into<pool::Layout>, S: state::State> Block<super::Plain<L>, S> {
+impl<L: Into<pool::Layout>, S: state::State> Block<super::Plain<L>, S>
+where
+    super::Plain<L>: crate::buffer::raw::Backing<Link = ()>,
+{
     pub(in crate::buffer::pool) fn try_new(
         public: L,
     ) -> Result<Ptr<super::Plain<L>, S>, alloc::Exhausted> {
@@ -193,14 +196,6 @@ impl<K, S> Ptr<K, S> {
         unsafe { self.raw.as_ref() }
     }
 
-    pub(in crate::buffer::pool) fn capacity(self) -> num::NonZero<u32> {
-        self.header().capacity()
-    }
-
-    pub(in crate::buffer::pool) fn slots(self) -> usize {
-        self.header().slots() as usize
-    }
-
     pub(in crate::buffer::pool) fn available(self) -> usize {
         self.header().available.get() as usize
     }
@@ -210,13 +205,6 @@ impl<K, S> Ptr<K, S> {
             raw: self.raw,
             kind: marker::PhantomData,
         }
-    }
-
-    pub(in crate::buffer) unsafe fn deallocate(self) {
-        let (_, layout) = self.header().allocation();
-        // SAFETY: terminal ownership pairs this allocation with its immutable
-        // nonzero geometry, consumed directly at the foreign allocator boundary.
-        unsafe { alloc::raw::dealloc(layout, self.raw) };
     }
 }
 
@@ -275,6 +263,34 @@ const _: () = {
 pub(super) type Binding<K> = (super::Ptr<K, super::Any>, super::Key);
 
 impl<K: crate::buffer::raw::Backing, S> Ptr<K, S> {
+    pub(in crate::buffer) unsafe fn deallocate(self) {
+        let (_, layout) = super::Shape::from_ptr(self).allocation();
+        // SAFETY: terminal ownership retains this allocation's admitted geometry
+        // through the exact matching foreign allocator boundary.
+        unsafe { alloc::raw::dealloc(layout, self.raw) };
+    }
+
+    pub(in crate::buffer::pool) fn capacity(self) -> num::NonZero<u32> {
+        match K::CAPACITY {
+            Some(capacity) => capacity,
+            None => self.header().capacity(),
+        }
+    }
+
+    pub(in crate::buffer::pool) fn slots(self) -> usize {
+        match K::SLOTS {
+            Some(slots) => slots as usize,
+            None => self.header().slots() as usize,
+        }
+    }
+
+    pub(super) fn data_offset(self) -> num::NonZero<usize> {
+        match K::SLOTS {
+            Some(slots) => pool::Layout::offset(slots),
+            None => self.header().data_offset(),
+        }
+    }
+
     pub(super) fn is_unique(&self, key: super::Key) -> bool {
         use crate::mem::raw::Edge;
 
@@ -282,13 +298,13 @@ impl<K: crate::buffer::raw::Backing, S> Ptr<K, S> {
     }
 
     pub(super) fn data(self, key: super::Key) -> *mut u8 {
-        let header = self.header();
-        // SAFETY: Layout reserves `capacity` bytes for every valid slot at the
-        // stored data offset; Key retains this pool-bound range proof.
+        // SAFETY: Backing preserves the admitted geometry and Key retains this
+        // pool-bound slot range, whether its dimensions are static or stored.
         unsafe {
-            self.as_raw().as_ptr().cast::<u8>().add(
-                header.data_offset().get() + key.get() as usize * header.capacity().get() as usize,
-            )
+            self.as_raw()
+                .as_ptr()
+                .cast::<u8>()
+                .add(self.data_offset().get() + key.get() as usize * self.capacity().get() as usize)
         }
     }
 

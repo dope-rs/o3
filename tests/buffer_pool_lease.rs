@@ -170,7 +170,10 @@ fn keeps_initialized_bytes() {
     assert!(pool.acquire().is_some());
 }
 
-fn release<S: state::State, L>(pool: pool::Pool<S, owners::Plain<L>>, bytes: usize) {
+fn release<S: state::State, L>(pool: pool::Pool<S, owners::Plain<L>>, bytes: usize)
+where
+    owners::Plain<L>: o3::buffer::raw::Backing,
+{
     let (slots, lease, closed) = {
         let pool = pool;
         let slots = pool.slots();
@@ -238,6 +241,36 @@ fn static_geometry() {
     let pool = (created).expect("width pool allocation");
     assert_eq!(build.allocations, 1);
     release(pool, build.allocated_bytes);
+}
+
+#[test]
+fn erases_fixed_backing_after_output() {
+    let (created, build) = Tracker::activity(|| {
+        pool::Pool::<state::Initialized, owners::Plain<pool::Fixed<2, 17>>>::try_from(
+            pool::Fixed::new(),
+        )
+    });
+    let pool = created.expect("allocate two fixed output slots");
+    let ([first, last], activity) = Tracker::activity(|| {
+        let mut spans: [_; 2] =
+            std::array::from_fn(|_| pool.acquire().expect("acquire a distinct slot"));
+        for (span, bytes) in spans.iter_mut().zip([b"first", b"other"]) {
+            try_fill::<5, _>(span.output(), |target| target.copy_from_slice(bytes))
+                .expect("the initialized suffix fits");
+        }
+        let shared = spans.map(|span| span.freeze().into_shared());
+        drop(pool);
+        shared
+    });
+    assert!(activity == Activity::default());
+    assert_eq!(first.as_ref(), b"first");
+    assert_eq!(last.as_ref(), b"other");
+    let ((), released) = Tracker::activity(|| drop(first));
+    assert!(released == Activity::default());
+    let ((), released) = Tracker::activity(|| drop(last));
+    assert_eq!(released.allocations, 0);
+    assert_eq!(released.deallocations, 1);
+    assert_eq!(released.deallocated_bytes, build.allocated_bytes);
 }
 
 #[test]

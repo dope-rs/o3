@@ -124,7 +124,10 @@ impl bytes::TryRetain for Shared {
     }
 }
 
-impl<L> bytes::TryRetain for storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'_>>> {
+impl<L> bytes::TryRetain for storage::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'_>>>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     fn try_retain(self) -> Result<storage::Shared, storage::AllocError> {
         Ok(self.into())
     }

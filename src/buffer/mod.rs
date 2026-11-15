@@ -159,13 +159,19 @@ pub trait Residency {
     fn resident(&self) -> usize;
 }
 
-impl<L> Residency for pool::Span<owners::Plain<L>, pool::Owned, pool::Frozen> {
+impl<L> Residency for pool::Span<owners::Plain<L>, pool::Owned, pool::Frozen>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     fn resident(&self) -> usize {
         self.capacity().get() as usize
     }
 }
 
-impl<L> Residency for pool::Cursor<L> {
+impl<L> Residency for pool::Cursor<L>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     fn resident(&self) -> usize {
         self.len() + self.spare_len()
     }

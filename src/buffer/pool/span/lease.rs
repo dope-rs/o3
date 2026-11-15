@@ -39,7 +39,10 @@ impl<K: crate::buffer::raw::Backing, M, S: state::State> Span<K, M, S> {
     }
 }
 
-impl<L, M, S: state::State> Span<owners::Plain<L>, M, S> {
+impl<L, M, S: state::State> Span<owners::Plain<L>, M, S>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         buffer::raw::Exclusive::as_mut_slice(self)
     }
@@ -63,7 +66,10 @@ unsafe impl<K: crate::buffer::raw::Backing, M, S> buffer::raw::Prefix for Span<K
 // SAFETY: sharing a plain slot consumes its writable lease. Resident slots can
 // retain prefix aliases through accounts and do not carry this proof. The length
 // word is inline in this lease, disjoint from its slot, and bounded by capacity.
-unsafe impl<L, M, S: state::State> buffer::raw::Exclusive for Span<owners::Plain<L>, M, S> {
+unsafe impl<L, M, S: state::State> buffer::raw::Exclusive for Span<owners::Plain<L>, M, S>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
+{
     fn as_mut_ptr(&mut self) -> *mut mem::MaybeUninit<u8> {
         self.entry().data().cast()
     }

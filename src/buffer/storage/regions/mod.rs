@@ -274,6 +274,8 @@ impl From<regions::Shared<crate::buffer::raw::Rc>> for regions::Shared<Option<re
 
 impl<L, M> From<regions::Shared<owners::Edge<owners::Plain<L>, M>>>
     for regions::Shared<Option<regions::Tag>>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
 {
     fn from(region: regions::Shared<owners::Edge<owners::Plain<L>, M>>) -> Self {
         Self {
@@ -323,6 +325,8 @@ impl<'d> From<regions::Shared<crate::buffer::raw::Rc<resident::Budget<'d>>>>
 
 impl<'pool, 'd, L> From<regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>>>
     for resident::Shared<'d>
+where
+    owners::Plain<L>: crate::buffer::raw::Backing,
 {
     fn from(
         region: regions::Shared<owners::Edge<owners::Plain<L>, pool::Borrowed<'pool>>>,

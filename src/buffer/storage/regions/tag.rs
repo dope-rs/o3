@@ -37,7 +37,10 @@ impl Tag {
             pointer: owner.into_raw().cast().map_addr(|address| address | 0b010),
         }
     }
-    pub(in crate::buffer) fn pool<L, M>(owner: owners::Edge<owners::Plain<L>, M>) -> Option<Self> {
+    pub(in crate::buffer) fn pool<L, M>(owner: owners::Edge<owners::Plain<L>, M>) -> Option<Self>
+    where
+        owners::Plain<L>: buffer::raw::Backing,
+    {
         owner.map(|owner| Self {
             pointer: owner.into_raw().cast().map_addr(|address| address | 0b100),
         })

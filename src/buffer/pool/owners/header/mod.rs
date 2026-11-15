@@ -37,7 +37,7 @@ impl<K: crate::buffer::raw::Backing> Header<K> {
 
     pub(in crate::buffer::pool) fn retire<S>(core: super::Ptr<K, S>) {
         let header = core.header();
-        if header.available.get() == header.slots() && header.is_detached() {
+        if header.available.get() as usize == core.slots() && header.is_detached() {
             // SAFETY: this exact core has no root or live slot remaining; the
             // terminal ownership check immediately consumes that allocation.
             unsafe { K::release(core) };

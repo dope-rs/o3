@@ -53,8 +53,7 @@ impl Layout {
                 capacity: capacity.get(),
             });
         }
-        let offset = mem::size_of::<owners::Header>() as u128
-            + slots as u128 * mem::size_of::<owners::Slot>() as u128;
+        let offset = Self::offset(slots).get() as u128;
         if offset + bytes > alloc::raw::Layout::<owners::Header>::MAX {
             return Err(pool::LayoutError::PlainData {
                 slots,
@@ -62,6 +61,13 @@ impl Layout {
             });
         }
         Ok(Self { slots, capacity })
+    }
+
+    pub(in crate::buffer::pool) const fn offset(slots: u32) -> num::NonZero<usize> {
+        let bytes =
+            mem::size_of::<owners::Header>() + slots as usize * mem::size_of::<owners::Slot>();
+        // SAFETY: Header is nonempty and the const admission below bounds all u32 slot counts.
+        unsafe { num::NonZero::new_unchecked(bytes) }
     }
 
     /// Builds a dynamic layout from compile-time dimensions.
