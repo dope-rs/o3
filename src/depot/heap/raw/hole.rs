@@ -11,9 +11,17 @@ pub(in crate::depot) struct Hole<S: hole::raw::Source> {
 
 impl<S: hole::raw::Source> Hole<S> {
     pub(in crate::depot) fn append(vacancy: heap::Vacancy<S, S::Value>) -> Self {
-        let (owner, value) = vacancy.into_inner();
+        let (mut owner, value) = vacancy.into_inner();
         let position = owner.len() as usize;
-        hole::Path::up(owner, position, &value, S::compare).append(value)
+        // SAFETY: the vacancy admits this next position below u32::MAX.
+        *unsafe { owner.len_mut() } = position as u32 + 1;
+        let mut hole = Self {
+            owner,
+            value,
+            position,
+        };
+        hole.up(S::compare);
+        hole
     }
 
     pub(in crate::depot) fn commit<const PLACE: bool>(self) -> S {
@@ -28,22 +36,27 @@ impl<S: hole::raw::Source> Hole<S> {
     pub(in crate::depot) fn replace<const UPDATE: bool>(
         entry: heap::Entry<S, S::Value>,
     ) -> (heap::Entry<S>, S::Value) {
-        let (owner, position, value) = entry.into_inner();
-        let mut path = if UPDATE {
-            match S::direction(hole::At::new(&owner, position, &value)) {
-                cmp::Ordering::Less => hole::Path::up(owner, position, &value, S::compare),
-                cmp::Ordering::Greater => {
-                    let len = owner.len() as usize;
-                    hole::Path::down(owner, position, len, &value, S::compare)
-                }
-                cmp::Ordering::Equal => hole::Path::at(owner, position),
+        let (mut owner, position, value) = entry.into_inner();
+        let direction = if UPDATE {
+            S::direction(hole::At::new(&owner, position, &value))
+        } else {
+            cmp::Ordering::Equal
+        };
+        let old = S::read::<false>(hole::At::new(&mut owner, position, ()));
+        let mut hole = Self {
+            owner,
+            value,
+            position,
+        };
+        if UPDATE {
+            match direction {
+                cmp::Ordering::Less => hole.up(S::compare),
+                cmp::Ordering::Greater => hole.down(hole.owner.len() as usize, S::compare),
+                cmp::Ordering::Equal => {}
             }
         } else {
-            let len = owner.len() as usize;
-            hole::Path::repair(owner, position, len, &value, S::compare)
-        };
-        let old = S::read::<false>(hole::At::new(&mut path.owner, position, ()));
-        let hole = path.apply(value);
+            hole.repair(hole.owner.len() as usize, S::compare);
+        }
         let entry = if !UPDATE || hole.position != position {
             hole.finish()
         } else {
@@ -61,22 +74,81 @@ impl<S: hole::raw::Source> Hole<S> {
             *unsafe { owner.len_mut() } = tail as u32;
             return unsafe { heap::Vacancy::new(owner, value) };
         }
-        let mut path = hole::Path::repair(owner, position, tail, &tail, |entry| {
-            let (owner, position, tail) = entry.into_inner();
+        let value = S::read::<true>(hole::At::new(&mut owner, position, ()));
+        let mut hole = Self {
+            owner,
+            value,
+            position,
+        };
+        // The tail stays initialized outside the active tree until its final move.
+        hole.repair(tail, |entry| {
+            let (owner, position, _) = entry.into_inner();
             S::compare_at(
-                hole::At::new(owner, *tail, ()),
+                hole::At::new(owner, tail, ()),
                 hole::At::new(owner, position, ()),
             )
         });
-        let value = S::read::<true>(hole::At::new(&mut path.owner, position, ()));
-        let mut hole = path.apply(value);
-        hole::Step {
-            hole: &mut hole,
-            source: tail,
-        }
-        .shift();
+        hole.shift(tail);
         *unsafe { hole.owner.len_mut() } = tail as u32;
         let Self { owner, value, .. } = hole;
         unsafe { heap::Vacancy::new(owner, value) }
+    }
+
+    fn shift(&mut self, source: usize) {
+        S::shift(hole::Step {
+            hole: &mut *self,
+            source,
+        });
+        self.position = source;
+    }
+
+    fn up(&mut self, mut compare: impl FnMut(hole::At<&S, &S::Value>) -> cmp::Ordering) {
+        while self.position != 0 {
+            let parent = (self.position - 1) / 2;
+            if !compare(hole::At::new(&self.owner, parent, &self.value)).is_lt() {
+                break;
+            }
+            self.shift(parent);
+        }
+    }
+
+    fn down(
+        &mut self,
+        len: usize,
+        mut compare: impl FnMut(hole::At<&S, &S::Value>) -> cmp::Ordering,
+    ) {
+        while len >= 2 && self.position <= (len - 2) / 2 {
+            let left = self.position * 2 + 1;
+            let right = left + 1;
+            let child = left
+                + usize::from(
+                    right < len
+                        && S::compare_at(
+                            hole::At::new(&self.owner, right, ()),
+                            hole::At::new(&self.owner, left, ()),
+                        )
+                        .is_lt(),
+                );
+            if !compare(hole::At::new(&self.owner, child, &self.value)).is_gt() {
+                break;
+            }
+            self.shift(child);
+        }
+    }
+
+    pub(in crate::depot) fn repair(
+        &mut self,
+        len: usize,
+        mut compare: impl FnMut(hole::At<&S, &S::Value>) -> cmp::Ordering,
+    ) {
+        if self.position != 0 {
+            let parent = (self.position - 1) / 2;
+            if compare(hole::At::new(&self.owner, parent, &self.value)).is_lt() {
+                self.shift(parent);
+                self.up(compare);
+                return;
+            }
+        }
+        self.down(len, compare);
     }
 }

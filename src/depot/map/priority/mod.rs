@@ -183,13 +183,21 @@ impl<'a, K, V, P: Ord> Occupied<'a, K, P, V> {
     pub fn set(&mut self, priority: P) {
         let (owner, position, index) = self.entry(self.index).into_inner();
         let len = owner.store.len();
-        let path = hole::Path::repair(owner, position, len, &(index, &priority), Core::compare);
-        // SAFETY: the retained occupied entry owns this exact resident priority.
+        let mut hole = heap::raw::Hole {
+            owner,
+            value: index,
+            position,
+        };
+        hole.repair(len, |entry| {
+            let (owner, position, index) = entry.into_inner();
+            Core::compare(hole::At::new(owner, position, &(*index, &priority)))
+        });
+        // SAFETY: the retained entry owns this same resident after heap movement.
         let old = mem::replace(
-            &mut unsafe { path.owner.store.pair_mut(index) }.priority,
+            &mut unsafe { hole.owner.store.pair_mut(index) }.priority,
             priority,
         );
-        path.apply(index).commit::<true>();
+        hole.commit::<true>();
         drop(old);
     }
 
@@ -285,8 +293,7 @@ unsafe impl<K, V, P: Ord> hole::raw::Source for &mut Core<K, V, P> {
         let (owner, left, ()) = left.into_inner();
         let (other, right, ()) = right.into_inner();
         let index = unsafe { owner.indices.as_ptr().add(left).read() };
-        let priority = &unsafe { owner.store.pair(index) }.priority;
-        Core::compare(hole::At::new(other, right, &(index, priority)))
+        Self::compare(hole::At::new(other, right, &index))
     }
 
     fn read<const REMOVE: bool>(entry: hole::At<&mut Self>) -> u32 {
@@ -314,7 +321,7 @@ unsafe impl<K, V, P: Ord> hole::raw::Source for &mut Core<K, V, P> {
 impl<K, V, P: Ord> Core<K, V, P> {
     fn compare(entry: hole::At<&&mut Self, &(u32, &P)>) -> cmp::Ordering {
         let (owner, position, (index, priority)) = entry.into_inner();
-        // SAFETY: path planning retains this initialized heap position and its resident.
+        // SAFETY: At retains this initialized heap position and its resident.
         let current = unsafe { owner.indices.as_ptr().add(position).read() };
         let other = unsafe { owner.store.pair(current) };
         priority

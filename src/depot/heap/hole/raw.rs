@@ -4,6 +4,7 @@ use crate::depot::heap::{self, hole};
 
 /// # Safety
 /// Retain the exclusive owner, layout, ordering domain, initialized prefix and reverse map; consume each proof once.
+/// The engine owns any intermediate hole. Comparisons access only projected initialized positions and held values or their stable resident metadata.
 /// Comparisons preserve storage and membership; memory safety permits inconsistent ordering. Mutations never reenter or expose holes.
 pub unsafe trait Source: Sized {
     type Value;

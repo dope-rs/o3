@@ -1,6 +1,4 @@
-mod path;
 pub mod raw;
-pub(in crate::depot) use path::Path;
 
 use crate::depot::heap;
 
@@ -32,15 +30,6 @@ pub struct Step<'a, S: raw::Source> {
 }
 
 impl<'a, S: raw::Source> Step<'a, S> {
-    pub(in crate::depot) fn shift(self) {
-        let Self { hole, source } = self;
-        S::shift(Step {
-            hole: &mut *hole,
-            source,
-        });
-        hole.position = source;
-    }
-
     /// Consumes this move into its retained owner, initialized source, and vacant target.
     pub fn into_inner(self) -> (&'a mut S, usize, usize) {
         (&mut self.hole.owner, self.source, self.hole.position)
