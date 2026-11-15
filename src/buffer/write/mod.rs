@@ -34,6 +34,15 @@ pub trait Sink {
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error>;
 }
 
+pub trait Init: Sink<Error = consume::Error> {
+    /// Initializes one complete source after capacity admission. A shortfall
+    /// leaves the destination unchanged and does not call the initializer.
+    fn try_init<I: buffer::raw::Initializer + ?Sized>(
+        &mut self,
+        source: &I,
+    ) -> Result<(), consume::Error>;
+}
+
 /// Copies exactly `source` into an empty owner, returning that owner on either outcome.
 /// Rejects its existing prefix before writing, or propagates the exact write failure.
 pub fn try_copy<S: buffer::raw::Source + Sink>(

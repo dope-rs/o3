@@ -9,7 +9,7 @@ use common::{alloc::system::Tracker, buffer::scatter::Source};
 use o3::buffer::{
     pool,
     storage::{self, Owned},
-    write::{self, Sink as _, SpareExt as _, consume, edit},
+    write::{self, Init as _, Sink as _, SpareExt as _, consume, edit},
 };
 
 #[test]
@@ -189,4 +189,25 @@ fn admission_then_init() {
     spare.try_complete().expect("admitted");
     assert_eq!(calls.get(), Some(1));
     assert_eq!(owner.as_slice(), b"hibody");
+}
+
+#[test]
+fn initializes_slice_prefix() {
+    let calls = Cell::new(Some(0));
+    let mut bytes = [0; 6];
+    let mut out = write::Slice::new(&mut bytes);
+    out.write_slice(b"hi").expect("prefix");
+    let error = out
+        .reborrow()
+        .try_init(&Source(b"large", &calls))
+        .expect_err("shortfall")
+        .into_parts();
+    assert_eq!((error.0.get(), error.1), (5, 4));
+    assert_eq!((out.len(), calls.get()), (2, Some(0)));
+    out.try_init(&Source(b"body", &calls)).expect("admitted");
+    out.reborrow()
+        .try_init(&Source(b"", &calls))
+        .expect("empty initializer");
+    assert_eq!(calls.get(), Some(2));
+    assert_eq!(out.into_mut(), b"hibody");
 }

@@ -103,6 +103,23 @@ impl<L: BorrowMut<usize>> write::Sink for Slice<'_, L> {
     }
 }
 
+impl<L: BorrowMut<usize>> write::Init for Slice<'_, L> {
+    #[inline(always)]
+    fn try_init<I: buffer::raw::Initializer + ?Sized>(
+        &mut self,
+        source: &I,
+    ) -> Result<(), consume::Error> {
+        let len = source.len();
+        let start = self.len();
+        consume::Error::check(len, self.capacity - start)?;
+        // SAFETY: admission retains this exclusive suffix; the source initializes
+        // its exact stable length before the local count publishes those bytes.
+        unsafe { source.initialize(self.base.as_ptr().add(start).cast()) };
+        *self.len.borrow_mut() = start + len;
+        Ok(())
+    }
+}
+
 /// Unpublished adjacent regions retained by one parent writer.
 pub struct Split<'writer, 'target, L = usize> {
     parent: &'writer mut Slice<'target, L>,

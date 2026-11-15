@@ -70,13 +70,10 @@ impl<'writer, 'target> Writer<'writer, 'target> {
     pub fn commit(self) {
         self.spare.len += self.len;
     }
+}
 
-    /// Initializes one complete source after capacity admission. A shortfall
-    /// leaves the destination unchanged and does not call the initializer.
-    pub fn try_init<I: buffer::raw::Initializer + ?Sized>(
-        &mut self,
-        source: &I,
-    ) -> Result<(), Error> {
+impl write::Init for Writer<'_, '_> {
+    fn try_init<I: buffer::raw::Initializer + ?Sized>(&mut self, source: &I) -> Result<(), Error> {
         let len = source.len();
         Error::check(len, self.remaining())?;
         let (target, start) = self.suffix();
