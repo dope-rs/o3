@@ -40,18 +40,6 @@ impl<'writer, 'target> Writer<'writer, 'target> {
         }
     }
 
-    pub(in crate::buffer) fn try_new(
-        spare: &'writer mut write::Spare<'target>,
-        len: usize,
-    ) -> Result<Self, Error> {
-        Error::check(len, spare.remaining())?;
-        Ok(Self {
-            spare,
-            limit: len as u32,
-            len: 0,
-        })
-    }
-
     fn remaining(&self) -> usize {
         (self.limit - self.len) as usize
     }

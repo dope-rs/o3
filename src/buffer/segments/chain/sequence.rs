@@ -16,16 +16,21 @@ use crate::{
 impl<T, H: Handle<T>> Chain<T, H> {
     pub fn clear(&mut self) {
         let key = mem::replace(&mut self.key, Key::EMPTY);
-        Self::release(&self.handle, &key);
+        Self::release(&self.handle, &key, |_| {});
     }
 
-    fn release(handle: &H, key: &Key) {
+    pub(in crate::buffer::segments::chain) fn release(
+        handle: &H,
+        key: &Key,
+        mut before: impl FnMut(&segments::Item<T>),
+    ) {
         let nodes = handles::nodes(handle);
         let index = match key.state() {
             None => return,
             Some(Occupied::Single(index)) => {
                 // SAFETY: this detached key retains its exact initialized node.
-                drop(unsafe { nodes.detached(index) });
+                let owner = unsafe { nodes.detached(index) };
+                before(owner.get());
                 return;
             }
             Some(Occupied::Multi(index)) => index,
@@ -34,14 +39,14 @@ impl<T, H: Handle<T>> Chain<T, H> {
         // SAFETY: this detached multi key uniquely owns its exact descriptor.
         let (mut desc, retired) = unsafe { descs.detached(index) }.take();
         // SAFETY: the descriptor owns this exact tracked node-store partition.
-        unsafe { desc.links.clear(nodes) };
+        unsafe { desc.links.clear(nodes, before) };
         retired.release();
     }
 }
 
 impl<T, H: Handle<T>> Drop for Chain<T, H> {
     fn drop(&mut self) {
-        Self::release(&self.handle, &self.key);
+        Self::release(&self.handle, &self.key, |_| {});
     }
 }
 

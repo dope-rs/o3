@@ -184,15 +184,20 @@ impl<T: buffer::raw::Segment, H: segments::Handle<T>> Chain<T, H> {
         use buffer::raw::SliceExt as _;
 
         let len = self.len();
-        let mut cursor = write::spans::Writer::try_new(target, len)?;
-        let (pointer, start) = cursor.suffix();
-        // SAFETY: admission covers the retained chain's exact byte sum and
-        // disjoint exclusive suffix; traversal retains every source until copying ends.
-        unsafe { self.segments().copy_to(pointer.add(start)) };
-        self.clear();
-        // SAFETY: the complete admitted chain initialized exactly this prefix.
-        unsafe { cursor.extend(len) };
-        cursor.commit();
+        consume::Error::check(len, target.remaining())?;
+        // SAFETY: admission retains this exclusive suffix for the complete chain.
+        let mut pointer = unsafe { target.pointer.as_ptr().add(target.len()).cast::<u8>() };
+        let key = mem::replace(&mut self.key, Key::EMPTY);
+        Self::release(&self.handle, &key, |owner| {
+            let bytes = owner.as_ref().as_ref();
+            // SAFETY: this live owner retains the next disjoint source until its
+            // admitted bytes are copied; remaining owners retain their own ranges.
+            unsafe {
+                bytes.copy_to(pointer);
+                pointer = pointer.add(bytes.len());
+            }
+        });
+        target.len += len as u32;
         Ok(())
     }
 }

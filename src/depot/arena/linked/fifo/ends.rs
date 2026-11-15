@@ -63,12 +63,7 @@ impl<L: crate::depot::raw::Link> State<L> {
         self.tail = source.tail;
     }
 
-    fn pop<T, R>(
-        &mut self,
-        front: L::Item,
-        input: T,
-        pop: impl FnOnce(L::Item, T) -> (L, R),
-    ) -> R {
+    fn pop<T, R>(&mut self, front: L::Item, input: T, pop: impl FnOnce(L::Item, T) -> (L, R)) -> R {
         let (next, result) = pop(front, input);
         let empty = next == L::NONE;
         self.set_front(next, empty);
@@ -392,9 +387,10 @@ impl<Tag> ends::Exclusive<slots::Index<Tag>> {
 
     /// # Safety
     /// This owner retains a disjoint live partition in `store`, with tracked reclamation.
-    pub(crate) unsafe fn clear<T>(&mut self, store: &slots::Store<T>) {
+    pub(crate) unsafe fn clear<T>(&mut self, store: &slots::Store<T>, mut before: impl FnMut(&T)) {
         // SAFETY: this borrow retains the exact store and exclusive partition.
-        while let Some(front) = unsafe { slots::Front::new(store, self) } {
+        while let Some(mut front) = unsafe { slots::Front::new(store, self) } {
+            before(front.get_mut());
             front.discard();
         }
     }
