@@ -30,16 +30,19 @@ impl Gap {
     }
 }
 
-impl<'writer, 'target> Writer<'writer, 'target> {
-    pub(in crate::buffer::write) fn new(spare: &'writer mut write::Spare<'target>) -> Self {
-        let limit = spare.remaining() as u32;
-        Self {
-            spare,
+impl<'target> write::Spare<'target> {
+    #[inline]
+    pub fn bounded(&mut self) -> Writer<'_, 'target> {
+        let limit = self.remaining() as u32;
+        Writer {
+            spare: self,
             limit,
             len: 0,
         }
     }
+}
 
+impl<'writer, 'target> Writer<'writer, 'target> {
     fn remaining(&self) -> usize {
         (self.limit - self.len) as usize
     }

@@ -278,6 +278,7 @@ impl<'a> Spare<'a> {
         self.len as usize
     }
 
+    #[inline]
     pub fn remaining(&self) -> usize {
         buffer::raw::Exclusive::remaining(self)
     }
@@ -304,10 +305,6 @@ impl<'a> Spare<'a> {
         append.copy();
         self.commit();
         *source = tail;
-    }
-
-    pub fn bounded(&mut self) -> spans::Writer<'_, 'a> {
-        spans::Writer::new(self)
     }
 
     /// Admits the exact source before dependent work, then copies only on success.
