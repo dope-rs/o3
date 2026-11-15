@@ -115,10 +115,6 @@ impl<Q, P> Vacancy<Q, P> {
         }
     }
 
-    pub(crate) fn source_mut(&mut self) -> &mut Q {
-        &mut self.owner
-    }
-
     pub fn into_parts(self) -> (Q, map::raw::Vacant, P) {
         (self.owner, self.bucket, self.phase)
     }

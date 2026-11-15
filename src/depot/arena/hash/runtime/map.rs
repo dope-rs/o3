@@ -1,5 +1,3 @@
-use std::marker;
-
 use hash::errors;
 use runtime::entry;
 
@@ -13,18 +11,14 @@ use crate::depot::{
 };
 
 #[repr(transparent)]
-pub struct Store<T, Tag, P> {
+pub struct Map<T, Tag = ()> {
     pub(in crate::depot::arena::hash) core: hash::Core<T, Tag>,
-    phase: marker::PhantomData<fn(P) -> P>,
 }
 
-pub type Map<T, Tag = ()> = Store<T, Tag, entry::Occupied>;
-
-impl<T, Tag, P> Store<T, Tag, P> {
+impl<T, Tag> Map<T, Tag> {
     pub fn try_new(plan: hash::Plan) -> Result<Self, crate::alloc::Error> {
         Ok(Self {
             core: hash::Core::try_new(plan)?,
-            phase: marker::PhantomData,
         })
     }
 
@@ -79,12 +73,7 @@ impl<T, Tag> Map<T, Tag> {
         hash: u64,
         eq: impl Fn(&T) -> Result<bool, E>,
     ) -> Entry<'_, T, Tag, E> {
-        Ok(
-            match map::raw::Probe::try_new(&mut self.core, hash, eq)?.entry() {
-                map::Entry::Occupied(entry) => map::Entry::Occupied(entry.with_phase()),
-                map::Entry::Vacant(entry) => map::Entry::Vacant(entry),
-            },
-        )
+        Ok(map::raw::Probe::try_new(&mut self.core, hash, eq)?.entry())
     }
 
     pub fn try_create(
@@ -109,7 +98,7 @@ impl<T, Tag> Map<T, Tag> {
             map::Entry::Vacant(None) => Err(errors::Create::Full { capacity }),
             map::Entry::Vacant(Some(entry)) => {
                 let value = make(entry.index());
-                Ok(entry.insert_entry(value).with_phase())
+                Ok(entry.insert_entry(value))
             }
         }
     }
@@ -119,12 +108,7 @@ impl<T, Tag> Map<T, Tag> {
     }
 
     pub fn remove(&mut self, key: key::Handle<runtime::Domain<Tag>>) -> Option<T> {
-        Some(
-            self.core
-                .entry(key)?
-                .with_phase::<entry::Occupied>()
-                .remove(),
-        )
+        Some(self.core.entry(key)?.remove())
     }
 }
 

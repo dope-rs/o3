@@ -11,10 +11,7 @@ use common::{
 };
 use o3::depot::{
     arena::{
-        hash::{
-            self,
-            runtime::{self, entry},
-        },
+        hash::{self, errors, runtime},
         slab::key,
     },
     capacity::Count,
@@ -26,11 +23,9 @@ use o3::depot::{
 fn borrows_keep_shape() {
     let value = 7;
     let plan = (hash::Plan::new(4)).expect("the fixture capacity must fit");
-    let mut store = (runtime::Registry::<Borrowed<'_>>::try_new(plan))
-        .expect("the four-slot borrowed registry must allocate");
+    let mut store = runtime::Map::<Borrowed<'_>>::try_new(plan).expect("borrowed map");
     let key = store
-        .insert(Borrowed(&value))
-        .map_err(|value| *value.0)
+        .try_create(7, |_| false, |_| Borrowed(&value))
         .expect("borrowed resident");
     assert_eq!(store.get(key).map(|stored| *stored.0), Some(value));
 }
@@ -90,44 +85,6 @@ fn allocations_are_exact() {
 }
 
 #[test]
-fn runtime_keeps_shape() {
-    assert_eq!(
-        std::mem::size_of::<runtime::Registry<[u64; 1], Tag>>(),
-        std::mem::size_of::<runtime::Map<[u64; 1], Tag>>()
-    );
-    let plan = (hash::Plan::new(4)).expect("the fixture capacity must fit");
-    let (store, alloc) = Tracker::measure(|| runtime::Registry::<[u64; 1], Tag>::try_new(plan));
-    let mut store = (store).expect("the four-resident tagged registry must allocate");
-    let bytes = alloc[1];
-    assert!(bytes >= 4 * std::mem::size_of::<u64>());
-    assert_eq!((alloc[0], alloc[2], alloc[3]), (1, 0, 0));
-    let ((), hot) = Tracker::measure(|| {
-        let key = (store.insert([7])).expect("the empty registry must admit its resident");
-        let entry = store
-            .entry(key)
-            .expect("the newly inserted resident is live");
-        assert!(matches!(entry, entry::Entry::Staged(_)));
-        if let entry::Entry::Staged(entry) = entry {
-            let indexed = entry.try_reserve(15, &[7][..]).map(map::Vacancy::commit);
-            assert!(matches!(indexed, Ok(ref entry) if entry.key() == key));
-        }
-        let value = (store.get(key)).expect("the inserted runtime resident must remain live");
-        let ptr = ptr::from_ref(value);
-        let found =
-            (store.find(15, |value| *value == [7])).expect("the indexed resident must be found");
-        assert_eq!(found.key().index(), key.index());
-        assert!((found.key().generation()) == (key.generation()));
-        assert_eq!(store.get(key).map(ptr::from_ref), Some(ptr));
-        let indexed =
-            (store.indexed(key)).expect("the live indexed key must retain its capability");
-        assert_eq!(indexed.unindex().remove(), [7]);
-    });
-    assert_eq!(hot, [0; 4]);
-    let ((), freed) = Tracker::measure(move || assert!(store.is_empty()));
-    assert_eq!(freed, [0, 0, 1, bytes]);
-}
-
-#[test]
 fn values_stay_stable() {
     let plan = (hash::Plan::new(8)).expect("the fixture capacity must fit");
     let mut map = (runtime::Map::<u64>::try_new(plan))
@@ -151,131 +108,32 @@ fn values_stay_stable() {
 }
 
 #[test]
-fn staged_repairs_shift() {
-    let plan = (hash::Plan::new(8)).expect("the fixture capacity must fit");
-    let mut store = (runtime::Registry::<[u32; 1]>::try_new(plan))
-        .expect("the eight-resident staged registry must allocate");
-    let mut keys = Vec::new();
-    for value in 0..8_u32 {
-        let key = (store.insert([value])).expect("the staged registry must admit each model value");
-        keys.push(key);
-    }
-    assert!(store.values().any(|value| *value == [7]));
-    for (value, key) in keys.iter().copied().enumerate() {
-        let entry = store.entry(key).expect("the inserted resident is live");
-        assert!(matches!(entry, entry::Entry::Staged(_)));
-        if let entry::Entry::Staged(staged) = entry {
-            assert!(
-                staged
-                    .try_reserve(15, &[value as u32][..])
-                    .map(map::Vacancy::commit)
-                    .is_ok()
-            );
-        }
-    }
-    for gone in [3, 0, 7, 1] {
-        let indexed =
-            (store.indexed(keys[gone])).expect("the selected resident must remain indexed");
-        assert!((indexed.unindex().key()) == (keys[gone]));
-        assert!(matches!(
-            store.entry(keys[gone]),
-            Some(entry::Entry::Staged(_))
-        ));
-    }
-    assert!(store.values().any(|value| *value == [3]));
-    for key in keys {
-        assert!(store.entry(key).map(|entry| entry.remove()).is_some());
-    }
-    assert!(store.is_empty());
-}
-
-#[test]
-fn staged_index_is_free() {
-    let plan = (hash::Plan::new(2)).expect("the fixture capacity must fit");
-    let mut store = (runtime::Registry::<[u32; 1]>::try_new(plan))
-        .expect("the two-resident staged registry must allocate");
-    let left = (store.insert([1])).expect("the left resident must fit the staged registry");
-    let right = (store.insert([2])).expect("the right resident must fit the staged registry");
-    let &prior = (store.get(left)).expect("the left resident must remain live");
-    let ((), hot) = Tracker::measure(|| {
-        {
-            let entry = store.entry(left).expect("the inserted resident is live");
-            assert!(matches!(entry, entry::Entry::Staged(_)));
-            if let entry::Entry::Staged(staged) = entry {
-                let indexed = staged.try_reserve(7, &[1][..]).map(map::Vacancy::commit);
-                assert!(matches!(indexed, Ok(ref entry) if entry.key() == left));
-            }
-        }
-
-        let entry = store.entry(right).expect("the inserted resident is live");
-        assert!(matches!(entry, entry::Entry::Staged(_)));
-        if let entry::Entry::Staged(staged) = entry {
-            let (mut staged, owner) = staged
-                .try_reserve(7, prior.as_slice())
-                .err()
-                .expect("a matching directory key must collide");
-            assert!(owner == left);
-            assert!(staged.key() == right);
-            *staged.get_mut() = [3];
-            let wanted = *staged.get();
-            let indexed = staged
-                .try_reserve(7, wanted.as_slice())
-                .map(map::Vacancy::commit);
-            assert!(indexed.is_ok());
-            if let Ok(indexed) = indexed {
-                let staged = indexed.unindex();
-                assert!(staged.key() == right);
-                *staged.into_mut() = [4];
-            }
-        }
-        assert_eq!(store.entry(right).map(|entry| entry.remove()), Some([4]));
-
-        let found = (store.find(7, |value| *value == prior))
-            .expect("the left resident must remain indexed");
-        assert!((found.key()) == (left));
-        *found.into_mut() = [5];
-        let entry = (store.entry_at(left.index() as usize))
-            .expect("the left resident slot must remain occupied");
-        assert_eq!(entry.remove(), [5]);
-    });
-    assert_eq!(hot, [0; 4]);
-    assert!(store.is_empty());
-}
-
-#[test]
 fn fullness_tracks_reuse() {
     for capacity in [0, 1, 4] {
         let plan = (hash::Plan::new(capacity)).expect("fixture capacity must fit");
-        let mut store =
-            (runtime::Registry::<usize>::try_new(plan)).expect("registry must allocate");
+        let mut store = runtime::Map::<usize>::try_new(plan).expect("map");
         let ((), hot) = Tracker::measure(|| {
-            assert_eq!(store.is_full(), capacity == 0);
-            assert_eq!(store.vacant().is_some(), capacity != 0);
             let mut first = None;
             for value in 0..capacity {
                 let key = store
-                    .vacant()
-                    .expect("remaining slot must admit its value")
-                    .insert(value)
-                    .key();
+                    .try_create(value as u64, |stored| *stored == value, |_| value)
+                    .expect("remaining slot");
                 if value == 0 {
                     first = Some(key);
                 }
-                assert_eq!(store.is_full(), value + 1 == capacity);
             }
-            assert!(matches!(store.insert(99), Err(99)));
-            assert!(store.vacant().is_none());
-            assert!(store.is_full());
+            assert!(matches!(store.try_create(99, |_| false, |_| 99),
+                Err(errors::Create::Full { capacity: actual }) if actual == capacity));
             if let Some(first) = first {
-                let entry = (store.entry(first)).expect("first generation must remain live");
-                assert_eq!(entry.remove(), 0);
-                assert!(!store.is_full());
-                let next = (store.insert(7)).expect("retired slot must be reusable");
+                assert_eq!(store.remove(first), Some(0));
+                let next = store
+                    .try_create(7, |stored| *stored == 7, |_| 7)
+                    .expect("reusable slot");
                 assert_eq!(next.index(), first.index());
                 assert!((next.generation()) != (first.generation()));
                 assert!(store.get(first).is_none());
                 assert_eq!(store.get(next), Some(&7));
-                assert!(store.is_full());
+                assert_eq!(store.len(), capacity);
             }
         });
         assert_eq!(hot, [0; 4]);
@@ -370,20 +228,29 @@ fn preserves_spare() {
 #[test]
 fn runtime_keys_are_exact() {
     let plan = (hash::Plan::new(1)).expect("the fixture capacity must fit");
-    let mut store = (runtime::Registry::<u64, Tag>::try_new(plan))
-        .expect("the one-resident tagged registry must allocate");
+    let mut store = runtime::Map::<u64, Tag>::try_new(plan).expect("tagged map");
     let mut heap = (keyed::Min::<key::Handle<runtime::Domain<Tag>>, u64>::try_new(Count::new(1)))
         .expect("heap storage must fit its declared domain");
 
-    let first = (store.insert(7)).expect("the empty registry must admit its first value");
+    let diagnostic = |cause| match cause {
+        errors::Create::Full { capacity } => (capacity, None),
+        errors::Create::Occupied { key } => (0, Some((key.index(), key.generation()))),
+    };
+    let first = store
+        .try_create(7, |stored| *stored == 7, |_| 7)
+        .map_err(diagnostic)
+        .expect("first resident");
     let entry = heap.entry(first);
     assert!(matches!(entry, Ok(keyed::Entry::Vacant(_))));
     if let Ok(keyed::Entry::Vacant(entry)) = entry {
         entry.insert(11);
     }
-    assert_eq!(store.entry(first).map(|entry| entry.remove()), Some(7));
+    assert_eq!(store.remove(first), Some(7));
 
-    let next = (store.insert(9)).expect("the removed resident slot must be reusable");
+    let next = store
+        .try_create(9, |stored| *stored == 9, |_| 9)
+        .map_err(diagnostic)
+        .expect("reusable slot");
     assert_eq!(next.index(), first.index());
     assert!((next.generation()) != (first.generation()));
     let entry = heap.entry(next);

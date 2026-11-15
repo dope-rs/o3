@@ -17,82 +17,26 @@ use crate::{
 
 mod vacancy;
 
-#[must_use]
-pub enum Entry<'a, T, Tag = ()> {
-    Indexed(Live<'a, T, Tag, Indexed>),
-    Staged(Live<'a, T, Tag, Staged>),
-}
-
-impl<'a, T, Tag> Entry<'a, T, Tag> {
-    pub fn key(&self) -> key::Handle<runtime::Domain<Tag>> {
-        match self {
-            Self::Indexed(entry) => entry.key(),
-            Self::Staged(entry) => entry.key(),
-        }
-    }
-
-    pub fn get(&self) -> &T {
-        match self {
-            Self::Indexed(entry) => entry.get(),
-            Self::Staged(entry) => entry.get(),
-        }
-    }
-
-    pub fn get_mut(&mut self) -> &mut T {
-        match self {
-            Self::Indexed(entry) => entry.get_mut(),
-            Self::Staged(entry) => entry.get_mut(),
-        }
-    }
-
-    pub fn into_mut(self) -> &'a mut T {
-        match self {
-            Self::Indexed(entry) => entry.into_mut(),
-            Self::Staged(entry) => entry.into_mut(),
-        }
-    }
-
-    pub fn unindex(self) -> Live<'a, T, Tag, Staged> {
-        match self {
-            Self::Indexed(entry) => entry.unindex(),
-            Self::Staged(entry) => entry,
-        }
-    }
-
-    pub fn remove(self) -> T {
-        self.unindex().remove()
-    }
-
-    pub fn discard(self) {
-        self.unindex().discard();
-    }
-}
-
 /// An indexed slot whose original owner is a Map.
 pub struct Occupied;
-/// An initialized slot admitted to its resident directory.
-pub struct Indexed;
 /// An initialized slot absent from its resident directory.
-pub struct Staged;
+pub(in crate::depot::arena::hash) struct Staged;
 
 impl<'a, T, Tag> entry::Live<'a, T, Tag, Occupied> {
     pub fn try_new(
         map: &'a mut runtime::Map<T, Tag>,
         key: key::Handle<runtime::Domain<Tag>>,
     ) -> Result<Self, errors::Lookup<Tag>> {
-        Ok(map.core.try_entry(key)?.with_phase())
+        map.core.try_entry(key)
     }
     pub fn at(map: &'a mut runtime::Map<T, Tag>, index: usize) -> Option<Self> {
-        Some(map.core.entry_at(index)?.with_phase())
+        map.core.entry_at(index)
     }
     pub fn from_live<C>(live: IndexedLoan<'a, T, Tag, C>) -> (Self, C) {
         let ((map, context), index) = live.into_inner();
         let index = bounded::U32::from_one(index.position());
         // SAFETY: the original Map loan proves this initialized indexed slot.
-        (
-            unsafe { Live::new(&mut map.core, index) }.with_phase(),
-            context,
-        )
+        (unsafe { Live::new(&mut map.core, index) }, context)
     }
     pub fn project(
         live: crate::depot::raw::Proof<(&Self, links::Index), Initialized<runtime::Indexed>>,
@@ -109,39 +53,28 @@ impl<'a, T, Tag> entry::Live<'a, T, Tag, Occupied> {
     }
     #[inline]
     pub fn remove(self) -> T {
-        self.with_phase::<Indexed>().remove()
+        self.unindex().remove()
     }
     pub fn discard(self) {
-        self.with_phase::<Indexed>().unindex().discard();
+        self.unindex().discard();
     }
-}
 
-impl<'a, T, Tag> entry::Live<'a, T, Tag, Indexed> {
-    pub fn unindex(self) -> entry::Live<'a, T, Tag, Staged> {
+    fn unindex(self) -> entry::Live<'a, T, Tag, Staged> {
         let bucket = hash::Bucket::occupied(&self);
-        unsafe { self.core.meta_mut(self.index).bucket = hash::Bucket::NONE };
+        // SAFETY: this indexed loan retires its directory entry and immediately
+        // vacates the slot; no observer can read its old bucket before reuse.
         unsafe { map::raw::Hole::retire(&mut *self.core, bucket) };
         self.with_phase()
-    }
-    pub fn remove(self) -> T {
-        self.unindex().remove()
     }
 }
 
 impl<'a, T, Tag> entry::Live<'a, T, Tag, Staged> {
-    pub fn try_reserve<Q: Eq + ?Sized>(self, hash: u64, key: &Q) -> Admission<Self, Tag>
-    where
-        T: AsRef<Q>,
-    {
-        // SAFETY: the staged slot keeps indexed < live <= capacity < buckets.
-        unsafe { map::raw::Probe::spare(self, hash, |value| value.as_ref() == key) }
-    }
-    pub fn remove(mut self) -> T {
+    fn remove(mut self) -> T {
         Self::vacate(&mut self);
         unsafe { self.slot().assume_init_read() }
     }
 
-    pub(in crate::depot) fn discard(mut self) {
+    fn discard(mut self) {
         Self::vacate(&mut self);
         unsafe { self.slot().assume_init_drop() };
     }
@@ -154,25 +87,6 @@ const _: () = {
             == size_of::<entry::Live<'static, u64, (), Occupied>>()
     );
     assert!(size_of::<entry::Live<'static, u64, (), Staged>>() == 2 * size_of::<usize>());
-};
-
-impl<'a, T, Tag> map::Vacancy<entry::Live<'a, T, Tag, entry::Staged>, u64> {
-    pub fn get(&self) -> &T {
-        self.source().get()
-    }
-    pub fn get_mut(&mut self) -> &mut T {
-        self.source_mut().get_mut()
-    }
-    pub fn commit(self) -> entry::Live<'a, T, Tag, entry::Indexed> {
-        let (staged, bucket, hash) = self.into_parts();
-        Live::index(staged, bucket, hash)
-    }
-}
-const _: () = {
-    assert!(
-        size_of::<map::Vacancy<entry::Live<'static, u64, (), entry::Staged>, u64>>()
-            == 4 * size_of::<usize>()
-    );
 };
 
 impl<'a, T, Tag, P> Live<'a, T, Tag, P> {
@@ -193,24 +107,3 @@ type IndexedLoan<'a, T, Tag, C> = crate::depot::raw::Proof<
     ((&'a mut runtime::Map<T, Tag>, C), links::Index),
     Initialized<runtime::Indexed>,
 >;
-
-type Admission<S, Tag> = Result<map::Vacancy<S, u64>, (S, key::Handle<runtime::Domain<Tag>>)>;
-
-// SAFETY: the staged entry retains the exclusive core and its live directory.
-unsafe impl<T, Tag> map::raw::Query for entry::Live<'_, T, Tag, entry::Staged> {
-    type Payload = bounded::U32<0, { u32::MAX - 1 }>;
-    type Value = T;
-    type Occupied = (Self, key::Handle<runtime::Domain<Tag>>);
-    fn table(&self) -> &map::raw::Table<Self::Payload> {
-        &self.core.directory
-    }
-    fn value(entry: map::Found<&Self>) -> &T {
-        let (owner, index) = entry.project();
-        unsafe { owner.core.value(*index) }
-    }
-    fn occupied(entry: map::Found<Self>) -> Self::Occupied {
-        let (owner, index) = entry.copied();
-        let key = unsafe { owner.core.key_for(index) };
-        (owner, key)
-    }
-}

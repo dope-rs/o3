@@ -7,7 +7,7 @@ use crate::{
     depot::arena::hash::{self, runtime},
 };
 
-pub struct Vacant<'a, T, Tag> {
+pub(in crate::depot) struct Vacant<'a, T, Tag> {
     core: &'a mut hash::Core<T, Tag>,
     pub(in crate::depot) index: bounded::U32<0, { u32::MAX - 1 }>,
 }
@@ -18,7 +18,10 @@ impl<'a, T, Tag> Vacant<'a, T, Tag> {
         Some(Self { core, index })
     }
 
-    pub fn insert(self, value: T) -> entry::Live<'a, T, Tag, entry::Staged> {
+    pub(in crate::depot::arena::hash) fn insert(
+        self,
+        value: T,
+    ) -> entry::Live<'a, T, Tag, entry::Staged> {
         let core = self.core;
         let position = core.len;
         let next = unsafe { core.meta(self.index) }.next();
@@ -33,6 +36,7 @@ impl<'a, T, Tag> Vacant<'a, T, Tag> {
         }
         core.free = next;
         core.len += 1;
-        unsafe { entry::Live::new(core, self.index) }.with_phase()
+        // SAFETY: insertion owns this initialized slot before directory publication.
+        unsafe { entry::Live::new(core, self.index) }
     }
 }

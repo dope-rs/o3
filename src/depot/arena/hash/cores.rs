@@ -204,7 +204,7 @@ unsafe impl<'a, T, Tag> map::raw::Query for &'a mut Core<T, Tag> {
     const SPARE: bool = true;
     type Payload = bounded::U32<0, { u32::MAX - 1 }>;
     type Value = T;
-    type Occupied = entry::Live<'a, T, Tag, entry::Indexed>;
+    type Occupied = entry::Live<'a, T, Tag, entry::Occupied>;
 
     fn table(&self) -> &map::raw::Table<Self::Payload> {
         &self.directory
@@ -220,7 +220,7 @@ unsafe impl<'a, T, Tag> map::raw::Query for &'a mut Core<T, Tag> {
     fn occupied(entry: map::Found<Self>) -> Self::Occupied {
         let (owner, index) = entry.copied();
         // SAFETY: the occupied bucket retains one live entry at this bounded index.
-        unsafe { entry::Live::new(owner, index) }.with_phase()
+        unsafe { entry::Live::new(owner, index) }
     }
 }
 

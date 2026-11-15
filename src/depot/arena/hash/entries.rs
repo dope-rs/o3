@@ -15,7 +15,7 @@ use crate::{
 };
 
 /// An initialized resident entry carrying its directory membership phase.
-pub struct Live<'a, T, Tag = (), P = ()> {
+pub struct Live<'a, T, Tag = (), P = entry::Occupied> {
     pub(super) core: &'a mut hash::Core<T, Tag>,
     pub(super) index: bounded::U32<0, { u32::MAX - 1 }>,
     phase: marker::PhantomData<fn(P) -> P>,
@@ -26,7 +26,7 @@ impl<'a, T, Tag> Live<'a, T, Tag, entry::Staged> {
         entry: Self,
         bucket: map::raw::Vacant,
         hash: u64,
-    ) -> entry::Live<'a, T, Tag, entry::Indexed> {
+    ) -> entry::Live<'a, T, Tag, entry::Occupied> {
         let stored = unsafe { Bucket::new(bucket.index()) };
         unsafe { entry.core.directory.insert(bucket, hash, entry.index) };
         unsafe {
@@ -36,9 +36,9 @@ impl<'a, T, Tag> Live<'a, T, Tag, entry::Staged> {
     }
 }
 
-impl<'a, T, Tag> Live<'a, T, Tag> {
+impl<'a, T, Tag, P> Live<'a, T, Tag, P> {
     /// # Safety
-    /// `index` must identify a live entry in `core`.
+    /// `index` identifies a live entry in `core` with membership phase `P`.
     pub(super) unsafe fn new(
         core: &'a mut hash::Core<T, Tag>,
         index: bounded::U32<0, { u32::MAX - 1 }>,
@@ -47,22 +47,6 @@ impl<'a, T, Tag> Live<'a, T, Tag> {
             core,
             index,
             phase: marker::PhantomData,
-        }
-    }
-
-    pub(super) fn classify(self) -> entry::Entry<'a, T, Tag> {
-        if unsafe { self.core.meta(self.index) }.bucket == Bucket::NONE {
-            entry::Entry::Staged(self.with_phase())
-        } else {
-            entry::Entry::Indexed(self.with_phase())
-        }
-    }
-
-    pub(super) fn indexed(self) -> Option<entry::Live<'a, T, Tag, entry::Indexed>> {
-        if unsafe { self.core.meta(self.index) }.bucket == Bucket::NONE {
-            None
-        } else {
-            Some(self.with_phase())
         }
     }
 }
@@ -115,7 +99,7 @@ impl Bucket {
     }
 
     pub(in crate::depot) fn occupied<T, Tag>(
-        indexed: &entry::Live<'_, T, Tag, entry::Indexed>,
+        indexed: &entry::Live<'_, T, Tag, entry::Occupied>,
     ) -> map::raw::Occupied {
         let bucket = unsafe { indexed.core.meta(indexed.index) }.bucket;
         unsafe { map::raw::Occupied::new(bucket.0 as usize) }

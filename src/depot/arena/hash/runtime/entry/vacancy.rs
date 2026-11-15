@@ -50,7 +50,7 @@ impl<'a, T, Tag> Vacancy<'a, T, Tag> {
     pub(in crate::depot) fn insert_entry(
         self,
         value: T,
-    ) -> entry::Live<'a, T, Tag, entry::Indexed> {
+    ) -> entry::Live<'a, T, Tag, entry::Occupied> {
         entry::Live::index(self.value.insert(value), self.bucket, self.hash)
     }
 

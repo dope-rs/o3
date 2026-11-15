@@ -41,52 +41,6 @@ fn drops_live_reverse_dense() {
 }
 
 #[test]
-fn reserve_stays_private() {
-    let plan = hash::Plan::new(2).expect("registry capacity");
-    let mut store = runtime::Registry::<[u32; 1]>::try_new(plan).expect("registry");
-    let key = store.insert([1]).expect("staged resident");
-    let address = ptr::from_ref(store.get(key).expect("resident"));
-    let ((), counts) = Tracker::measure(|| {
-        {
-            let staged = match store.entry(key).expect("live resident") {
-                entry::Entry::Staged(staged) => Some(staged),
-                entry::Entry::Indexed(_) => None,
-            }
-            .expect("unindexed resident");
-            let reserved = staged
-                .try_reserve(9, &[3][..])
-                .map_err(|(_, key)| (key.index(), key.generation().get()))
-                .expect("unindexed resident must reserve the directory key");
-            assert_eq!(reserved.hash(), 9);
-            assert_eq!(reserved.get(), &[1]);
-        }
-        assert!(store.indexed(key).is_none());
-        assert!(store.find(9, |value| *value == [3]).is_none());
-        assert_eq!(store.get(key).map(ptr::from_ref), Some(address));
-        let staged = match store.entry(key).expect("resident after abandonment") {
-            entry::Entry::Staged(staged) => Some(staged),
-            entry::Entry::Indexed(_) => None,
-        }
-        .expect("abandonment leaves the slot unindexed");
-        let mut reserved = staged
-            .try_reserve(9, &[3][..])
-            .map_err(|(_, key)| (key.index(), key.generation().get()))
-            .expect("abandoned reservation must release the directory key");
-        *reserved.get_mut() = [3];
-        assert!(reserved.commit().key() == key);
-        assert!(
-            store
-                .find(9, |value| *value == [3])
-                .expect("committed key")
-                .key()
-                == key
-        );
-        assert_eq!(store.get(key).map(ptr::from_ref), Some(address));
-    });
-    assert_eq!(counts, [0; 4]);
-}
-
-#[test]
 fn matcher_keeps_failure() {
     let plan = hash::Plan::new(2).expect("capacity");
     let mut map = runtime::Map::<u32>::try_new(plan).expect("map");
