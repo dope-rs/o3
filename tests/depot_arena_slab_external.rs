@@ -574,6 +574,7 @@ fn projects_logical_neighbors() {
     let neighbor = unsafe { Proof::<_, Initialized<()>>::new((&entry, second.1)) };
     let (key, value) = external::OccupiedSlot::project(neighbor);
     assert_eq!((entry.key(), key, value.1), (first.0, second.0, 22));
-    assert_eq!((*context, entry.remove().1), (7, 11));
+    entry.into_mut().1 += *context;
+    assert_eq!(slots.get(first.0).map(|value| value.1), Some(18));
     assert_eq!(slots.get(second.0).map(|value| value.1), Some(22));
 }

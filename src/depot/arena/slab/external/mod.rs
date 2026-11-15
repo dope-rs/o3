@@ -238,7 +238,7 @@ impl<'a, T, G: Generation, Tag, const PARTITIONS: usize, P>
         &mut self.inner.get_mut().value
     }
 
-    fn into_mut(self) -> &'a mut T {
+    pub fn into_mut(self) -> &'a mut T {
         &mut self.inner.into_mut().value
     }
 
