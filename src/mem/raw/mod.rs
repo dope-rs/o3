@@ -1,30 +1,16 @@
 use std::{array, cell, fmt::Debug, mem::MaybeUninit, num::NonZero, ops, ptr};
 
-pub(crate) use state::Account;
+pub(crate) use account::Account;
 
 use crate::{
     base::marker::ThreadBound,
     mem::{rc, slot},
 };
+mod account;
 mod balance;
 pub use balance::Balance;
-mod bound;
-pub use bound::Bound;
-mod charge;
-pub use charge::Charge;
-mod grant;
-pub use grant::Grant;
-mod lane;
-pub use lane::Lane;
-mod pool;
-pub use pool::Pool;
-mod state;
-pub use state::State;
 mod owner;
 pub use owner::Owner;
-
-/// An invariant accounting domain confined to its constructing thread.
-type Domain<Tag, W = ()> = std::marker::PhantomData<(fn(Tag) -> Tag, W, ThreadBound)>;
 
 /// Reborrows uninitialized storage for the same number of fitting values.
 /// This view does not reinterpret initialized values or own their destruction.
@@ -146,12 +132,6 @@ impl<'a, T> Vacant<'a, T> {
         }
     }
 }
-
-/// Exact partition preserves the issuing source and every credited component.
-type Partition<S, const N: usize, A, P> = (
-    Grant<S, N, <P as Exact<N, <S as Source<N>>::Word, A>>::Left>,
-    Grant<S, N, <P as Exact<N, <S as Source<N>>::Word, A>>::Right>,
-);
 
 /// Embedded thread-local count; only its nominal owner can transition it.
 #[derive(Debug)]
@@ -276,40 +256,6 @@ unsafe impl<const N: usize, W: crate::mem::raw::Word> Amount<N, W> for [W; N] {
     }
 }
 
-/// Accounts borrowed from one exact source.
-pub type Accounts<'a, const N: usize, Tag, W = usize> =
-    (&'a cell::Cell<[W; N]>, &'a State<N, Tag, W>);
-
-/// # Safety
-/// Copies, projections and acquisitions retain the same stable live binding; copies create no credit.
-/// Every reserve plus the initial shared surplus must fit `Self::Word`.
-pub unsafe trait Source<const N: usize>: Copy {
-    type Tag;
-    type Word: Word;
-    /// # Safety
-    /// Read only, or conserve every outstanding acquisition when mutating these accounts.
-    /// Never expose the shared cell through an API permitting unproved safe mutation.
-    unsafe fn accounts(&self) -> Accounts<'_, N, Self::Tag, Self::Word>;
-
-    fn held(&self) -> [Self::Word; N] {
-        // SAFETY: this projection only reads the retained account.
-        unsafe { self.accounts() }.1.held.get()
-    }
-
-    fn reserve(&self) -> [Self::Word; N] {
-        // SAFETY: this projection only reads the retained account.
-        unsafe { self.accounts() }.1.reserve
-    }
-
-    fn can_acquire(&self, amount: [Self::Word; N]) -> bool {
-        // SAFETY: this projection only reads the retained accounts.
-        let (shared, state) = unsafe { self.accounts() };
-        Balance::new(state.held.get(), shared.get())
-            .try_acquire(state.reserve, amount)
-            .is_ok()
-    }
-}
-
 // SAFETY: admission proves every component sum fits W.
 unsafe impl<const N: usize, W: Word> Sum<N, W> for [W; N] {
     unsafe fn add_raw(self, other: Self) -> Self {
@@ -325,32 +271,6 @@ pub unsafe trait Sum<const N: usize, W: Word>: Amount<N, W> {
     /// # Safety
     /// The componentwise sum must be representable by `W`.
     unsafe fn add_raw(self, other: Self) -> Self;
-}
-
-/// # Safety
-/// Once bound to its exact source, the marker must preserve every component.
-pub unsafe trait ExactRebind<const N: usize, W: Word, A: Amount<N, W>>: Sized {
-    type Output: Amount<N, W>;
-
-    fn rebind(self, source: A) -> Self::Output;
-}
-
-/// # Safety
-/// Preserve every component for every A, without caller-side preconditions.
-pub unsafe trait Rebind<const N: usize, W: Word, A: Amount<N, W>>:
-    ExactRebind<N, W, A>
-{
-}
-
-/// # Safety
-/// Once bound, return an exact partition of the source for every Input.
-/// Input may change representation-only data, not the admitted partition.
-pub unsafe trait Exact<const N: usize, W: Word, A: Amount<N, W>>: Sized {
-    type Input;
-    type Left: Amount<N, W>;
-    type Right: Amount<N, W>;
-
-    fn parts(self, source: A, input: Self::Input) -> (Self::Left, Self::Right);
 }
 
 /// # Safety
