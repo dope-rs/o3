@@ -41,15 +41,7 @@ impl<'source, 'ranges, S: buffer::raw::Source + ?Sized, N: buffer::raw::Length>
 
     fn view(&self, start: N, end: N) -> buffer::View<'source, S> {
         // SAFETY: callers select validated entries from this same Set.
-        let bytes = unsafe {
-            self.source
-                .as_ref()
-                .get_unchecked(start.into_usize()..end.into_usize())
-        };
-        buffer::View {
-            source: self.source,
-            bytes,
-        }
+        unsafe { buffer::raw::view(self.source, start.into_usize()..end.into_usize()) }
     }
     /// Validates each range and its complete logical length against this source.
     /// At most `u32::MAX` ranges each contribute at most `u32::MAX` bytes,
@@ -125,6 +117,15 @@ impl<'source, 'ranges, S: buffer::raw::Source + ?Sized, N: buffer::raw::Length>
 impl<N: buffer::raw::Length> Set<'_, '_, storage::Shared, N> {
     /// Retains every validated range while preserving this plan for retry.
     pub fn try_retain<'d>(&self) -> Result<segments::Shape<resident::Shared<'d>>, retain::Error> {
+        let source = buffer::View::new(self.source);
+        // SAFETY: the full view preserves this Set's origin, ranges and exact sum.
+        unsafe { Set::from_parts(&source, self.ranges, self.len) }.try_retain()
+    }
+}
+
+impl<N: buffer::raw::Length> Set<'_, '_, buffer::View<'_, storage::Shared>, N> {
+    /// Retains every validated range while preserving this plan for retry.
+    pub fn try_retain<'d>(&self) -> Result<segments::Shape<resident::Shared<'d>>, retain::Error> {
         if !self.count().is_many() {
             return self
                 .iter()
@@ -134,7 +135,7 @@ impl<N: buffer::raw::Length> Set<'_, '_, storage::Shared, N> {
                 });
         }
         let actual = self.ranges.len();
-        let added = crate::buffer::Residency::resident(self.source);
+        let added = crate::buffer::Residency::resident(self.source.source);
         let Some(resident) = actual.checked_mul(added) else {
             // SAFETY: multiplication by zero cannot overflow.
             let added = unsafe { NonZero::new_unchecked(added) };
@@ -157,8 +158,12 @@ impl<N: buffer::raw::Length> Set<'_, '_, storage::Shared, N> {
 
 #[inline]
 fn share<'d>(
-    (index, view): (usize, buffer::View<'_, storage::Shared>),
+    (index, view): (usize, buffer::View<'_, buffer::View<'_, storage::Shared>>),
 ) -> Result<segments::Item<resident::Shared<'d>>, retain::Error> {
+    let view = buffer::View {
+        source: view.source.source,
+        bytes: view.bytes,
+    };
     // SAFETY: callers select validated, nonempty views from the same Set.
     let view = unsafe { regions::NonEmpty::assume(&view) };
     <storage::Shared as segments::Seal>::try_share(view)
@@ -166,15 +171,15 @@ fn share<'d>(
         .map_err(|error| retain::Error::Retain { index, error })
 }
 
-struct Retain<'a, 'b, 'c, N = u32> {
-    source: &'a Set<'b, 'c, storage::Shared, N>,
+struct Retain<'a, 'b, 'c, 'd, N = u32> {
+    source: &'a Set<'b, 'c, buffer::View<'d, storage::Shared>, N>,
     resident: usize,
 }
 
 // SAFETY: this private input is constructed only for at least two validated
 // nonempty ranges; its borrow preserves their checked totals through collection.
 unsafe impl<'d, N: buffer::raw::Length> buffer::raw::Sequence<resident::Shared<'d>>
-    for &Retain<'_, '_, '_, N>
+    for &Retain<'_, '_, '_, '_, N>
 {
     type Item = Result<segments::Item<resident::Shared<'d>>, retain::Error>;
     type Error = retain::Error;
@@ -187,7 +192,7 @@ unsafe impl<'d, N: buffer::raw::Length> buffer::raw::Sequence<resident::Shared<'
     }
 }
 
-impl<N: buffer::raw::Length> buffer::raw::Total for &Retain<'_, '_, '_, N> {
+impl<N: buffer::raw::Length> buffer::raw::Total for &Retain<'_, '_, '_, '_, N> {
     fn count(&self) -> segments::Count {
         self.source.count()
     }
@@ -204,5 +209,5 @@ impl<N: buffer::raw::Length> buffer::raw::Total for &Retain<'_, '_, '_, N> {
 const _: () = {
     assert!(size_of::<Set<'static, 'static, [u8]>>() == 5 * size_of::<usize>());
     assert!(size_of::<Set<'static, 'static, storage::Shared>>() == 4 * size_of::<usize>());
-    assert!(size_of::<Retain<'static, 'static, 'static>>() == 2 * size_of::<usize>());
+    assert!(size_of::<Retain<'static, 'static, 'static, 'static>>() == 2 * size_of::<usize>());
 };

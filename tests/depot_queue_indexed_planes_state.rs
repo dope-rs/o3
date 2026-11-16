@@ -405,8 +405,19 @@ fn scoped_resident_reuses() {
     set.try_replace::<0>(records, storage)
         .expect("retained physical rows")();
     assert_eq!((set.len(), set.limit().get(), set.len_in::<0>()), (3, 1, 1));
+    bound::Scope::with(&mut set, |root| {
+        let (entries, _) = root.split();
+        let key = entries.resolve(0).expect("active row");
+        let _ = entries.install::<0>(
+            key,
+            Owner {
+                drops: Counted(&drops),
+                value: 5,
+            },
+        );
+    });
     let ((), activity) = Tracker::measure(|| {
-        for (value, count) in [(7, 1), (9, 2)] {
+        for (value, count) in [(7, 2), (9, 3)] {
             bound::Scope::with(&mut set, |root| {
                 let (mut entries, mut side) = root.split();
                 assert!(entries.resolve(1).is_none());
@@ -420,6 +431,7 @@ fn scoped_resident_reuses() {
                         value,
                     },
                 );
+                assert_eq!(drops.get(), Some(count - 1));
                 let pointer = ptr::from_ref(resident.get(key));
                 resident.get_mut(key).value += 1;
                 let (timer, mut entry) = resident.select(key);
@@ -438,19 +450,18 @@ fn scoped_resident_reuses() {
                 assert_eq!((found.index(), *item), (0, value as u64));
                 let (timer, terminal) = resident.into_select(key, side);
                 drop(timer);
-                let (item, mut entry) = terminal.take();
-                assert_eq!(item.value, value + 1);
+                assert_eq!(terminal.get().value, value + 1);
+                let mut entry = terminal.clear();
+                assert_eq!(drops.get(), Some(count));
                 assert!(entry.get().is_none());
                 assert_eq!(*entry.metadata(), 0);
                 entry.plane::<0>().link_back();
-                drop(item);
             });
-            assert_eq!(drops.get(), Some(count));
         }
     });
     assert_eq!(activity, [0; 4]);
     drop(set);
-    assert_eq!(drops.get(), Some(2));
+    assert_eq!(drops.get(), Some(3));
 }
 
 #[test]

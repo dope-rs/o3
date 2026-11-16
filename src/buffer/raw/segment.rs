@@ -30,12 +30,8 @@ pub unsafe trait Segment:
     /// # Safety
     /// `range` must lie within the owner's visible bytes.
     unsafe fn try_project(&self, range: ops::Range<usize>) -> Result<Self, rc::Error> {
-        let bytes = unsafe { self.as_ref().get_unchecked(range) };
-        buffer::View {
-            source: self,
-            bytes,
-        }
-        .try_retain()
+        // SAFETY: the caller admits this range of the unchanged owner.
+        unsafe { buffer::raw::view(self, range) }.try_retain()
     }
 
     /// Retains at most `limit` leading bytes without copying the payload.

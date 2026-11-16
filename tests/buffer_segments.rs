@@ -101,8 +101,10 @@ fn retries_range_retention() {
     ] {
         let retained = {
             let source =
-                (storage::Shared::try_copy(b"_ab__cde_")).expect("range source allocation");
-            let plan = (ranges::Set::<_, u16>::try_new(&source, spans, expected.len()))
+                (storage::Shared::try_copy(b"head_ab__cde_tail")).expect("range source allocation");
+            // SAFETY: these fixed bounds select the unchanged initialized body.
+            let view = unsafe { buffer::raw::view(&source, 4..13) };
+            let plan = (ranges::Set::<_, u16>::try_new(&view, spans, expected.len()))
                 .expect("complete source ranges");
             if spans.len() > 1 {
                 let (failed, hot) =

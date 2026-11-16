@@ -1,6 +1,7 @@
 use std::{
     marker, mem,
     num::NonZero,
+    ops,
     slice::{from_raw_parts, from_raw_parts_mut},
 };
 
@@ -283,6 +284,20 @@ const _: () = assert!(size_of::<Output<'_>>() == size_of::<usize>());
 /// Shared access preserves its exact backing, range, and contents until exclusive mutation.
 /// Writes preserve the initialized prefix; successful writes append their complete input.
 pub unsafe trait Source: AsRef<[u8]> {}
+
+/// Borrows an admitted range while retaining its original source.
+/// # Safety
+/// `range.start <= range.end <= source.as_ref().len()` at this unchanged origin.
+pub unsafe fn view<S: Source + ?Sized>(
+    source: &S,
+    range: ops::Range<usize>,
+) -> buffer::View<'_, S> {
+    buffer::View {
+        source,
+        // SAFETY: the caller admits this subrange; Source preserves its borrow.
+        bytes: unsafe { source.as_ref().get_unchecked(range) },
+    }
+}
 
 // SAFETY: the stronger cursor contract requires this stable-source contract.
 unsafe impl<T: buffer::raw::Consume> Source for T {}

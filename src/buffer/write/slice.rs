@@ -22,6 +22,15 @@ impl<'a> Slice<'a> {
     }
 }
 
+impl<'a> Slice<'a, &'a mut usize> {
+    /// # Safety
+    /// `*len <= out.len()`; the first `*len` bytes are initialized.
+    pub unsafe fn from_raw_parts(out: &'a mut [MaybeUninit<u8>], len: &'a mut usize) -> Self {
+        let capacity = out.len();
+        Self::from_parts(ptr::NonNull::from(out).cast(), len, capacity)
+    }
+}
+
 impl<'a, L> Slice<'a, L> {
     fn from_parts(base: ptr::NonNull<u8>, len: L, capacity: usize) -> Self {
         Self {
@@ -53,6 +62,13 @@ impl<'a, L: BorrowMut<usize>> Slice<'a, L> {
     /// Lends this writer's actual progress without lending its identity.
     pub fn reborrow(&mut self) -> Slice<'_, &mut usize> {
         Slice::from_parts(self.base, self.len.borrow_mut(), self.capacity)
+    }
+
+    pub fn stage(&mut self) -> Stage<'_, 'a, L> {
+        Stage {
+            parent: self,
+            len: 0,
+        }
     }
 
     /// Returns exactly the written prefix under the original exclusive borrow.
@@ -120,6 +136,24 @@ impl<L: BorrowMut<usize>> write::Init for Slice<'_, L> {
     }
 }
 
+/// An unpublished suffix retained by its original writer.
+pub struct Stage<'writer, 'target, L = usize> {
+    parent: &'writer mut Slice<'target, L>,
+    len: usize,
+}
+
+impl<L: BorrowMut<usize>> Stage<'_, '_, L> {
+    pub fn body(&mut self) -> Slice<'_, &mut usize> {
+        // SAFETY: the exclusive parent loan retains its unchanged suffix.
+        let base = unsafe { self.parent.base.add(self.parent.len()) };
+        Slice::from_parts(base, &mut self.len, self.parent.remaining())
+    }
+
+    pub fn commit(self) {
+        *self.parent.len.borrow_mut() += self.len;
+    }
+}
+
 /// Unpublished adjacent regions retained by one parent writer.
 pub struct Split<'writer, 'target, L = usize> {
     parent: &'writer mut Slice<'target, L>,
@@ -154,5 +188,6 @@ const _: () = {
     assert!(size_of::<Slice<'static>>() == 3 * size_of::<usize>());
     assert!(size_of::<Option<Slice<'static>>>() == size_of::<Slice<'static>>());
     assert!(size_of::<Slice<'static, &'static mut usize>>() == 3 * size_of::<usize>());
+    assert!(size_of::<Stage<'static, 'static>>() == 2 * size_of::<usize>());
     assert!(size_of::<Split<'static, 'static>>() == 5 * size_of::<usize>());
 };

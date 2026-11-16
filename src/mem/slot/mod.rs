@@ -49,8 +49,8 @@ impl<T, M> Storage<T, M> {
         self.value.as_mut()
     }
 
-    pub(crate) fn replace(&mut self, value: T) -> Option<T> {
-        self.value.replace(value)
+    pub(crate) fn insert(&mut self, value: T) {
+        self.value = Some(value);
     }
 
     pub fn occupied(&mut self) -> Option<mem::raw::Occupied<'_, T>> {

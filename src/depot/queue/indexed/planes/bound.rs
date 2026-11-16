@@ -121,11 +121,9 @@ impl<'storage, 'id, T, M, const PLANES: usize, P: Ord, C: alloc::raw::Extent>
         resident::Key<'id>,
     ) {
         // SAFETY: this active key retains the exact row; no resident phase exists yet.
-        drop(
-            unsafe { self.core.entries.get_unchecked_mut(key.index()) }
-                .value
-                .replace(value),
-        );
+        unsafe { self.core.entries.get_unchecked_mut(key.index()) }
+            .value
+            .insert(value);
         (self.resident(), resident::Key(key))
     }
 }

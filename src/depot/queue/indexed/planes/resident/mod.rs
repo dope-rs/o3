@@ -215,10 +215,10 @@ impl<
 impl<'storage, T, M, const PLANES: usize, const EXCLUDED: usize>
     Entry<'storage, T, M, PLANES, true, EXCLUDED>
 {
-    pub fn take(mut self) -> (T, planes::Entry<'storage, slot::Storage<T, M>, PLANES>) {
+    pub fn clear(mut self) -> planes::Entry<'storage, slot::Storage<T, M>, PLANES> {
         // SAFETY: only consuming the complete frozen scope creates this terminal phase.
         // No old key can regain a scope or keep any payload/hook loan alive.
-        let (value, _) = unsafe { mem::raw::occupy(&mut self.entry) }.take();
-        (value, self.entry)
+        unsafe { mem::raw::occupy(&mut self.entry) }.clear();
+        self.entry
     }
 }

@@ -273,22 +273,31 @@ fn checks_slice_completion() {
 #[test]
 fn lent_slices_keep_parent_progress() {
     let mut first = [MaybeUninit::uninit(); 8];
+    first[0].write(b'p');
+    let mut written = 1;
     let mut second = [MaybeUninit::uninit(); 8];
-    let mut first = Slice::uninit(&mut first);
-    let mut second = Slice::uninit(&mut second);
     {
-        let mut loan = first.reborrow();
-        loan.write_slice(b"a").expect("prefix");
-        let error = loan
-            .write_slices([b"12345".as_slice(), b"678"])
-            .expect_err("atomic rejection");
-        let (required, available) = error.into_parts();
-        assert_eq!((required.get(), available), (3, 2));
-        loan = second.reborrow();
-        loan.write_slice(b"bc").expect("other parent");
+        // SAFETY: this owner retains its initialized one-byte prefix.
+        let mut first = unsafe { Slice::from_raw_parts(&mut first, &mut written) };
+        let mut second = Slice::uninit(&mut second);
+        {
+            let mut stage = first.stage();
+            let mut loan = stage.body();
+            loan.write_slice(b"a").expect("prefix");
+            let error = loan
+                .write_slices([b"1234".as_slice(), b"567"])
+                .expect_err("atomic rejection");
+            let (required, available) = error.into_parts();
+            assert_eq!((required.get(), available), (3, 2));
+            assert_eq!(loan.len(), 1);
+            loan = second.reborrow();
+            loan.write_slice(b"bc").expect("other parent");
+            stage.commit();
+        }
+        assert_eq!(first.into_mut(), b"pa");
+        assert_eq!(second.into_mut(), b"bc");
     }
-    assert_eq!(first.into_mut(), b"a");
-    assert_eq!(second.into_mut(), b"bc");
+    assert_eq!(written, 2);
 }
 
 #[test]
@@ -316,19 +325,19 @@ fn split_requires_complete_head() {
 }
 
 #[test]
-fn abandoned_split_allows_longer_reframe() {
+fn abandoned_stages_allow_longer_reframe() {
     let mut bytes = [MaybeUninit::uninit(); 16];
     let mut parent = Slice::uninit(&mut bytes);
     parent.write_byte(b'p').expect("common fields");
     {
-        let mut split = parent.try_split(0, 15).expect("staged framing");
+        let mut stage = parent.stage();
         {
-            let mut framing = split.body();
+            let mut framing = stage.body();
             framing.write_slice(b"old").expect("plain framing");
-            let mut body = framing.try_split(0, 4).expect("nested body");
+            let mut body = framing.stage();
             body.body().write_slice(b"body").expect("body bytes");
             assert_eq!(body.body().into_mut(), b"body");
-            body.try_commit().expect("head-first body");
+            body.commit();
         }
     }
     assert_eq!(parent.len(), 1);

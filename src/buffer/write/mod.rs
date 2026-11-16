@@ -7,7 +7,7 @@ use std::{
 
 pub use array::Array;
 pub use reserved::Reserved;
-pub use slice::{Slice, Split};
+pub use slice::{Slice, Split, Stage};
 pub use staged::Staged;
 use staged::publish_suffix;
 pub(in crate::buffer) use staged::staging::Staging;
@@ -34,13 +34,13 @@ pub trait Sink {
     fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error>;
 }
 
-pub trait Init: Sink<Error = consume::Error> {
+pub trait Init: Sink {
     /// Initializes one complete source after capacity admission. A shortfall
     /// leaves the destination unchanged and does not call the initializer.
     fn try_init<I: buffer::raw::Initializer + ?Sized>(
         &mut self,
         source: &I,
-    ) -> Result<(), consume::Error>;
+    ) -> Result<(), Self::Error>;
 }
 
 /// Copies exactly `source` into an empty owner, returning that owner on either outcome.
