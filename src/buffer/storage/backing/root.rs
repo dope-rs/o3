@@ -15,6 +15,7 @@ pub(in crate::buffer) enum Root<'a, 'd> {
 }
 
 impl<'a, 'd> Root<'a, 'd> {
+    #[inline(always)]
     pub(in crate::buffer) fn bytes(self) -> usize {
         match self {
             Self::Allocation(owner) => owner.capacity().get() as usize,
