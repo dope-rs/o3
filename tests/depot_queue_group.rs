@@ -27,6 +27,12 @@ fn drains_only_owner_lane() {
         (ledger.push_back(Index::at::<1>(), 1, 99)).is_ok(),
         "required fixture outcome"
     );
+    {
+        let (policy, front) = ledger
+            .select([(Index::at::<1>(), 17), (Index::at::<0>(), 29)])
+            .expect("queued front");
+        assert_eq!((policy, *front.get()), (17, 99));
+    }
     let mut released = Vec::new();
     assert!(ledger.drain_owner(1, Index::at::<0>(), |value| released.push(value)) == 3);
     assert_eq!(released, [10, 11, 12]);

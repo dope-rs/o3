@@ -235,7 +235,7 @@ impl<V, const LANES: usize> Ledger<V, LANES> {
         self.select(order).map(|(item, front)| (item, front.take()))
     }
 
-    fn select<I, const N: usize>(
+    pub fn select<I, const N: usize>(
         &mut self,
         order: [(Index<LANES>, I); N],
     ) -> Option<(I, Front<'_, V, LANES>)> {
