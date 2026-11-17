@@ -72,10 +72,13 @@ pub struct Pinned<
     tag: marker::PhantomData<fn() -> Tag>,
 }
 
-impl<T, Tag, const MAX: u32, const PARTITIONS: usize, S> Pinned<T, Tag, MAX, false, PARTITIONS, S>
+impl<T, Tag, const MAX: u32, const RECYCLE: bool, const PARTITIONS: usize, S>
+    Pinned<T, Tag, MAX, RECYCLE, PARTITIONS, S>
 where
+    cycle::Mode<RECYCLE>: Policy,
     S: storage::Storage,
-    S::Plane<T, MAX, entries::Exclusive>: storage::HeapPlane<T, MAX, entries::Exclusive>,
+    S::Plane<T, MAX, entries::Exclusive<RECYCLE>>:
+        storage::HeapPlane<T, MAX, entries::Exclusive<RECYCLE>>,
 {
     /// Allocates one pinned heap extent under its slot initialization policy.
     pub fn try_new(cap: capacity::Count) -> Result<Self, crate::alloc::Error> {

@@ -25,11 +25,7 @@ pub type Anchored<'a, T, G, Tag = ()> =
 impl<T, G: external::Generation, Tag> Pinned<T, G, Tag> {
     pub fn try_new(cap: capacity::Count) -> Result<Self, crate::alloc::Error> {
         Ok(Self {
-            inner: slab::Pinned {
-                core: entries::Core::try_new(cap)?,
-                _pin: marker::PhantomPinned,
-                tag: marker::PhantomData,
-            },
+            inner: Inner::try_new(cap)?,
             next: Some(G::INITIAL),
         })
     }
