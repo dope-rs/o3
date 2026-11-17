@@ -122,6 +122,10 @@ impl<Q, P> Vacancy<Q, P> {
     pub(crate) fn source(&self) -> &Q {
         &self.owner
     }
+
+    pub(crate) fn source_mut(&mut self) -> &mut Q {
+        &mut self.owner
+    }
 }
 
 impl<Q> Vacancy<Q, u64> {

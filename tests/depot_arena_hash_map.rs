@@ -7,11 +7,14 @@ use std::{cell, ptr};
 
 use common::{
     alloc::system::Tracker,
-    depot::arena::{Borrowed, Failure, Tag},
+    depot::arena::{Borrowed, Failure, Resident, Tag},
 };
 use o3::depot::{
     arena::{
-        hash::{self, errors, runtime},
+        hash::{
+            self, errors,
+            runtime::{self, entry},
+        },
         slab::key,
     },
     capacity::Count,
@@ -223,6 +226,102 @@ fn preserves_spare() {
         .try_create(3, |stored| *stored == 17, |_| 17)
         .expect("the dropped vacancy must leave its slot available");
     assert_eq!(key.index(), index.raw());
+}
+
+#[test]
+fn staging_retains_identity() {
+    let drops = cell::Cell::new(0);
+    let ((), counts) = Tracker::measure(|| {
+        let mut store =
+            runtime::Registry::<Resident<'_>>::try_new(hash::Plan::new(2).expect("capacity"))
+                .expect("resident allocation");
+        let first = store
+            .vacant()
+            .expect("first slot")
+            .insert(Resident {
+                name: "",
+                drops: &drops,
+            })
+            .key();
+        let second = store
+            .vacant()
+            .expect("second slot")
+            .insert(Resident {
+                name: "",
+                drops: &drops,
+            })
+            .key();
+        let pointer = ptr::from_ref(store.get(first).expect("pending resident"));
+        {
+            let entry::Phase::Staged(staged) = store.entry(first).expect("pending").into_phase()
+            else {
+                panic!("pending indexed");
+            };
+            let _reservation = staged
+                .try_reserve(7, "a")
+                .map_err(|(_, key)| key)
+                .expect("vacant tag");
+        }
+        assert!(store.key(7, |value| value.name == "a").is_none());
+        {
+            let staged = store.entry(first).expect("pending").unindex();
+            let mut reservation = staged
+                .try_reserve(7, "a")
+                .map_err(|(_, key)| key)
+                .expect("vacant tag");
+            reservation.get_mut().name = "a";
+            assert!(reservation.commit().key() == first);
+        }
+        {
+            let staged = store.entry(second).expect("pending").unindex();
+            let (staged, collision) = staged.try_reserve(7, "a").err().expect("collision");
+            assert!(staged.key() == second && collision == first);
+        }
+        assert!(
+            store
+                .find(7, |value| value.name == "a")
+                .expect("indexed")
+                .unindex()
+                .key()
+                == first
+        );
+        assert!(store.vacant().is_none());
+        assert_eq!(
+            ptr::from_ref(store.get(first).expect("retiring resident")),
+            pointer
+        );
+        assert_eq!(drops.get(), 0);
+        {
+            let staged = store.entry(second).expect("pending").unindex();
+            let mut reservation = staged
+                .try_reserve(7, "a")
+                .map_err(|(_, key)| key)
+                .expect("retired tag");
+            reservation.get_mut().name = "a";
+            reservation.commit();
+        }
+        drop(store.entry(first).expect("retiring").remove());
+        assert_eq!(drops.get(), 1);
+        let next = store
+            .vacant()
+            .expect("released slot")
+            .insert(Resident {
+                name: "",
+                drops: &drops,
+            })
+            .key();
+        assert_eq!(next.index(), first.index());
+        assert!(next.generation() != first.generation());
+        assert!(store.get(first).is_none());
+        assert!(matches!(
+            store.entry(next).expect("new generation").into_phase(),
+            entry::Phase::Staged(_)
+        ));
+        assert!(store.key(7, |value| value.name == "a") == Some(second));
+    });
+    assert_eq!(drops.get(), 3);
+    assert_eq!((counts[0], counts[2]), (1, 1));
+    assert_eq!(counts[1], counts[3]);
 }
 
 #[test]

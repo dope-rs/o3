@@ -14,6 +14,23 @@ pub enum Tag {}
 
 pub struct Borrowed<'a>(pub &'a u8);
 
+pub struct Resident<'a> {
+    pub name: &'static str,
+    pub drops: &'a std::cell::Cell<usize>,
+}
+
+impl AsRef<str> for Resident<'_> {
+    fn as_ref(&self) -> &str {
+        self.name
+    }
+}
+
+impl Drop for Resident<'_> {
+    fn drop(&mut self) {
+        self.drops.set(self.drops.get() + 1);
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Failure {
     pub code: u32,

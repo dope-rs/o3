@@ -51,7 +51,7 @@ impl<'a, T, Tag> Vacancy<'a, T, Tag> {
         self,
         value: T,
     ) -> entry::Live<'a, T, Tag, entry::Occupied> {
-        entry::Live::index(self.value.insert(value), self.bucket, self.hash)
+        entry::Live::index(self.value.insert(value), self.bucket, self.hash).with_phase()
     }
 
     pub fn insert(self, value: T) -> key::Handle<runtime::Domain<Tag>> {

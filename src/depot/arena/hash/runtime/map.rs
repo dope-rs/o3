@@ -1,3 +1,5 @@
+use std::marker;
+
 use hash::errors;
 use runtime::entry;
 
@@ -11,14 +13,18 @@ use crate::depot::{
 };
 
 #[repr(transparent)]
-pub struct Map<T, Tag = ()> {
+pub struct Store<T, Tag, P> {
     pub(in crate::depot::arena::hash) core: hash::Core<T, Tag>,
+    phase: marker::PhantomData<fn(P) -> P>,
 }
 
-impl<T, Tag> Map<T, Tag> {
+pub type Map<T, Tag = ()> = Store<T, Tag, entry::Occupied>;
+
+impl<T, Tag, P> Store<T, Tag, P> {
     pub fn try_new(plan: hash::Plan) -> Result<Self, crate::alloc::Error> {
         Ok(Self {
             core: hash::Core::try_new(plan)?,
+            phase: marker::PhantomData,
         })
     }
 
@@ -73,7 +79,12 @@ impl<T, Tag> Map<T, Tag> {
         hash: u64,
         eq: impl Fn(&T) -> Result<bool, E>,
     ) -> Entry<'_, T, Tag, E> {
-        Ok(map::raw::Probe::try_new(&mut self.core, hash, eq)?.entry())
+        Ok(
+            match map::raw::Probe::try_new(&mut self.core, hash, eq)?.entry() {
+                map::Entry::Occupied(entry) => map::Entry::Occupied(entry.with_phase()),
+                map::Entry::Vacant(entry) => map::Entry::Vacant(entry),
+            },
+        )
     }
 
     pub fn try_create(
@@ -108,7 +119,12 @@ impl<T, Tag> Map<T, Tag> {
     }
 
     pub fn remove(&mut self, key: key::Handle<runtime::Domain<Tag>>) -> Option<T> {
-        Some(self.core.entry(key)?.remove())
+        Some(
+            self.core
+                .entry(key)?
+                .with_phase::<entry::Occupied>()
+                .remove(),
+        )
     }
 }
 

@@ -26,7 +26,7 @@ impl<'a, T, Tag> Live<'a, T, Tag, entry::Staged> {
         entry: Self,
         bucket: map::raw::Vacant,
         hash: u64,
-    ) -> entry::Live<'a, T, Tag, entry::Occupied> {
+    ) -> entry::Live<'a, T, Tag, entry::Indexed> {
         let stored = unsafe { Bucket::new(bucket.index()) };
         unsafe { entry.core.directory.insert(bucket, hash, entry.index) };
         unsafe {

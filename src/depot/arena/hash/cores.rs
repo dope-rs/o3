@@ -167,21 +167,21 @@ impl<T, Tag> Core<T, Tag> {
     pub(in crate::depot) fn entry(
         &mut self,
         key: key::Handle<runtime::Domain<Tag>>,
-    ) -> Option<entry::Live<'_, T, Tag>> {
+    ) -> Option<entry::Entry<'_, T, Tag>> {
         self.try_entry(key).ok()
     }
 
     pub(in crate::depot) fn try_entry(
         &mut self,
         key: key::Handle<runtime::Domain<Tag>>,
-    ) -> Result<entry::Live<'_, T, Tag>, errors::Lookup<Tag>> {
+    ) -> Result<entry::Entry<'_, T, Tag>, errors::Lookup<Tag>> {
         let index = self.lookup(key)?;
         // SAFETY: lookup admits this live slot under the same exclusive borrow;
         // no mutation or callback intervenes before the loan is transferred.
         Ok(unsafe { entry::Live::new(self, index) })
     }
 
-    pub(in crate::depot) fn entry_at(&mut self, index: usize) -> Option<entry::Live<'_, T, Tag>> {
+    pub(in crate::depot) fn entry_at(&mut self, index: usize) -> Option<entry::Entry<'_, T, Tag>> {
         let index = self.live_at(index)?;
         // SAFETY: this unchanged exclusive owner retains the admitted live slot.
         Some(unsafe { entry::Live::new(self, index) })
@@ -204,7 +204,7 @@ unsafe impl<'a, T, Tag> map::raw::Query for &'a mut Core<T, Tag> {
     const SPARE: bool = true;
     type Payload = bounded::U32<0, { u32::MAX - 1 }>;
     type Value = T;
-    type Occupied = entry::Live<'a, T, Tag, entry::Occupied>;
+    type Occupied = entry::Live<'a, T, Tag, entry::Indexed>;
 
     fn table(&self) -> &map::raw::Table<Self::Payload> {
         &self.directory
