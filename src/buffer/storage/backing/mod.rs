@@ -1,5 +1,7 @@
 use std::{num, ptr};
 
+use crate::buffer::{resident, storage};
+
 pub(in crate::buffer) use root::Root;
 
 mod root;
@@ -35,25 +37,30 @@ impl<'d> View<'_, 'd> {
     fn end(&self) -> *const u8 {
         self.start.as_ptr().wrapping_add(self.len())
     }
+}
 
-    pub(in crate::buffer) fn new<'a, O: Owner<'d>>(
-        value: &'a super::regions::Shared<O>,
-    ) -> Option<View<'a, 'd>>
-    where
-        'd: 'a,
-    {
-        let root = value.owner().root()?;
-        let bytes = value.as_slice();
-        let start = ptr::NonNull::from(bytes).cast();
-        let len = num::NonZero::new(bytes.len())?;
-        Some(View { root, start, len })
+impl<'a, 'd> Root<'a, 'd> {
+    fn view(self, bytes: &'a [u8]) -> Option<View<'a, 'd>> {
+        Some(View {
+            root: self,
+            start: ptr::NonNull::from(bytes).cast(),
+            len: num::NonZero::new(bytes.len())?,
+        })
     }
 }
 
-pub(in crate::buffer) trait Owner<'d> {
-    fn root<'a>(&'a self) -> Option<Root<'a, 'd>>
-    where
-        'd: 'a;
+impl storage::Shared {
+    #[doc(hidden)]
+    pub fn backing(&self) -> Option<View<'_, '_>> {
+        self.owner().as_ref()?.root().view(self.as_slice())
+    }
+}
+
+impl<'d> resident::Shared<'d> {
+    #[doc(hidden)]
+    pub fn backing(&self) -> Option<View<'_, 'd>> {
+        self.region.owner().root()?.view(self.as_slice())
+    }
 }
 
 const _: () = {

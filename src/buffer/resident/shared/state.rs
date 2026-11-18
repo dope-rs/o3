@@ -22,7 +22,6 @@ pub(in crate::buffer) enum State<'d> {
 impl buffer::Residency for State<'_> {
     #[inline]
     fn resident(&self) -> usize {
-        use backing::Owner as _;
         self.root().map_or(0, backing::Root::bytes)
     }
 }
@@ -43,20 +42,19 @@ unsafe impl buffer::raw::Retain for State<'_> {
     }
 }
 
-impl<'d> backing::Owner<'d> for State<'d> {
+impl<'d> State<'d> {
     #[inline]
-    fn root<'a>(&'a self) -> Option<backing::Root<'a, 'd>>
-    where
-        'd: 'a,
-    {
-        match self {
-            Self::Slice | Self::Static => None,
-            Self::Owned(owner) => Some(owner.root()),
-            Self::Resident(owner) => owner.root(),
-            Self::Accounted(owner) => owner.root(),
-            Self::Provided(owner) => owner.root(),
+    pub(in crate::buffer) fn root(&self) -> Option<backing::Root<'_, 'd>> {
+        use backing::Root;
+
+        Some(match self {
+            Self::Slice | Self::Static => return None,
+            Self::Owned(owner) => owner.root(),
+            Self::Resident(owner) => Root::Resident(owner.get()),
+            Self::Accounted(owner) => Root::Accounted(owner.get()),
+            Self::Provided(owner) => Root::Provided(owner.charge()),
             Self::Pool(owner) => owner.root(),
-        }
+        })
     }
 }
 const _: () = assert!(size_of::<State<'static>>() == 2 * size_of::<usize>());

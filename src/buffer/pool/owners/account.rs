@@ -8,7 +8,7 @@ use crate::{
         pool,
         pool::owners::{Free, Key},
         resident::{self, staging},
-        storage::{backing, regions},
+        storage::regions,
     },
     mem::rc,
 };
@@ -298,15 +298,6 @@ pub(in crate::buffer) type Registered<'d> = crate::mem::raw::Owner<Account<'d>>;
 unsafe impl<'d> buffer::raw::Retain for Registered<'d> {
     fn try_retain(&self) -> Result<Self, rc::Error> {
         self.try_clone()
-    }
-}
-
-impl<'d> backing::Owner<'d> for Registered<'d> {
-    fn root<'a>(&'a self) -> Option<backing::Root<'a, 'd>>
-    where
-        'd: 'a,
-    {
-        Some(backing::Root::Accounted(self.get()))
     }
 }
 

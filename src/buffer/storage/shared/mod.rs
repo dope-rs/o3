@@ -6,7 +6,7 @@ pub(in crate::buffer::storage) mod str;
 
 use std::{ops, ptr, vec};
 
-use storage::{backing, provided, provided::account, range};
+use storage::{provided, provided::account, range};
 
 use crate::{
     buffer,
@@ -104,10 +104,6 @@ impl TryFrom<&mut vec::Vec<u8>> for Shared {
 impl Shared {
     pub fn try_copy(bytes: &[u8]) -> Result<Self, storage::AllocError> {
         storage::Exact::try_copy(bytes).map(storage::Exact::into_shared)
-    }
-    #[doc(hidden)]
-    pub fn backing(&self) -> Option<backing::View<'_, '_>> {
-        backing::View::new(self)
     }
     pub fn clear(&mut self) {
         *self = Self::new();

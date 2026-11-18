@@ -3,7 +3,7 @@ pub(in crate::buffer::resident) mod state;
 
 use std::ops;
 
-use storage::{backing, provided, range, regions};
+use storage::{provided, range, regions};
 
 use crate::{
     buffer,
@@ -53,10 +53,6 @@ impl<'d> Shared<'d> {
             source: self,
             bytes: self.as_slice().get(range)?,
         })
-    }
-    #[doc(hidden)]
-    pub fn backing(&self) -> Option<backing::View<'_, 'd>> {
-        backing::View::new(&self.region)
     }
     pub fn clear(&mut self) {
         *self = Self::new();

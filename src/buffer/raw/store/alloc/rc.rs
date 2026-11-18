@@ -2,7 +2,7 @@ use std::{mem, num, ops, ptr};
 
 use crate::{
     buffer,
-    buffer::{raw::Policy as _, resident, storage, storage::backing},
+    buffer::{raw::Policy as _, resident, storage},
     mem::rc,
 };
 
@@ -155,14 +155,5 @@ impl<P: buffer::raw::Policy> Rc<P> {
         // SAFETY: the owned data pointer is nonnull and the offset stays inside its allocation.
         let pointer = unsafe { pointer.add(start as usize) };
         unsafe { storage::Shared::from_raw(pointer, len as usize, self) }
-    }
-}
-
-impl<'d> backing::Owner<'d> for Rc<resident::Budget<'d>> {
-    fn root<'a>(&'a self) -> Option<backing::Root<'a, 'd>>
-    where
-        'd: 'a,
-    {
-        Some(backing::Root::Resident(self.get()))
     }
 }

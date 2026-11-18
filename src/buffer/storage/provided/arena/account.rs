@@ -1,4 +1,4 @@
-use storage::{backing, provided};
+use storage::provided;
 
 use crate::{
     buffer,
@@ -36,15 +36,6 @@ impl regions::End for Option<Account<'_>> {
 }
 
 const _: () = assert!(size_of::<Account<'_>>() == size_of::<usize>());
-
-impl<'d> backing::Owner<'d> for Account<'d> {
-    fn root<'a>(&'a self) -> Option<backing::Root<'a, 'd>>
-    where
-        'd: 'a,
-    {
-        Some(backing::Root::Provided(self.charge()))
-    }
-}
 
 impl buffer::Residency for Option<provided::Account<'_>> {
     fn resident(&self) -> usize {

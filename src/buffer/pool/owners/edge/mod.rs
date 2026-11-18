@@ -73,17 +73,14 @@ impl<K: crate::buffer::raw::Backing, M> buffer::Residency for owners::Edge<K, M>
     }
 }
 
-impl<'d> buffer::storage::backing::Owner<'d> for Owner<owners::Charged<'d>, pool::Owned> {
-    fn root<'a>(&'a self) -> Option<buffer::storage::backing::Root<'a, 'd>>
-    where
-        'd: 'a,
-    {
+impl<'d> Owner<owners::Charged<'d>, pool::Owned> {
+    pub(in crate::buffer) fn root(&self) -> buffer::storage::backing::Root<'_, 'd> {
         // SAFETY: this owner retains the exact initialized charged slot.
         let slot = unsafe {
             self.ptr
                 .cast::<owners::Slot<owners::Charged<'d>>>()
                 .as_ref()
         };
-        Some(buffer::storage::backing::Root::Charged(slot))
+        buffer::storage::backing::Root::Charged(slot)
     }
 }

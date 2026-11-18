@@ -119,16 +119,6 @@ const _: () = {
     assert!(size_of::<Option<Tag>>() == size_of::<usize>());
 };
 
-impl<'d> backing::Owner<'d> for Option<regions::Tag> {
-    #[inline]
-    fn root<'a>(&'a self) -> Option<backing::Root<'a, 'd>>
-    where
-        'd: 'a,
-    {
-        self.as_ref().map(regions::Tag::root)
-    }
-}
-
 impl regions::End for Option<regions::Tag> {
     const EMPTY: Option<Self> = Some(None);
 }
