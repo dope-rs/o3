@@ -27,7 +27,13 @@ impl<'d> View<'_, 'd> {
     }
 
     pub fn contains(&self, other: &View<'_, '_>) -> bool {
-        self.root == other.root && contains(self.start, self.len(), other.start, other.len())
+        self.root.same_registration(other.root)
+            && self.start <= other.start
+            && other.end() <= self.end()
+    }
+
+    fn end(&self) -> *const u8 {
+        self.start.as_ptr().wrapping_add(self.len())
     }
 
     pub(in crate::buffer) fn new<'a, O: Owner<'d>>(
@@ -48,12 +54,6 @@ pub(in crate::buffer) trait Owner<'d> {
     fn root<'a>(&'a self) -> Option<Root<'a, 'd>>
     where
         'd: 'a;
-}
-
-fn contains(base: ptr::NonNull<u8>, span: usize, item: ptr::NonNull<u8>, size: usize) -> bool {
-    let base = base.addr().get();
-    let item = item.addr().get();
-    item >= base && size <= span && item - base <= span - size
 }
 
 const _: () = {

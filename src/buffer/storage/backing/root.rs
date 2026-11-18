@@ -15,6 +15,24 @@ pub(in crate::buffer) enum Root<'a, 'd> {
 }
 
 impl<'a, 'd> Root<'a, 'd> {
+    pub(super) fn same_registration(self, other: Root<'_, '_>) -> bool {
+        ptr::eq(self.registration(), other.registration())
+    }
+
+    fn registration(self) -> *const () {
+        // Each live registration occupies its own nonempty storage. Retyping a
+        // resident allocation as plain consumes the sole edge after all loans end.
+        match self {
+            Self::Allocation(owner) => ptr::from_ref(owner).cast(),
+            Self::Vec(owner) => ptr::from_ref(owner).cast(),
+            Self::Pool(owner) => ptr::from_ref(owner).cast(),
+            Self::Resident(owner) => ptr::from_ref(owner).cast(),
+            Self::Accounted(owner) => ptr::from_ref(owner).cast(),
+            Self::Provided(owner) => ptr::from_ref(owner).cast(),
+            Self::Charged(owner) => ptr::from_ref(owner).cast(),
+        }
+    }
+
     #[inline(always)]
     pub(in crate::buffer) fn bytes(self) -> usize {
         match self {
@@ -38,32 +56,6 @@ impl<'a, 'd> Root<'a, 'd> {
         }
     }
 }
-
-impl<'a, 'b, 'd, 'e> PartialEq<Root<'b, 'e>> for Root<'a, 'd> {
-    fn eq(&self, other: &Root<'b, 'e>) -> bool {
-        match self {
-            Self::Allocation(left) => {
-                matches!(other, Root::Allocation(right) if ptr::addr_eq(*left, *right))
-            }
-            Self::Vec(left) => matches!(other, Root::Vec(right) if ptr::addr_eq(*left, *right)),
-            Self::Pool(left) => matches!(other, Root::Pool(right) if ptr::addr_eq(*left, *right)),
-            Self::Resident(left) => {
-                matches!(other, Root::Resident(right) if ptr::addr_eq(*left, *right))
-            }
-            Self::Accounted(left) => {
-                matches!(other, Root::Accounted(right) if ptr::addr_eq(*left, *right))
-            }
-            Self::Provided(left) => {
-                matches!(other, Root::Provided(right) if ptr::addr_eq(*left, *right))
-            }
-            Self::Charged(left) => {
-                matches!(other, Root::Charged(right) if ptr::addr_eq(*left, *right))
-            }
-        }
-    }
-}
-
-impl Eq for Root<'_, '_> {}
 
 const _: () = {
     assert!(size_of::<Root<'static, 'static>>() == 2 * size_of::<usize>());

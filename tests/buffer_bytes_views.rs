@@ -134,9 +134,11 @@ fn keeps_backing_layout() {
         .expect("the range is contained");
     let root = (shared.backing()).expect("the root owner is nonempty");
     let view = (part.backing()).expect("the projected owner is nonempty");
+    let overlap = shared.try_get(3..9).expect("retain").expect("range");
 
     assert!(root.contains(&view));
     assert!(!view.contains(&root));
+    assert!(!view.contains(&overlap.backing().expect("nonempty overlap")));
     assert_eq!(view.len(), 6);
     assert_eq!(view.resident(), root.resident());
 }
