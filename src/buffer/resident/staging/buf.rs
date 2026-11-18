@@ -357,7 +357,7 @@ unsafe impl<'d> hold::raw::Retain<'d> for Buf<'d> {
     where
         Self: 'a,
     {
-        hold::raw::resident(plan)
+        plan.resident()
     }
 
     fn try_retain<'a>(

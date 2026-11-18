@@ -7,16 +7,6 @@ use crate::buffer::{
     storage::{provided, provided::Frozen as _, regions},
 };
 
-pub(in crate::buffer) fn resident<S: buffer::Residency + ?Sized>(
-    view: &buffer::View<'_, S>,
-) -> usize {
-    if view.is_empty() {
-        0
-    } else {
-        view.source.resident()
-    }
-}
-
 /// # Safety
 /// Source and view bytes remain unchanged through shared access and these methods; Cursor/Complete selection and Read splitting preserve exact visible ranges and prefix/suffix.
 /// Successful copies/retains preserve selected bytes, order, length, and ownership for 'd; backing identity may change.
@@ -72,7 +62,7 @@ unsafe impl<'d> Retain<'d> for storage::Shared<provided::Owner<'d>> {
     where
         Self: 'a,
     {
-        resident(plan)
+        plan.resident()
     }
 
     fn try_retain<'a>(
@@ -122,7 +112,7 @@ where
     where
         Self: 'a,
     {
-        resident(plan)
+        plan.resident()
     }
 
     fn try_retain<'a>(

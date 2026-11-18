@@ -96,6 +96,17 @@ impl<S: segments::Seal> View<'_, S> {
     }
 }
 
+impl<S: Residency + ?Sized> View<'_, S> {
+    /// Backing capacity kept live by retaining this selection; zero when empty.
+    pub fn resident(&self) -> usize {
+        if self.is_empty() {
+            0
+        } else {
+            self.source.resident()
+        }
+    }
+}
+
 impl View<'_, resident::Shared<'_>> {
     /// Retains this validated range when its existing owner is independent.
     /// A scoped owner returns `None` without retaining or copying its bytes.

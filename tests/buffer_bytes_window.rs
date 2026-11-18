@@ -6,6 +6,7 @@ use common::alloc::system::{Activity, Tracker};
 use o3::{
     alloc,
     buffer::{
+        self,
         bytes::window::Snapshot,
         resident, segments,
         storage::{self, provided},
@@ -15,6 +16,43 @@ use o3::{
 
 #[global_allocator]
 static ALLOCATOR: Tracker = Tracker;
+
+#[test]
+fn retains_selected_snapshot() {
+    let (built, cold) = Tracker::measure(|| {
+        Snapshot::<8>::try_copy(b"xxabcdef", num::NonZero::new(8).expect("capacity"))
+    });
+    let mut source = built.expect("window");
+    source.try_consume(2).expect("suffix");
+    let view = buffer::View::new(&source)
+        .try_get(1..4)
+        .expect("selected range");
+    assert_eq!(view.resident(), 8);
+    let address = view.as_slice().as_ptr();
+    let empty = view.get(1..1).expect("empty selection");
+    assert_eq!(empty.resident(), 0);
+    let ((retained, empty), hot) = Tracker::measure(|| (view.try_retain(), empty.try_retain()));
+    let retained = retained.expect("retained selection");
+    let empty = empty.expect("empty selection");
+    assert_eq!(hot, [0; 4]);
+    assert_eq!(retained.as_ptr(), address);
+    assert!(empty.is_empty());
+    let release = Tracker::begin();
+    drop(source);
+    assert_eq!(release.finish(), Activity::default());
+    assert_eq!(retained.as_slice(), b"bcd");
+    let release = Tracker::begin();
+    drop(retained);
+    assert_eq!(
+        release.finish(),
+        Activity {
+            deallocations: cold[0],
+            deallocated_bytes: cold[1],
+            ..Default::default()
+        }
+    );
+    drop(empty);
+}
 
 #[test]
 fn freeze_retains_extent() {

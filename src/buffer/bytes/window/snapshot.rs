@@ -149,6 +149,33 @@ impl<const MAX_CAPACITY: usize> AsRef<[u8]> for Snapshot<MAX_CAPACITY> {
     }
 }
 
+impl<const MAX_CAPACITY: usize> buffer::Residency for Snapshot<MAX_CAPACITY> {
+    fn resident(&self) -> usize {
+        self.state
+            .as_ref()
+            .map_or(0, |state| state.capacity().get() as usize)
+    }
+}
+
+impl<const MAX_CAPACITY: usize> buffer::View<'_, Snapshot<MAX_CAPACITY>> {
+    /// Retains this selected range without copying or rechecking its bounds.
+    pub fn try_retain(self) -> Result<storage::Shared, rc::Error> {
+        use buffer::raw::Retain as _;
+
+        match &self.source.state {
+            Some(state) if !self.is_empty() => {
+                let owner = state.buf.try_retain()?;
+                // SAFETY: this view borrows the original Snapshot and its exact
+                // initialized selection; the retained edge keeps that backing live.
+                Ok(storage::Shared::from(unsafe {
+                    storage::Shared::assume(self.as_slice(), owner)
+                }))
+            }
+            _ => Ok(storage::Shared::new()),
+        }
+    }
+}
+
 impl<const MAX_CAPACITY: usize> Sink for Snapshot<MAX_CAPACITY> {
     type Error = storage::AllocError;
 
