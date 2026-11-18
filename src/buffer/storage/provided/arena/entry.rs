@@ -1,5 +1,5 @@
 use std::{
-    cell, marker,
+    cell,
     mem::{MaybeUninit, offset_of, size_of},
     ops, ptr,
 };
@@ -8,10 +8,12 @@ use provided::account;
 
 use crate::{
     buffer::{
+        raw::Projection,
         resident,
         storage::{provided, provided::arena},
     },
     mem::raw::{self, Edge},
+    mem::slot,
 };
 
 /// Only admitted registrations can change this arena's outstanding count.
@@ -31,8 +33,8 @@ pub(in crate::buffer::storage::provided) struct Registration<'d> {
 #[derive(Clone, Copy)]
 enum State {
     Empty,
-    Ready,
-    External,
+    ReturnOnLastAccount,
+    Occupied,
 }
 
 /// Scope-owned metadata; the free and returned lists share one phase-owned link.
@@ -46,33 +48,21 @@ pub(in crate::buffer::storage::provided) struct Entry<'d> {
 }
 
 impl<'d> Entry<'d> {
-    pub(in crate::buffer::storage::provided) const fn new(
+    pub(super) fn new(
         domain: &'d arena::State<'d>,
         resident: MaybeUninit<u32>,
+        next: Option<arena::Empty<'d>>,
     ) -> Self {
         Self {
             state: cell::Cell::new(State::Empty),
             resident: cell::Cell::new(resident),
             domain,
-            next: cell::Cell::new(None),
+            next: cell::Cell::new(next.map(|node| node.entry)),
             registration: Registration {
                 count: raw::Count::empty(),
                 value: cell::UnsafeCell::new(MaybeUninit::uninit()),
             },
         }
-    }
-
-    pub(super) fn initialize(node: arena::Empty<'d>) -> arena::Ready<'d> {
-        // SAFETY: the vacancy owns the slot whose item was just initialized.
-        unsafe { node.entry.as_ref() }.state.set(State::Ready);
-        arena::Ready { entry: node.entry }
-    }
-
-    pub(super) fn activate<T, L>(ready: arena::Returned<'d, T, L>) -> provided::Owner<'d> {
-        let entry = ready.node.entry;
-        // SAFETY: publication consumes the sole detached initialized item.
-        unsafe { entry.as_ref() }.state.set(State::External);
-        provided::Owner { entry }
     }
 
     /// # Safety
@@ -143,12 +133,9 @@ impl<'d> Entry<'d> {
     /// # Safety
     /// The registration is initialized and all its issued access has ended.
     /// Consume it once before returning the slot or initializing another charge.
-    unsafe fn unaccount(&self) -> &'d arena::State<'d> {
-        let domain = self.domain;
-        domain.accounted.0.set(domain.accounted.0.get() - 1);
-        // SAFETY: terminal registration ownership consumes its sole resident debit.
+    unsafe fn refund(&self) {
+        // SAFETY: exclusive registration ownership consumes its sole resident debit.
         unsafe { (*self.registration.value.get()).assume_init_drop() };
-        domain
     }
 
     /// # Safety
@@ -156,9 +143,10 @@ impl<'d> Entry<'d> {
     pub(super) unsafe fn release(owner: &mut provided::Owner<'d>) {
         // SAFETY: the owner retains the sole external edge to the live slot.
         let entry = unsafe { owner.entry.as_ref() };
-        entry.state.set(State::Ready);
         if entry.registration.is_empty() {
             entry.domain.finish(arena::Ready { entry: owner.entry });
+        } else {
+            entry.state.set(State::ReturnOnLastAccount);
         }
     }
 
@@ -171,26 +159,31 @@ impl<'d> Entry<'d> {
 
     /// # Safety
     /// The hidden scope has ended every issued access to the complete slot.
-    pub(in crate::buffer::storage::provided) unsafe fn revoke<T, L>(
+    pub(super) unsafe fn revoke<T, L>(
         slot: &'d arena::Slot<'d, T, L>,
-    ) -> ops::ControlFlow<(), arena::Returned<'d, T, L>> {
-        let pointer = ptr::NonNull::from(slot).cast::<Self>();
+    ) -> Option<slot::Occupied<'d, T>> {
         let entry = &slot.entry;
         match entry.state.get() {
-            State::Empty => ops::ControlFlow::Break(()),
-            State::Ready | State::External => {
+            State::Empty => None,
+            State::ReturnOnLastAccount | State::Occupied => {
                 if !entry.registration.is_empty() {
                     // SAFETY: the ended scope owns even forgotten account edges.
                     // No issued access or count operation survives reclamation;
                     // the next generation initializes this slot before reuse.
-                    unsafe { entry.unaccount() };
+                    unsafe { entry.refund() };
                 }
-                ops::ControlFlow::Continue(arena::Returned {
-                    node: arena::Ready { entry: pointer },
-                    domain: marker::PhantomData,
-                })
+                // SAFETY: this ended generation owns the initialized item until its release.
+                Some(unsafe { slot.occupied() })
             }
         }
+    }
+}
+
+impl<'d> arena::Ready<'d> {
+    pub(super) fn publish(self, view: Projection<'d, '_>) -> provided::Unique<'d> {
+        // SAFETY: publication consumes the detached initialized slot for this projection.
+        unsafe { self.entry.as_ref() }.state.set(State::Occupied);
+        provided::Unique::new(view, provided::Owner { entry: self.entry })
     }
 }
 
@@ -211,8 +204,11 @@ unsafe impl<'d> raw::Target for Registration<'d> {
             unsafe { pointer.byte_sub(offset_of!(Entry<'d>, registration)) }.cast::<Entry<'d>>();
         // SAFETY: the last counted edge ended and set this registration's count to zero.
         let entry = unsafe { pointer.as_ref() };
-        let domain = unsafe { entry.unaccount() };
-        if matches!(entry.state.get(), State::Ready) {
+        let domain = entry.domain;
+        domain.accounted.0.set(domain.accounted.0.get() - 1);
+        // SAFETY: this last live edge owns the registration's remaining debit.
+        unsafe { entry.refund() };
+        if matches!(entry.state.get(), State::ReturnOnLastAccount) {
             domain.finish(arena::Ready { entry: pointer });
         }
     }

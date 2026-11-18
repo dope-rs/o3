@@ -180,12 +180,8 @@ pub trait Fixed<T> {
     where
         Self: Sized,
     {
-        let context = vacant.context();
-        vacant.insert_with(item, |item, limit| {
-            // SAFETY: native admission supplied this exact context and item;
-            // the arena retains both and issues the context's resident ceiling.
-            unsafe { context.project(item, limit) }
-        })
+        // SAFETY: the caller admitted this unique item for the vacancy's fixed context.
+        unsafe { vacant.insert_fixed(item) }
     }
 }
 

@@ -32,18 +32,23 @@ impl<'d, T, L> Domain<'d, T, L> {
             context,
         })
     }
-    pub(in crate::buffer::storage::provided) fn pop_returned(
-        &self,
-    ) -> Option<arena::Returned<'d, T, L>> {
+    pub(super) fn pop_returned(&self) -> Option<T> {
         let (mut node, tail) = self.state.returned.take()?;
         // SAFETY: this node was removed from the live returned list's head.
         self.state
             .returned
             .set(unsafe { node.take_next() }.map(|head| (head, tail)));
-        Some(arena::Returned {
-            node,
-            domain: marker::PhantomData,
-        })
+        // SAFETY: this domain's detached ready head owns its initialized item
+        // in the original typed slot. All external and account edges have ended.
+        let item = unsafe {
+            node.entry
+                .cast::<arena::Slot<'d, T, L>>()
+                .as_ref()
+                .occupied()
+        };
+        let value = item.into_inner();
+        arena::Entry::recycle(node);
+        Some(value)
     }
 }
 
@@ -52,7 +57,7 @@ const _: () = assert!(size_of::<Domain<'_, (), ()>>() == 5 * size_of::<usize>())
 /// Intrusive roots and accounting owned by one active arena scope.
 #[repr(C)]
 pub(in crate::buffer::storage::provided) struct State<'d> {
-    free: cell::Cell<Option<arena::Empty<'d>>>,
+    pub(super) free: cell::Cell<Option<arena::Empty<'d>>>,
     returned: cell::Cell<Queue<'d>>,
     pub(super) accounted: Counter,
     capacity: num::NonZero<u32>,

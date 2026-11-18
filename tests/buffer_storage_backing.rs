@@ -216,7 +216,15 @@ fn reuses_rejected_slot() {
         let vacant = arena
             .vacant()
             .expect("an unused vacancy must return its slot");
-        let (rejected, stats) = Tracker::activity(|| vacant.try_insert(buffer, 2, Item::bytes_mut));
+        let (rejected, stats) = Tracker::activity(|| {
+            vacant.try_insert(buffer, 2, |item| {
+                assert!(arena.vacant().is_none());
+                assert!(!arena.has_returned());
+                let bytes = item.bytes_mut();
+                bytes[0] = b'B';
+                bytes
+            })
+        });
         assert_eq!(stats.allocations, 0);
         assert_eq!(stats.deallocations, 0);
         let rejected = rejected.expect_err("four bytes exceed the two-byte ceiling");
@@ -235,7 +243,7 @@ fn reuses_rejected_slot() {
             assert_eq!(stats.allocations, 0);
             assert_eq!(stats.deallocations, 0);
             let owner = owner.expect("buffer transition accepted");
-            assert_eq!(owner.as_slice(), b"body");
+            assert_eq!(owner.as_slice(), b"Body");
             assert_eq!(owner.as_slice().as_ptr(), pointer);
         }
         assert!(arena.has_returned());

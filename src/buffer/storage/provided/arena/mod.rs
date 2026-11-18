@@ -9,7 +9,7 @@ mod domain;
 mod entry;
 mod nodes;
 
-use std::{cell, marker, mem, num, ops, pin, ptr, slice};
+use std::{cell, marker, mem, num, pin, ptr, slice};
 
 pub(in crate::buffer::storage::provided) use domain::{Domain, State};
 pub(in crate::buffer::storage::provided) use entry::{Entry, Registration};
@@ -20,10 +20,8 @@ use crate::{
     alloc,
     alloc::tail,
     base::cell::{brand, region},
-    buffer::storage::{
-        provided,
-        provided::{fixed, view},
-    },
+    buffer::storage::provided::fixed,
+    mem::slot,
 };
 
 /// Inactive allocation; no item or charge exists outside its private scope.
@@ -111,6 +109,7 @@ impl<T, C, L> Arena<T, C, L> {
         // SAFETY: the assertions preserve the live context's layout, and the
         // domain was initialized in the disjoint header storage immediately above.
         let header = unsafe { &*ptr::from_ref(header).cast::<Active<'d, T, C, L>>() };
+        let mut free = None;
         for slot in values.iter_mut() {
             let entry = ptr::NonNull::from(slot).cast::<arena::Entry<'d>>();
             // SAFETY: this generation exclusively initializes each complete slot;
@@ -118,10 +117,11 @@ impl<T, C, L> Arena<T, C, L> {
             unsafe {
                 entry
                     .as_ptr()
-                    .write(arena::Entry::new(&header.domain.state, resident));
-                header.domain.state.push_free(arena::Empty { entry });
+                    .write(arena::Entry::new(&header.domain.state, resident, free))
             };
+            free = Some(arena::Empty { entry });
         }
+        header.domain.state.free.set(free);
         // SAFETY: every Entry is initialized; the remaining Slot fields are
         // PhantomData and UnsafeCell<MaybeUninit<T>>, which admit uninitialized bytes.
         let slots = unsafe {
@@ -155,7 +155,7 @@ impl<T, C, L> Arena<T, C, L> {
             // the hidden scope reclaims every issued capability before it returns.
             let (root, scope) = unsafe { arena.enter(arena.capacity().get(), resident) };
             let result = run(token, root, state.as_mut());
-            scope.finish(arena::Returned::discard);
+            scope.finish(drop);
             result
         })
     }
@@ -182,23 +182,19 @@ impl<T, C: buffer::raw::Fixed<T>> Arena<T, C, ()> {
                 brand: regions.0.proof(),
             };
             let (output, mut end) = op.run(token, regions, arena, state.as_mut(), terminal);
-            scope.finish(|slot| end.release(slot.take()));
+            scope.finish(|item| end.release(item.into_inner()));
             output
         })
     }
 }
 
 impl<'d, T, L> Scope<'d, T, L> {
-    pub(in crate::buffer::storage::provided) fn finish(
-        self,
-        mut release: impl FnMut(arena::Returned<'d, T, L>),
-    ) {
+    fn finish(self, mut release: impl FnMut(slot::Occupied<'d, T>)) {
         for slot in self.slots {
             // SAFETY: the callback ended all issued access; budgets and the
             // operation's final authority remain alive throughout reclamation.
-            match unsafe { arena::Entry::revoke(slot) } {
-                ops::ControlFlow::Break(()) => {}
-                ops::ControlFlow::Continue(slot) => release(slot),
+            if let Some(item) = unsafe { arena::Entry::revoke(slot) } {
+                release(item);
             }
         }
     }
@@ -218,7 +214,7 @@ impl<T, C> Arena<T, C> {
         // returned terminal after all issued access ends, before releasing it.
         let (root, scope) =
             unsafe { self.enter(self.capacity().get(), mem::MaybeUninit::uninit()) };
-        (root, move || scope.finish(Returned::discard))
+        (root, move || scope.finish(drop))
     }
 
     pub fn scope<S, R>(
@@ -261,37 +257,11 @@ impl<T> Slot<'_, T, cell::Cell<u32>> {
     }
 }
 
-#[repr(transparent)]
-pub(in crate::buffer::storage::provided) struct Returned<'d, T, L> {
-    node: arena::Ready<'d>,
-    domain: marker::PhantomData<&'d Slot<'d, T, L>>,
-}
-
-impl<'d, T, L> Returned<'d, T, L> {
-    fn entry(&self) -> &Slot<'d, T, L> {
-        // SAFETY: this affine ready node retains its original typed slot.
-        unsafe { self.node.entry.cast::<Slot<'d, T, L>>().as_ref() }
-    }
-
-    fn publish(self, view: buffer::raw::Projection<'d, '_>) -> provided::Unique<'d> {
-        let owner = arena::Entry::activate(self);
-        provided::Unique::new(view, owner)
-    }
-
-    fn reject(self, error: view::LengthError) -> crate::mem::Rejected<T, view::LengthError> {
-        crate::mem::Rejected::new(self.take(), error)
-    }
-
-    pub(in crate::buffer::storage::provided) fn take(self) -> T {
-        // SAFETY: the affine ready node owns this initialized, detached item.
-        let item = unsafe { (*self.entry().item.get()).assume_init_read() };
-        arena::Entry::recycle(self.node);
-        item
-    }
-
-    pub(in crate::buffer::storage::provided) fn discard(self) {
-        // SAFETY: terminal ownership exclusively owns this initialized item.
-        unsafe { (*self.entry().item.get()).assume_init_drop() };
-        arena::Entry::recycle(self.node);
+impl<T, L> Slot<'_, T, L> {
+    /// # Safety
+    /// The caller exclusively owns the initialized item after all projections end.
+    unsafe fn occupied(&self) -> slot::Occupied<'_, T> {
+        // SAFETY: the slot retains this item at its final address for the exclusive loan.
+        unsafe { slot::Vacant::new(&mut *self.item.get()).assume_init() }
     }
 }

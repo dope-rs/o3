@@ -1,12 +1,6 @@
 use std::{cell, num};
 
-use crate::buffer::storage::{
-    provided,
-    provided::{
-        arena::{Active, Returned},
-        fixed,
-    },
-};
+use crate::buffer::storage::{provided, provided::arena::Active, provided::fixed};
 
 /// Borrowed access to the exact active header and slot layout.
 #[repr(transparent)]
@@ -22,7 +16,7 @@ impl<'d, T, C, L> Root<'d, T, C, L> {
         self.header.domain.state.capacity()
     }
     pub fn pop_returned(&self) -> Option<T> {
-        self.header.domain.pop_returned().map(Returned::take)
+        self.header.domain.pop_returned()
     }
     pub fn has_returned(&self) -> bool {
         self.header.domain.state.has_returned()
