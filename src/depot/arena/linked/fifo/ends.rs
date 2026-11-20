@@ -4,7 +4,7 @@ use std::{cell, mem};
 
 use crate::depot::{
     self,
-    arena::linked::{fifo, fifo::ends, slots},
+    arena::linked::{self, fifo, fifo::ends, slots},
     raw::EndsPop,
 };
 
@@ -25,56 +25,62 @@ impl<L: crate::depot::raw::Link> State<L> {
         self.head == L::NONE
     }
 
-    unsafe fn push_front(&mut self, index: L::Item, publish: impl FnOnce(Option<L::Item>)) {
-        let previous = self.head.item();
+    unsafe fn push_front(
+        ends: &cell::Cell<Self>,
+        index: L::Item,
+        publish: impl FnOnce(Option<L::Item>),
+    ) {
+        let previous = ends.get().head.item();
         publish(previous);
         let link = unsafe { L::some(index) };
-        if previous.is_none() {
-            self.tail = link;
-        }
-        self.head = link;
+        Self::set_front(ends, link, link, previous.is_none());
     }
 
-    unsafe fn push_back(&mut self, index: L::Item, publish: impl FnOnce(Option<L::Item>)) {
-        let previous = self.tail.item();
+    unsafe fn push_back(
+        ends: &cell::Cell<Self>,
+        index: L::Item,
+        publish: impl FnOnce(Option<L::Item>),
+    ) {
+        let previous = ends.get().tail.item();
         publish(previous);
         let link = unsafe { L::some(index) };
-        self.set_back(link, previous.is_none());
+        Self::set_back(ends, link, link, previous.is_none());
     }
 
-    fn set_back(&mut self, link: L, empty: bool) {
+    fn set_back(ends: &cell::Cell<Self>, head: L, tail: L, empty: bool) {
+        // SAFETY: callbacks and Link methods have returned. Only Copy field writes follow.
+        let state = unsafe { &mut *ends.as_ptr() };
         if empty {
-            self.head = link;
+            state.head = head;
         }
-        self.tail = link;
+        state.tail = tail;
     }
 
     unsafe fn append(
-        &mut self,
-        source: Self,
-        front: L::Item,
+        ends: &cell::Cell<Self>,
+        source: &mut Self,
         publish: impl FnOnce(Option<L::Item>, L::Item),
     ) {
-        let previous = self.tail.item();
+        let Some(front) = source.head.item() else {
+            return;
+        };
+        let previous = ends.get().tail.item();
         publish(previous, front);
-        if previous.is_none() {
-            self.head = source.head;
-        }
-        self.tail = source.tail;
+        Self::set_back(ends, source.head, source.tail, previous.is_none());
+        *source = Self::EMPTY;
     }
 
-    fn pop<T, R>(&mut self, front: L::Item, input: T, pop: impl FnOnce(L::Item, T) -> (L, R)) -> R {
-        let (next, result) = pop(front, input);
-        let empty = next == L::NONE;
-        self.set_front(next, empty);
-        result
-    }
-
-    fn set_front(&mut self, next: L, empty: bool) {
-        self.head = next;
+    fn set_front(ends: &cell::Cell<Self>, head: L, tail: L, empty: bool) {
+        // SAFETY: no callback or Link method runs during these Copy field writes.
+        let state = unsafe { &mut *ends.as_ptr() };
+        state.head = head;
         if empty {
-            self.tail = L::NONE;
+            state.tail = tail;
         }
+    }
+
+    fn advance(ends: &cell::Cell<Self>, next: L) {
+        Self::set_front(ends, next, L::NONE, next == L::NONE);
     }
 }
 
@@ -107,7 +113,9 @@ impl<L: depot::raw::Link, O: crate::depot::raw::EndsPop<L>> Front<O, L> {
         proof: depot::raw::Proof<(Self, T, F), fifo::Detach>,
     ) -> R {
         let (front, input, pop) = proof.into_inner();
-        unsafe { front.owner.pop(front.present, input, pop) }
+        let (next, result) = pop(front.present, input);
+        unsafe { front.owner.advance(next) };
+        result
     }
 }
 
@@ -117,10 +125,9 @@ impl<L: depot::raw::Link> Front<&Cell<L>, L> {
         proof: depot::raw::Proof<(Self, T, F), fifo::Detach>,
     ) -> (R, Option<Self>) {
         let (front, input, pop) = proof.into_inner();
-        let mut state = front.owner.0.get();
-        let result = state.pop(front.present, input, pop);
-        front.owner.0.set(state);
-        let next = state.head.item().map(|present| Self {
+        let (next, result) = pop(front.present, input);
+        unsafe { front.owner.advance(next) };
+        let next = next.item().map(|present| Self {
             owner: front.owner,
             present,
         });
@@ -162,7 +169,7 @@ impl<L: crate::depot::raw::Link> Exclusive<L> {
         proof: depot::raw::Proof<(&mut Self, L::Item, F), fifo::Prepend>,
     ) {
         let (owner, index, publish) = proof.into_inner();
-        unsafe { owner.0.push_front(index, publish) };
+        unsafe { State::push_front(cell::Cell::from_mut(&mut owner.0), index, publish) };
     }
 
     /// Appends the retained detached tail through its exact publication callback.
@@ -170,7 +177,7 @@ impl<L: crate::depot::raw::Link> Exclusive<L> {
         proof: depot::raw::Proof<(&mut Self, L::Item, F), fifo::Append>,
     ) {
         let (owner, index, publish) = proof.into_inner();
-        unsafe { owner.0.push_back(index, publish) };
+        unsafe { State::push_back(cell::Cell::from_mut(&mut owner.0), index, publish) };
     }
 
     /// Appends the proved disjoint source chain and empties its original owner.
@@ -178,12 +185,7 @@ impl<L: crate::depot::raw::Link> Exclusive<L> {
         proof: depot::raw::Proof<(&mut Self, &mut Self, F), fifo::Join>,
     ) {
         let (owner, source, publish) = proof.into_inner();
-        let chain = source.0;
-        let Some(front) = chain.head.item() else {
-            return;
-        };
-        unsafe { owner.0.append(chain, front, publish) };
-        source.0 = State::EMPTY;
+        unsafe { State::append(cell::Cell::from_mut(&mut owner.0), &mut source.0, publish) };
     }
 }
 
@@ -223,12 +225,9 @@ impl<L: crate::depot::raw::Link> Cell<L> {
         proof: depot::raw::Proof<(&Self, T, F), fifo::Detach>,
     ) -> Option<R> {
         let (owner, input, pop) = proof.into_inner();
-        let front = owner.0.get().head.item()?;
+        let front = owner.head()?;
         let (next, result) = pop(front, input);
-        let empty = next == L::NONE;
-        // SAFETY: Detach retains the same endpoints through the completed callback.
-        // Callback and Link/Eq evaluation finish before the exclusive field writes.
-        unsafe { &mut *owner.0.as_ptr() }.set_front(next, empty);
+        unsafe { owner.advance(next) };
         Some(result)
     }
 
@@ -237,9 +236,7 @@ impl<L: crate::depot::raw::Link> Cell<L> {
         proof: depot::raw::Proof<(&Self, L::Item, F), fifo::Prepend>,
     ) {
         let (owner, index, publish) = proof.into_inner();
-        let mut state = owner.0.get();
-        unsafe { state.push_front(index, publish) };
-        owner.0.set(state);
+        unsafe { State::push_front(&owner.0, index, publish) };
     }
 
     /// Appends the retained detached tail through its exact publication callback.
@@ -247,13 +244,7 @@ impl<L: crate::depot::raw::Link> Cell<L> {
         proof: depot::raw::Proof<(&Self, L::Item, F), fifo::Append>,
     ) {
         let (owner, index, publish) = proof.into_inner();
-        let previous = owner.0.get().tail.item();
-        publish(previous);
-        let link = unsafe { L::some(index) };
-        // SAFETY: Append retains the same endpoints through the completed callback.
-        // Callback and Link evaluation finish before the exclusive field writes.
-        let state = unsafe { &mut *owner.0.as_ptr() };
-        state.set_back(link, previous.is_none());
+        unsafe { State::push_back(&owner.0, index, publish) };
     }
 
     /// Appends the proved disjoint source chain and empties its original owner.
@@ -261,54 +252,19 @@ impl<L: crate::depot::raw::Link> Cell<L> {
         proof: depot::raw::Proof<(&Self, &mut Exclusive<L>, F), fifo::Join>,
     ) {
         let (owner, source, publish) = proof.into_inner();
-        let chain = source.0;
-        let Some(front) = chain.head.item() else {
-            return;
-        };
-        let mut state = owner.0.get();
-        unsafe { state.append(chain, front, publish) };
-        source.0 = State::EMPTY;
-        owner.0.set(state);
-    }
-}
-
-unsafe impl<Tag> crate::depot::raw::SlotOwner<Tag> for ends::Exclusive<slots::Index<Tag>> {
-    fn links(&self) -> &Self {
-        self
-    }
-
-    unsafe fn detach<'a, T>(
-        &mut self,
-        store: &'a slots::Store<T>,
-        index: slots::Index<Tag>,
-    ) -> slots::Live<T, &'a slots::Store<T>, Tag> {
-        let index = unsafe { self.detach_store(store, index) };
-        unsafe { store.detached(index) }
+        unsafe { State::append(&owner.0, &mut source.0, publish) };
     }
 }
 
 unsafe impl<L: depot::raw::Link> EndsPop<L> for &mut Exclusive<L> {
-    unsafe fn pop<T, R>(
-        self,
-        front: L::Item,
-        input: T,
-        pop: impl FnOnce(L::Item, T) -> (L, R),
-    ) -> R {
-        self.0.pop(front, input, pop)
+    unsafe fn advance(self, next: L) {
+        State::advance(cell::Cell::from_mut(&mut self.0), next);
     }
 }
 
 unsafe impl<L: depot::raw::Link> EndsPop<L> for &Cell<L> {
-    unsafe fn pop<T, R>(
-        self,
-        front: L::Item,
-        input: T,
-        pop: impl FnOnce(L::Item, T) -> (L, R),
-    ) -> R {
-        let mut state = self.0.get();
-        let result = state.pop(front, input, pop);
-        self.0.set(state);
-        result
+    unsafe fn advance(self, next: L) {
+        State::advance(&self.0, next);
     }
 }
 
@@ -327,6 +283,12 @@ const _: () = {
 };
 
 impl<Tag> ends::Exclusive<slots::Index<Tag>> {
+    /// # Safety
+    /// Both ends delimit the same exclusively owned, nonempty partition.
+    pub(crate) const unsafe fn from_ends(head: slots::Index<Tag>, tail: slots::Index<Tag>) -> Self {
+        Self(State { head, tail })
+    }
+
     pub(crate) unsafe fn append_store<T>(
         &mut self,
         store: &slots::Store<T>,
@@ -344,7 +306,7 @@ impl<Tag> ends::Exclusive<slots::Index<Tag>> {
         index: slots::Index<Tag>,
     ) {
         unsafe {
-            self.0.push_back(index, |previous| {
+            State::push_back(cell::Cell::from_mut(&mut self.0), index, |previous| {
                 if let Some(previous) = previous {
                     store.set_next(previous, index);
                 }
@@ -358,7 +320,7 @@ impl<Tag> ends::Exclusive<slots::Index<Tag>> {
         index: slots::Index<Tag>,
     ) {
         unsafe {
-            self.0.push_front(index, |previous| {
+            State::push_front(cell::Cell::from_mut(&mut self.0), index, |previous| {
                 let next = previous.unwrap_or(slots::Index::NONE);
                 store.set_next(index, next);
             });
@@ -366,15 +328,14 @@ impl<Tag> ends::Exclusive<slots::Index<Tag>> {
     }
 
     /// # Safety
-    /// Both exclusive live partitions belong to `store` and are disjoint.
-    pub(crate) unsafe fn append_chain<T>(&mut self, store: &slots::Store<T>, source: &mut Self) {
-        unsafe {
-            Self::append(depot::raw::Proof::new((self, source, |previous, head| {
-                if let Some(previous) = previous {
-                    store.set_next(previous, head);
-                }
-            })));
+    /// Both partitions belong to `store` and are disjoint. `source` is nonempty.
+    pub(crate) unsafe fn append_chain<T>(&mut self, store: &slots::Store<T>, source: Self) {
+        if self.0.tail == slots::Index::NONE {
+            self.0.head = source.0.head;
+        } else {
+            unsafe { store.set_next(self.0.tail, source.0.head) };
         }
+        self.0.tail = source.0.tail;
     }
 
     pub(crate) unsafe fn detach_store<T>(
@@ -382,16 +343,42 @@ impl<Tag> ends::Exclusive<slots::Index<Tag>> {
         store: &slots::Store<T>,
         index: slots::Index<Tag>,
     ) -> slots::Index<Tag> {
-        unsafe { self.pop(index, (), |index, ()| (store.next(index), index)) }
+        unsafe { self.advance(store.next(index)) };
+        index
+    }
+
+    /// # Safety
+    /// `index` is this partition's front in the owner's exact store and accounting domain.
+    pub(crate) unsafe fn detach<T, H: linked::Source<T>>(
+        &mut self,
+        owner: H,
+        index: slots::Index<Tag>,
+    ) -> slots::Live<T, H, Tag> {
+        let index = unsafe { self.detach_store(owner.store(), index) };
+        unsafe { slots::Live::detached(owner, index) }
+    }
+
+    /// # Safety
+    /// `index` is this partition's front in `store` with its original TRACK policy.
+    pub(crate) unsafe fn pop<T, const TRACK: bool>(
+        &mut self,
+        store: &slots::Store<T>,
+        index: slots::Index<Tag>,
+    ) -> T {
+        let index = unsafe { self.detach_store(store, index) };
+        unsafe { store.take::<_, TRACK>(index) }
     }
 
     /// # Safety
     /// This owner retains a disjoint live partition in `store`, with tracked reclamation.
-    pub(crate) unsafe fn clear<T>(&mut self, store: &slots::Store<T>, mut before: impl FnMut(&T)) {
-        // SAFETY: this borrow retains the exact store and exclusive partition.
-        while let Some(mut front) = unsafe { slots::Front::new(store, self) } {
-            before(front.get_mut());
-            front.discard();
+    pub(crate) unsafe fn clear<T>(self, store: &slots::Store<T>, mut before: impl FnMut(&T)) {
+        let mut head = self.0.head;
+        while head != slots::Index::NONE {
+            let index = head;
+            // SAFETY: consuming the partition transfers its suffix before this slot is reclaimed.
+            head = unsafe { store.next(index) };
+            let item = unsafe { store.detached(index) };
+            before(item.get());
         }
     }
 }

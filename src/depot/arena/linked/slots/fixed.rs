@@ -5,11 +5,7 @@ use std::{mem, num::NonZero};
 use crate::{
     alloc::{self, BoxUninitExt as _},
     base::marker::ThreadBound,
-    depot::{
-        arena::{self, linked::slots::store::Free},
-        array::copy,
-        capacity,
-    },
+    depot::{arena, array::copy, capacity},
 };
 
 /// Fixed lazy storage for dropless nodes with an embedded free link.
@@ -17,7 +13,7 @@ use crate::{
 /// Physical indices identify the current slot, not an occupant generation.
 pub struct Fixed<N: arena::raw::LinkedNode> {
     nodes: Box<[mem::MaybeUninit<N>]>,
-    free: Free<Option<NonZero<u32>>>,
+    free: Option<NonZero<u32>>,
     initialized: u16,
     available: u16,
     _thread: ThreadBound,
@@ -35,7 +31,7 @@ impl<N: arena::raw::LinkedNode> Fixed<N> {
         }
         Ok(Self {
             nodes: Box::<[mem::MaybeUninit<N>]>::try_uninit(capacity.get())?,
-            free: Free::new(None),
+            free: None,
             initialized: 0,
             available: capacity.raw() as u16,
             _thread: ThreadBound::NEW,
@@ -95,14 +91,14 @@ impl<N: arena::raw::LinkedNode> Fixed<N> {
     /// # Safety
     /// This exact owner has already debited one available slot.
     unsafe fn claim(&mut self, input: N::Input) -> NonZero<u32> {
-        if let Some(index) = self.free.head {
+        if let Some(index) = self.free {
             // SAFETY: the private free chain contains distinct initialized slots.
             let node = unsafe { self.slot_mut(index) };
             let next = node.next();
             node.reset(input);
             // SAFETY: the exclusive owner removes this free node from its chain.
             unsafe { node.set_next(None) };
-            self.free.pop(Some(index), next, None);
+            self.free = if next == Some(index) { None } else { next };
             return index;
         }
         let offset = self.initialized as usize;
@@ -115,11 +111,10 @@ impl<N: arena::raw::LinkedNode> Fixed<N> {
     /// # Safety
     /// The exact owner retains this distinct initialized live slot for return.
     unsafe fn recycle(&mut self, index: NonZero<u32>) {
-        let mut free = self.free;
-        let next = free.push(Some(index), None);
+        let next = self.free.unwrap_or(index);
         // SAFETY: the caller's live-slot ownership excludes a duplicate return.
-        unsafe { self.slot_mut(index).set_next(next) };
-        self.free = free;
+        unsafe { self.slot_mut(index).set_next(Some(next)) };
+        self.free = Some(index);
     }
 
     fn refund(&mut self, count: u16) {

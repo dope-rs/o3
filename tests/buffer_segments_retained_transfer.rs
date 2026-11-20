@@ -236,14 +236,14 @@ fn extension_returns_many() {
 
 #[test]
 fn extension_reuses_nodes() {
-    for shared in [false, true] {
+    for (shared, recycled) in [(true, 0), (false, 0), (false, 1), (false, 2), (false, 3)] {
         let origin = segments::Pool::try_new(segments::Plan {
             segments: 3,
             chains: 1,
         })
         .expect("source pool allocation");
         let pool = segments::Pool::try_new(segments::Plan {
-            segments: 3,
+            segments: 3.max(1 + recycled),
             chains: 1,
         })
         .expect("target pool allocation");
@@ -263,6 +263,20 @@ fn extension_reuses_nodes() {
             .try_insert(try_item(b"prefix").expect("nonempty fixture owner"))
             .as_ref()
             .expect("metadata admits the retained item");
+        let mut spare = pool.try_chain().expect("spare chain");
+        for _ in 0..recycled {
+            spare
+                .try_insert(try_item(b"r").expect("recyclable owner"))
+                .expect("spare slot");
+        }
+        drop(spare);
+        let mut returned = origin.try_chain().expect("source free list");
+        if recycled == 3 {
+            returned
+                .try_insert(try_item(b"old").expect("source owner"))
+                .expect("third slot");
+            returned.clear();
+        }
         let (result, activity) = Tracker::measure(|| target.try_extend(source));
         result.as_ref().expect("required fixture outcome");
         assert_eq!(activity, [0; 4]);
@@ -287,7 +301,22 @@ fn extension_reuses_nodes() {
             b"second",
             b"prefix"
         ]));
-        assert_eq!(pool.available().segments, 0);
+        assert_eq!(pool.available().segments, pool.capacity().segments - 3);
+        if recycled == 3 {
+            target
+                .try_insert(try_item(b"suffix").expect("last owner"))
+                .expect("remaining free slot");
+            assert_eq!(
+                target.segments().last().expect("last segment").as_slice(),
+                b"suffix"
+            );
+            for _ in 0..origin.capacity().segments {
+                returned
+                    .try_insert(try_item(b"r").expect("new source owner"))
+                    .expect("returned source slot");
+            }
+            assert_eq!(returned.count(), segments::Count::new(3));
+        }
     }
 }
 

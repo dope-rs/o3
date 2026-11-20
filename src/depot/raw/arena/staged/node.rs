@@ -7,8 +7,7 @@ use crate::depot::{
 
 #[repr(C)]
 pub(in crate::depot) struct StagedNode<K, Q, P> {
-    pub(in crate::depot) value:
-        cell::UnsafeCell<mem::MaybeUninit<arena::raw::StagedValue<K, Q, P>>>,
+    value: cell::UnsafeCell<mem::MaybeUninit<arena::raw::StagedValue<K, Q, P>>>,
     pub(in crate::depot) previous: cell::Cell<links::Index>,
     pub(in crate::depot) next: cell::Cell<Option<links::Index>>,
     pub(in crate::depot) phase: cell::Cell<staged::Phase>,
@@ -37,6 +36,29 @@ impl<K, Q, P> StagedNode<K, Q, P> {
             previous: cell::Cell::new(index),
             next: cell::Cell::new(None),
             phase: cell::Cell::new(staged::Phase::Vacant),
+        }
+    }
+
+    pub(super) fn key_ptr(&self) -> *mut K {
+        let payload = self.value.get().cast::<arena::raw::StagedValue<K, Q, P>>();
+        // SAFETY: project storage without borrowing an uninitialized key.
+        unsafe { (&raw mut (*payload).key).cast() }
+    }
+
+    pub(super) fn value_ptr<S: super::StagedPhase<Q, P>>(&self) -> *mut S::Value {
+        let payload = self.value.get().cast::<arena::raw::StagedValue<K, Q, P>>();
+        // SAFETY: the repr(C) union places both members at its start; S names its exact type.
+        unsafe { (&raw mut (*payload).value).cast() }
+    }
+
+    /// # Safety
+    /// The caller owns the initialized key and S value and retires each exactly once.
+    pub(in crate::depot) unsafe fn drop_fields<S: super::StagedPhase<Q, P>>(&self) {
+        let key = self.key_ptr();
+        let value = self.value_ptr::<S>();
+        unsafe {
+            key.drop_in_place();
+            value.drop_in_place();
         }
     }
 

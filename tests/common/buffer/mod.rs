@@ -127,6 +127,36 @@ pub fn try_item(bytes: &[u8]) -> Result<segments::Item<storage::Shared>, Error> 
     }
 }
 
+pub struct ThreeBytes(pub [u8; 3]);
+
+impl buffer::raw::Total for ThreeBytes {
+    fn count(&self) -> segments::Count {
+        segments::Count::new(3)
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn resident(&self) -> usize {
+        self.0.len()
+    }
+}
+
+// SAFETY: each of the three inputs allocates one exact one-byte owner or fails.
+unsafe impl buffer::raw::Sequence<storage::Shared> for ThreeBytes {
+    type Item = Result<segments::Item<storage::Shared>, Error>;
+    type Error = o3::alloc::Error;
+
+    fn owners(self) -> (impl Iterator<Item = Self::Item>, impl buffer::raw::Total) {
+        (self.0.into_iter().map(|byte| try_item(&[byte])), self)
+    }
+
+    fn reject(self, error: o3::alloc::Error) -> Self::Error {
+        error
+    }
+}
+
 pub fn try_many(
     pool: &segments::Pool<storage::Shared>,
 ) -> Result<segments::Many<storage::Shared>, Error> {

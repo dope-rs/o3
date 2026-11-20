@@ -68,21 +68,13 @@ impl<'a, T, S, const TRACK: bool> Front<'a, T, S, TRACK> {
 }
 
 impl<'a, T, S> Front<'a, T, S> {
-    /// Lends the removed head and returns its original lane after the affine slot is settled.
-    pub fn remove_with<R>(
-        mut self,
-        remove: impl for<'b> FnOnce(Lease<slots::Vacant<T, slots::Bound<'b, T>>, lease::Open>) -> R,
-    ) -> (pool::Lane<'a, T, S>, R) {
-        let result = remove(Front::new(self.lane.borrow_mut(), self.index).remove());
-        (self.lane, result)
-    }
-
     /// Retains this exact slot while its front owner is transformed or returned.
     pub fn remove(self) -> Lease<slots::Vacant<T, slots::Bound<'a, T>>, lease::Open> {
         let lane = self.lane;
         // SAFETY: Front owns this initialized slot and its exact counted store and lane.
-        let (value, claim) = unsafe { lane.slot.queue.take(lane.store, self.index) };
-        Lease::open(unsafe { claim.bind(&mut lane.slot.queue) }, value)
+        let owner = unsafe { lane.slot.queue.bind(lane.store) };
+        let (value, claim) = unsafe { owner.detach(self.index) }.take();
+        Lease::open(claim, value)
     }
 }
 

@@ -11,12 +11,7 @@ use common::{
     },
 };
 use o3::{
-    depot::{
-        self,
-        arena::linked::slots,
-        queue::pool::{self, fifo},
-        raw::Proof,
-    },
+    depot::{self, arena::linked::slots, queue::pool, raw::Proof},
     mem::Return as _,
 };
 
@@ -253,17 +248,11 @@ fn retains_head_transition() {
     let mut lane = lanes.try_bind_mut(0).expect("only lane");
     lane.push_back(3).expect("first slot");
     lane.push_back(5).expect("second slot");
-    let (lane, head) = lane.front_entry().expect("nonempty lane").into_parts();
+    let (_, head) = lane.front_mut().expect("nonempty lane").into_parts();
     // SAFETY: this exact lane and its current head remain borrowed and unchanged.
-    let front = pool::Front::from_source(unsafe { Proof::new((lane, head)) });
-    let (lane, ()) = front.remove_with(|removed| drop(removed));
-    let front = lane.front_entry().expect("restored head");
-    let (mut lane, value) = front.remove_with(|removed| {
-        let (vacant, value) = removed.into_parts();
-        drop(vacant);
-        value
-    });
-    assert_eq!(value, 3);
+    let front = pool::Front::from_source(unsafe { Proof::new((lane.borrow_mut(), head)) });
+    drop(front.remove());
+    assert_eq!(lane.pop_front(), Some(3));
     assert_eq!(lane.pop_front(), Some(5));
     assert!(lane.is_empty());
 }
@@ -527,46 +516,6 @@ fn lanes_pack_states() {
 }
 
 #[test]
-fn detached_fifo_recycles() {
-    let arena = depot::raw::Arena::<[usize; 3]>::try_new(3usize).expect("three nodes");
-    let mut queue = arena.fifo();
-    for value in 0..3 {
-        queue
-            .vacant()
-            .expect("planned FIFO vacancy")
-            .push_back([value, 0, 0]);
-    }
-    {
-        let front: fifo::Front<'_, '_, [usize; 3]> = queue.front().expect("nonempty queue");
-        let detached: fifo::Nonempty<'_, [usize; 3]> = front.take();
-        assert_eq!(detached.front(), &[0, 0, 0]);
-        assert!(queue.is_empty());
-        assert!(queue.vacant().is_none());
-        assert_eq!(
-            detached.iter().map(|value| value[0]).collect::<Vec<_>>(),
-            [0, 1, 2]
-        );
-        let (first, detached) = detached.pop();
-        assert_eq!(first, [0, 0, 0]);
-        queue
-            .vacant()
-            .expect("planned FIFO vacancy")
-            .push_back([7, 0, 0]);
-        let rest = detached.expect("two nodes").pop();
-        assert_eq!(rest.0, [1, 0, 0]);
-    }
-    assert_eq!(queue.pop_front(), Some([7, 0, 0]));
-    assert_eq!(arena.available(), 3);
-    for value in 0..3 {
-        queue
-            .vacant()
-            .expect("returned slot")
-            .push_back([value, 0, 0]);
-    }
-    assert!(queue.vacant().is_none());
-}
-
-#[test]
 fn detached_front_keeps_address_and_credit() {
     let drops = [cell::Cell::new(Some(0)), cell::Cell::new(Some(0))];
     let arena = depot::raw::Arena::<Tracked<'_>>::try_new(2usize).expect("two nodes");
@@ -604,9 +553,9 @@ fn forgotten_fifo_reclaimed() {
                     .expect("unused slot")
                     .push_back(Tracked::try_new(index, &drops).expect("drop counter exists"));
             }
-            let detached = queue.front().expect("nonempty queue").take().pop().1;
+            drop(queue.pop_front().expect("nonempty queue"));
             assert_eq!(drops[0].get(), Some(1));
-            mem::forget(detached);
+            mem::forget(queue);
         }
     }
     assert_eq!(drops.each_ref().map(cell::Cell::get), [Some(1); 2]);

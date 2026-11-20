@@ -37,7 +37,7 @@ impl<T, H: Handle<T>> Chain<T, H> {
         };
         let descs = handles::descriptors(handle);
         // SAFETY: this detached multi key uniquely owns its exact descriptor.
-        let (mut desc, retired) = unsafe { descs.detached(index) }.take();
+        let (desc, retired) = unsafe { descs.detached(index) }.take();
         // SAFETY: the descriptor owns this exact tracked node-store partition.
         unsafe { desc.links.clear(nodes, before) };
         retired.release();

@@ -58,7 +58,7 @@ impl<'a, T: buffer::raw::Segment, H: Handle<T>> Multi<'a, T, H> {
         // SAFETY: this head exclusively borrows the sequence owning this descriptor.
         let desc = unsafe { &mut *descs.value_ptr(self.index) };
         let head = desc.links.head_raw();
-        let owner = unsafe { crate::depot::raw::SlotOwner::detach(&mut desc.links, nodes, head) };
+        let owner = unsafe { desc.links.detach(nodes, head) };
         let len = owner.get().len().get();
         let resident = buffer::Residency::resident(owner.get());
         let charge = hold::Charge::from_owner(len, resident);

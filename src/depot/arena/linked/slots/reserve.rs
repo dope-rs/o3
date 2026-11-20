@@ -8,21 +8,22 @@ use crate::depot::{
 
 /// Capacity retained by one input traversal, including its recycled slots.
 pub struct Reserve<'a, T, Tag> {
-    store: &'a slots::Store<T>,
-    remaining: u32,
+    pub(super) store: &'a slots::Store<T>,
+    pub(super) remaining: u32,
     domain: marker::PhantomData<fn(Tag) -> Tag>,
 }
 
 impl<'a, T, Tag> Reserve<'a, T, Tag> {
-    pub(in crate::depot::arena::linked) const fn new(
+    pub(crate) fn try_new(
         store: &'a slots::Store<T>,
         count: capacity::Count,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, capacity::Shortage> {
+        store.try_reserve(count)?;
+        Ok(Self {
             store,
             remaining: count.raw(),
             domain: marker::PhantomData,
-        }
+        })
     }
 
     /// Consumes one proved outstanding reservation without repeating admission.

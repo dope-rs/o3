@@ -1,4 +1,8 @@
-use crate::{buffer, depot::arena::linked::slots, mem};
+use crate::{
+    buffer,
+    depot::arena::linked::{fifo::ends, slots},
+    mem,
+};
 pub(in crate::buffer::segments) mod exact;
 
 use crate::{
@@ -135,26 +139,31 @@ impl<T> Pool<T> {
             },
         };
         let handle = self.try_clone().map_err(segments::Error::Retain)?;
-        let key = {
-            let mut writer = exact::Writer::new(nodes);
-            let (len, resident) = reserve.start().0.try_run(|claim, owner| {
-                unsafe { writer.push_claim(claim, owner) };
-            })?;
-            let links = writer.into_links();
-            match state {
-                State::Empty => Key::EMPTY,
-                State::One => Key::single(links.head_raw()),
-                State::Many { count, claim } => {
-                    let live = claim.insert(Descriptor {
-                        links,
-                        count: count.nonzero(),
-                        len,
-                        resident_bytes: resident,
-                    });
-                    let key = Key::multi(live.index());
-                    unsafe { live.publish() };
-                    key
-                }
+        let mut links = ends::Exclusive::empty();
+        let (len, resident) = match reserve.start().0.try_run(|claim, owner| {
+            // SAFETY: the reservation supplies detached nodes from this exact store.
+            unsafe { claim.insert(owner).append(&mut links) };
+        }) {
+            Ok(totals) => totals,
+            Err(error) => {
+                // SAFETY: the rejected reservation owns precisely this initialized prefix.
+                unsafe { links.clear(nodes, |_| {}) };
+                return Err(error);
+            }
+        };
+        let key = match state {
+            State::Empty => Key::EMPTY,
+            State::One => Key::single(links.head_raw()),
+            State::Many { count, claim } => {
+                let live = claim.insert(Descriptor {
+                    links,
+                    count: count.nonzero(),
+                    len,
+                    resident_bytes: resident,
+                });
+                let key = Key::multi(live.index());
+                unsafe { live.publish() };
+                key
             }
         };
         let mut sequence = segments::Chain::new(handle);

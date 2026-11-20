@@ -21,7 +21,7 @@ pub struct Store<T> {
     slots: ptr::NonNull<mem::MaybeUninit<slots::Node<T>>>,
     capacity: slots::Capacity<T>,
     initialized: cell::Cell<u32>,
-    pub(super) free: cell::Cell<u32>,
+    free: cell::Cell<u32>,
     pub(in crate::depot) available: cell::Cell<u32>,
     ownership: marker::PhantomData<T>,
 }
@@ -101,22 +101,18 @@ impl<T> Store<T> {
     /// # Safety
     /// One free slot is proved; LIVE requires immediate initialization before publication.
     pub(super) unsafe fn claim<const LIVE: bool>(&self) -> (u32, &slots::Node<T>) {
-        let mut free = Free::new(self.free.get());
-        let index = free.head;
+        let index = self.free.get();
         if index == Self::END {
             return unsafe { self.init::<LIVE>() };
         }
         let node = unsafe { self.slot(index) };
-        let next = node.next.replace(if LIVE { Self::END } else { index });
-        free.pop(index, next, Self::END);
-        self.free.set(free.head);
+        self.free
+            .set(node.next.replace(if LIVE { Self::END } else { index }));
         (index, node)
     }
 
     pub(super) fn recycle(&self, index: u32, node: &slots::Node<T>) {
-        let mut free = Free::new(self.free.get());
-        node.next.set(free.push(index, Self::END));
-        self.free.set(free.head);
+        node.next.set(self.free.replace(index));
     }
 
     /// # Safety
@@ -132,10 +128,8 @@ impl<T> Store<T> {
     }
 
     pub(crate) fn vacant<Tag>(&self) -> Option<slots::Vacant<T, &'_ slots::Store<T>, Tag>> {
-        if self.available.get() == 0 {
-            return None;
-        }
-        Some(unsafe { slots::Vacant::reserve(self) })
+        // SAFETY: this store borrow uses tracked admission and return.
+        unsafe { slots::Vacant::try_reserve(self) }
     }
 
     /// Returns one live slot's successor.
@@ -183,8 +177,7 @@ impl<T> Store<T> {
         let mut free = self.free.get();
         while free != Self::END {
             let slot = unsafe { self.slot(free) };
-            let next = slot.next.replace(free);
-            free = if next == free { Self::END } else { next };
+            free = slot.next.replace(free);
         }
         for offset in 0..self.initialized.get() {
             let slot =
@@ -197,6 +190,80 @@ impl<T> Store<T> {
 }
 
 impl<T> linked::Sealed<T> for Store<T> {}
+
+impl<T, Tag> slots::Reserve<'_, T, Tag> {
+    /// # Safety
+    /// `links` owns a complete nonempty chain of exactly the reserved length in
+    /// a distinct source store. No other owner can access these nodes during the move.
+    pub(crate) unsafe fn move_from(
+        self,
+        source: &Store<T>,
+        links: fifo::ends::Exclusive<slots::Index<Tag>>,
+    ) -> fifo::ends::Exclusive<slots::Index<Tag>> {
+        let reserve = mem::ManuallyDrop::new(self);
+        let store = reserve.store;
+        let end = Store::<T>::END;
+        let input = source.slots.as_ptr().cast::<Node<T>>();
+        let output = store.slots.as_ptr().cast::<Node<T>>();
+        let mut free = store.free.get();
+        let fresh = store.initialized.get();
+        let first = if free == end { fresh } else { free };
+        let head = links.head_raw().raw();
+        let stop = links.tail_raw().raw();
+        let mut read = head;
+        let (last, tail) = 'moved: {
+            if free != end {
+                loop {
+                    // SAFETY: these distinct live and free partitions own the two slots.
+                    let (from, to) =
+                        unsafe { (&*input.add(read as usize), &*output.add(free as usize)) };
+                    unsafe { from.value.get().copy_to_nonoverlapping(to.value.get(), 1) };
+                    let next = to.next.get();
+                    if read == stop {
+                        if next != end {
+                            to.next.set(end);
+                        }
+                        store.free.set(next);
+                        break 'moved (free, &from.next);
+                    }
+                    read = from.next.get();
+                    if next == end {
+                        to.next.set(fresh);
+                        store.free.set(end);
+                        break;
+                    }
+                    free = next;
+                }
+            }
+            let mut index = fresh;
+            loop {
+                // SAFETY: each remaining source slot owns one value and the reservation
+                // covers the same number of uninitialized destination slots.
+                let from = unsafe { &*input.add(read as usize) };
+                let next = index + 1;
+                unsafe {
+                    output.add(index as usize).write(Node {
+                        value: cell::UnsafeCell::new(from.value.get().read()),
+                        next: cell::Cell::new(if read == stop { end } else { next }),
+                    })
+                };
+                if read == stop {
+                    store.initialized.set(next);
+                    break 'moved (index, &from.next);
+                }
+                read = from.next.get();
+                index = next;
+            }
+        };
+        // The emptied source chain is already linked in reusable order.
+        tail.set(source.free.replace(head));
+        source.refund(reserve.remaining);
+        // SAFETY: both ends now delimit all transferred values in the destination store.
+        unsafe {
+            fifo::ends::Exclusive::from_ends(slots::Index::new(first), slots::Index::new(last))
+        }
+    }
+}
 
 impl<T> linked::Source<T> for Store<T> {
     fn store(&self) -> &Store<T> {
@@ -280,28 +347,5 @@ impl<T> Store<T> {
     /// `back` remains live in this exact exclusively borrowed node set.
     pub(in crate::depot) unsafe fn back_mut<Tag>(&mut self, back: fifo::Back<Tag>) -> &mut T {
         unsafe { &mut *self.value_ptr(back.into_index()) }
-    }
-}
-
-/// The shared self-terminated encoding of an embedded free chain.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug)]
-pub(super) struct Free<I> {
-    pub(super) head: I,
-}
-
-impl<I: Copy + Eq> Free<I> {
-    pub(super) const fn new(head: I) -> Self {
-        Self { head }
-    }
-
-    pub(super) fn pop(&mut self, index: I, next: I, empty: I) {
-        self.head = if next == index { empty } else { next };
-    }
-
-    pub(super) fn push(&mut self, index: I, empty: I) -> I {
-        let next = if self.head == empty { index } else { self.head };
-        self.head = index;
-        next
     }
 }

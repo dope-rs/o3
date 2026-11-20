@@ -83,11 +83,12 @@ impl<'a, T, S, const TRACK: bool> Lane<'a, T, S, TRACK> {
 impl<'a, T, S> Lane<'a, T, S> {
     /// Reserves one slot and retains the disjoint state loan on both outcomes.
     pub fn reserve(self) -> (Option<slots::Vacant<T, slots::Bound<'a, T>>>, &'a mut S) {
-        let vacant = self
-            .store
-            .vacant()
-            .map(|claim| unsafe { claim.bind(&mut self.slot.queue) });
-        (vacant, &mut self.slot.state)
+        // SAFETY: this lane owns its tracked queue in the exact store.
+        let owner = unsafe { self.slot.queue.bind(self.store) };
+        (
+            unsafe { slots::Vacant::try_reserve(owner) },
+            &mut self.slot.state,
+        )
     }
 
     /// Reserves one exact slot until insertion or cancellation.
@@ -110,7 +111,8 @@ impl<'a, T, S> Lane<'a, T, S> {
     {
         let (input, ()) = slots::Input::try_new(self.store, source)?.start();
         Ok(input.run(|claim, value| {
-            unsafe { claim.bind(&mut self.slot.queue) }.append(value);
+            // SAFETY: this claim comes from the reservation on the lane's own store.
+            unsafe { self.slot.queue.append(claim.insert(value)) };
         }))
     }
 }

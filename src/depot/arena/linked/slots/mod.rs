@@ -126,17 +126,6 @@ impl<Tag> State<Tag> {
         Some(unsafe { store.value(index) })
     }
 
-    /// Detaches the front value named by its checked owner-bound index.
-    /// # Safety
-    /// `index` is this state's front and its reachable indices are this store's unique live partition.
-    pub(crate) unsafe fn take<T, H: linked::Source<T>>(
-        &mut self,
-        owner: H,
-        index: slots::Index<Tag>,
-    ) -> (T, slots::Vacant<T, H, Tag>) {
-        unsafe { self.detach(owner, index) }.take()
-    }
-
     /// # Safety
     /// This is the exact store's owned front with its unchanged TRACK policy.
     pub(crate) unsafe fn pop<T, const TRACK: bool>(
@@ -144,9 +133,8 @@ impl<Tag> State<Tag> {
         store: &slots::Store<T>,
         index: slots::Index<Tag>,
     ) -> T {
-        let index = unsafe { self.links.detach_store(store, index) };
         self.len = self.len.wrapping_sub(1);
-        unsafe { store.take::<_, TRACK>(index) }
+        unsafe { self.links.pop::<_, TRACK>(store, index) }
     }
 
     /// # Safety
@@ -160,16 +148,6 @@ impl<Tag> State<Tag> {
         unsafe { self.links.append_end(claim.owner_mut().store(), index) };
         self.len = len;
         unsafe { claim.publish() }
-    }
-
-    pub(in crate::depot) unsafe fn detach<T, H: linked::Source<T>>(
-        &mut self,
-        owner: H,
-        index: slots::Index<Tag>,
-    ) -> slots::Live<T, H, Tag> {
-        let index = unsafe { self.links.detach_store(owner.store(), index) };
-        self.len = self.len.wrapping_sub(1);
-        unsafe { slots::Live::detached(owner, index) }
     }
 }
 
@@ -202,13 +180,22 @@ impl<T, Tag, const TRACK: bool> linked::Source<T> for Bound<'_, T, Tag, TRACK> {
 }
 
 impl<'a, T, Tag> Bound<'a, T, Tag> {
+    /// # Safety
+    /// `index` is the unchanged front of this bound queue.
+    pub(in crate::depot) unsafe fn detach(self, index: slots::Index<Tag>) -> Live<T, Self, Tag> {
+        let index = unsafe { self.state.links.detach_store(self.store, index) };
+        self.state.len = self.state.len.wrapping_sub(1);
+        unsafe { Live::detached(self, index) }
+    }
+
     pub fn pop_front(&mut self) -> Option<T> {
-        // SAFETY: this binding retains the exact store and exclusive live partition.
-        Some(unsafe { slots::Front::new(self.store, self.state) }?.pop())
+        let index = self.state.front_index()?;
+        Some(unsafe { self.state.pop::<_, true>(self.store, index) })
     }
 
     pub fn front_entry(self) -> Option<slots::Front<'a, T, Tag>> {
-        unsafe { slots::Front::new(self.store, self.state) }
+        let index = self.state.front_index()?;
+        Some(Front { owner: self, index })
     }
 }
 
@@ -236,37 +223,20 @@ impl<'a, T, Tag, const TRACK: bool> slots::Live<T, Bound<'a, T, Tag, TRACK>, Tag
     }
 }
 
-pub struct Front<'a, T, Tag, O = slots::State<Tag>> {
-    store: &'a slots::Store<T>,
-    owner: &'a mut O,
+pub struct Front<'a, T, Tag> {
+    owner: Bound<'a, T, Tag>,
     index: slots::Index<Tag>,
 }
 
-impl<'a, T, Tag, O: crate::depot::raw::SlotOwner<Tag>> Front<'a, T, Tag, O> {
-    /// The owner's live partition belongs to this exact store.
-    pub(crate) unsafe fn new(store: &'a slots::Store<T>, owner: &'a mut O) -> Option<Self> {
-        let index = owner.links().head()?;
-        Some(Self {
-            store,
-            owner,
-            index,
-        })
-    }
-
+impl<T, Tag> Front<'_, T, Tag> {
     pub fn get_mut(&mut self) -> &mut T {
         // SAFETY: this entry's exclusive owner borrow is the capability for
         // the unchanged front slot; the returned borrow cannot outlive `self`.
-        unsafe { &mut *self.store.value_ptr(self.index) }
-    }
-
-    pub(crate) fn pop(self) -> T {
-        unsafe { self.owner.detach(self.store, self.index) }
-            .take()
-            .0
+        unsafe { &mut *self.owner.store.value_ptr(self.index) }
     }
 
     pub fn discard(self) {
-        drop(unsafe { self.owner.detach(self.store, self.index) });
+        drop(unsafe { self.owner.detach(self.index) });
     }
 }
 

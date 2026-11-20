@@ -1,6 +1,5 @@
 use std::{cell, marker};
 
-pub(in crate::depot) use moves::StagedMove;
 pub(in crate::depot) use node::StagedNode;
 pub(in crate::depot) use occupied::StagedPhase;
 

@@ -1,4 +1,4 @@
-use std::{mem, num::NonZero};
+use std::num::NonZero;
 
 use crate::{
     buffer,
@@ -14,11 +14,6 @@ use crate::{
 pub struct Exact<T, S> {
     handle: Pool<T>,
     source: S,
-}
-
-pub(in crate::buffer) struct Writer<'a, T> {
-    nodes: &'a slots::Store<segments::Item<T>>,
-    links: ends::Exclusive<slots::Index>,
 }
 
 impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
@@ -54,9 +49,7 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
         };
         Ok(Self { handle, source })
     }
-}
 
-impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
     #[inline(always)]
     pub fn collect(self) -> segments::Many<T>
     where
@@ -65,12 +58,11 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
         let Self { handle, source } = self;
         let mut source = source.owners();
         let nodes = handles::nodes(&handle);
-        let mut writer = Writer::new(nodes);
+        let mut links = ends::Exclusive::empty();
         source.0.by_ref().for_each(|value| {
-            let claim = unsafe { slots::Vacant::reserve(nodes) };
-            unsafe { writer.push_claim(claim, value) };
+            // SAFETY: the private pool has capacity for this sequence and owns all these links.
+            unsafe { slots::Vacant::insert_one(nodes, value).append(&mut links) };
         });
-        let links = writer.into_links();
         Self::finish(handle, links, &source.1)
     }
 
@@ -78,16 +70,16 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
     where
         S: buffer::raw::Sequence<T, Item = Result<segments::Item<T>, E>>,
     {
-        let Self { handle, source } = self;
-        let mut source = source.owners();
+        let mut source = self.source.owners();
+        // The private pool drops its initialized prefix in insertion order before the iterator.
+        let handle = self.handle;
         let nodes = handles::nodes(&handle);
-        let mut writer = Writer::new(nodes);
+        let mut links = ends::Exclusive::empty();
         for value in source.0.by_ref() {
             let value = value?;
-            let claim = unsafe { slots::Vacant::reserve(nodes) };
-            unsafe { writer.push_claim(claim, value) };
+            // SAFETY: the admitted sequence yields at most the private pool's capacity.
+            unsafe { slots::Vacant::insert_one(nodes, value).append(&mut links) };
         }
-        let links = writer.into_links();
         Ok(Self::finish(handle, links, &source.1))
     }
 
@@ -99,53 +91,20 @@ impl<T: buffer::raw::Segment, S: buffer::raw::Sequence<T>> Exact<T, S> {
         // SAFETY: Sequence preserves its admitted count of at least two owners.
         let count = unsafe { NonZero::new_unchecked(total.count().into_raw()) };
         let descs = handles::descriptors(&handle);
-        // SAFETY: Exact reserves one private descriptor for its admitted Sequence.
-        let claim = unsafe { slots::Vacant::reserve(descs) }.insert(handles::Descriptor {
+        let descriptor = handles::Descriptor {
             links,
             count,
             len: total.len(),
             resident_bytes: total.resident(),
-        });
+        };
+        // SAFETY: Exact owns one available descriptor for this completed sequence.
+        let claim = unsafe { slots::Vacant::insert_one(descs, descriptor) };
         let key = Key::multi(claim.index());
         unsafe { claim.publish() };
         let mut sequence = Chain::new(handle);
         sequence.key = key;
         // SAFETY: the published descriptor owns the Sequence's at least two owners.
         unsafe { segments::Many::new(sequence) }
-    }
-}
-
-impl<T: buffer::raw::Segment> Writer<'_, T> {
-    /// # Safety
-    /// `claim` is an outstanding vacancy in this writer's exact node store.
-    pub(in crate::buffer::segments::handles::pool) unsafe fn push_claim(
-        &mut self,
-        claim: slots::Vacant<segments::Item<T>, &'_ slots::Store<segments::Item<T>>>,
-        value: segments::Item<T>,
-    ) {
-        unsafe { claim.insert(value).append(&mut self.links) };
-    }
-
-    pub(in crate::buffer) fn into_links(mut self) -> ends::Exclusive<slots::Index> {
-        mem::replace(&mut self.links, ends::Exclusive::empty())
-    }
-}
-
-impl<'a, T> Writer<'a, T> {
-    pub(in crate::buffer::segments::handles::pool) fn new(
-        nodes: &'a slots::Store<segments::Item<T>>,
-    ) -> Self {
-        Self {
-            nodes,
-            links: ends::Exclusive::empty(),
-        }
-    }
-}
-
-impl<T> Drop for Writer<'_, T> {
-    fn drop(&mut self) {
-        // SAFETY: this writer owns its exact initialized node-store partition.
-        unsafe { self.links.clear(self.nodes, |_| {}) };
     }
 }
 

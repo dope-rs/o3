@@ -1,7 +1,6 @@
-use std::{marker, mem, ptr};
+use std::{marker, mem::ManuallyDrop, ptr};
 
 use crate::depot::{
-    arena,
     array::Index,
     queue::indexed::lanes::{
         self, entry,
@@ -16,42 +15,48 @@ pub(super) enum Tag {
     Idle,
 }
 
-/// Unit keys place the sole initialized field of these repr(C) unions at offset zero.
-/// Nesting the existing union adds no stored tag.
 #[repr(C)]
-pub(super) struct Stored<C, D, I> {
-    value: arena::raw::StagedValue<(), C, arena::raw::StagedValue<(), D, I>>,
+pub(super) union Stored<C, D, I> {
+    control: ManuallyDrop<C>,
+    data: ManuallyDrop<D>,
+    idle: ManuallyDrop<I>,
 }
 
 impl<C, D, I> Stored<C, D, I> {
     pub(super) fn new(value: Value<C, D, I>) -> lanes::raw::Owned<Self, Tag> {
         let (value, tag) = match value {
-            Value::Control(value) => (arena::raw::StagedValue::queued((), value), Tag::Control),
+            Value::Control(value) => (
+                Self {
+                    control: ManuallyDrop::new(value),
+                },
+                Tag::Control,
+            ),
             Value::Data(value) => (
-                arena::raw::StagedValue::parked((), arena::raw::StagedValue::queued((), value)),
+                Self {
+                    data: ManuallyDrop::new(value),
+                },
                 Tag::Data,
             ),
             Value::Idle(value) => (
-                arena::raw::StagedValue::parked((), arena::raw::StagedValue::parked((), value)),
+                Self {
+                    idle: ManuallyDrop::new(value),
+                },
                 Tag::Idle,
             ),
         };
-        // SAFETY: this match initialized exactly the sole field selected by tag.
-        // The returned owner transfers the pair together into its resident node.
-        unsafe { lanes::raw::Owned::from_parts(Self { value }, tag) }
+        // SAFETY: the owner transfers the initialized union field and its tag together.
+        unsafe { lanes::raw::Owned::from_parts(value, tag) }
     }
 }
 
 // SAFETY: this state owns the corresponding sole initialized union field.
 unsafe impl<C, D, I> lanes::raw::State<Stored<C, D, I>> for Tag {
-    unsafe fn clear(self, value: &mut mem::ManuallyDrop<Stored<C, D, I>>) {
-        // SAFETY: exactly the tagged field remains initialized. The nested unit
-        // keys own no resources; each active field is dropped exactly once.
+    unsafe fn clear(self, value: &mut ManuallyDrop<Stored<C, D, I>>) {
         unsafe {
             match self {
-                Tag::Control => value.value.clear_queued(),
-                Tag::Data => value.value.parked_mut().clear_queued(),
-                Tag::Idle => value.value.parked_mut().clear_parked(),
+                Tag::Control => ManuallyDrop::drop(&mut value.control),
+                Tag::Data => ManuallyDrop::drop(&mut value.data),
+                Tag::Idle => ManuallyDrop::drop(&mut value.idle),
             }
         }
     }
@@ -64,9 +69,9 @@ pub(super) fn view<C, D, I, const N: usize>(
     // field is projected; neither the union nor its tag can escape.
     unsafe {
         match node.state {
-            Tag::Control => Value::Control(node.value.value.queued_ref()),
-            Tag::Data => Value::Data(node.value.value.parked_ref().queued_ref()),
-            Tag::Idle => Value::Idle(node.value.value.parked_ref().parked_ref()),
+            Tag::Control => Value::Control(&node.value.control),
+            Tag::Data => Value::Data(&node.value.data),
+            Tag::Idle => Value::Idle(&node.value.idle),
         }
     }
 }
@@ -76,14 +81,14 @@ impl<'a, K: crate::depot::raw::Key, C, D, I, P: Phase<C, D, I>, const N: usize>
 {
     pub fn get(&self) -> &P::Item {
         // SAFETY: the sealed phase identifies this exact entry's initialized
-        // field. The repr(C) unit-key unions place that field at offset zero.
-        unsafe { &*ptr::addr_of!(self.slot.get().value).cast::<P::Item>() }
+        // field. The repr(C) union places every field at offset zero.
+        unsafe { &*ptr::from_ref(self.slot.get()).cast::<P::Item>() }
     }
 
     pub fn get_mut(&mut self) -> &mut P::Item {
         // SAFETY: the exclusive occupied loan retains the admitted phase and
         // prevents replacement or retirement for the returned borrow.
-        unsafe { &mut *ptr::addr_of_mut!(self.slot.get_mut().value).cast::<P::Item>() }
+        unsafe { &mut *ptr::from_mut(self.slot.get_mut()).cast::<P::Item>() }
     }
 
     pub fn take(self) -> (Withdrawn<'a, K, C, D, I, P, N>, P::Item) {
@@ -92,7 +97,7 @@ impl<'a, K: crate::depot::raw::Key, C, D, I, P: Phase<C, D, I>, const N: usize>
         // SAFETY: the retained phase identifies the sole initialized field.
         // Taking the exact occupied slot detached its links and transferred its
         // value here. Move that field once and suppress its former owner's Drop.
-        let field = unsafe { ptr::read(ptr::addr_of!(value.value).cast::<P::Item>()) };
+        let field = unsafe { ptr::from_ref(&value).cast::<P::Item>().read() };
         (
             Withdrawn {
                 slot,

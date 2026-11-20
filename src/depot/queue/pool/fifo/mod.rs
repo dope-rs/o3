@@ -1,16 +1,9 @@
 use std::mem;
 
-pub use front::{Front, nonempty::Nonempty};
-
-use crate::depot::{
-    arena::{
-        linked,
-        linked::{fifo::ends, slots},
-    },
-    queue::links,
+use crate::depot::arena::{
+    linked,
+    linked::{fifo::ends, slots},
 };
-
-mod front;
 
 /// An independently movable FIFO borrowing its exact fixed node pool.
 pub struct Fifo<'pool, T, const TRACK: bool = true> {
@@ -34,9 +27,7 @@ impl<'pool, T, const TRACK: bool> Fifo<'pool, T, TRACK> {
 
     pub fn front(&mut self) -> Option<Front<'_, 'pool, T, TRACK>> {
         let index = self.links.head()?;
-        // SAFETY: the live slot is below the common END sentinel.
-        let index = unsafe { links::Index::new_raw(index.raw()) };
-        Some(Front::new(self, index))
+        Some(Front { fifo: self, index })
     }
 
     pub fn pop_front(&mut self) -> Option<T> {
@@ -49,14 +40,42 @@ impl<'pool, T, const TRACK: bool> Fifo<'pool, T, TRACK> {
     }
 }
 
+/// A nonempty front retaining the exact exclusive FIFO borrow.
+pub struct Front<'fifo, 'pool, T, const TRACK: bool = true> {
+    fifo: &'fifo mut Fifo<'pool, T, TRACK>,
+    index: slots::Index,
+}
+
+impl<'pool, T, const TRACK: bool> Front<'_, 'pool, T, TRACK> {
+    pub fn get(&self) -> &T {
+        // SAFETY: this exclusive FIFO borrow owns the initialized front.
+        unsafe { self.fifo.arena.inner.value(self.index) }
+    }
+
+    pub fn pop(self) -> T {
+        unsafe {
+            self.fifo
+                .links
+                .pop::<_, TRACK>(&self.fifo.arena.inner, self.index)
+        }
+    }
+
+    pub fn detach(self) -> slots::Live<T, slots::Borrow<'pool, T, TRACK>> {
+        unsafe {
+            self.fifo
+                .links
+                .detach(slots::Borrow(&self.fifo.arena.inner), self.index)
+        }
+    }
+}
+
+const _: () =
+    assert!(mem::size_of::<Front<'static, 'static, u64>>() == 2 * mem::size_of::<usize>());
+
 impl<'pool, T> Fifo<'pool, T> {
     pub fn vacant(&mut self) -> Option<slots::Vacant<T, &mut Fifo<'pool, T>>> {
-        if self.arena.inner.available() == 0 {
-            return None;
-        }
-        // SAFETY: this borrowed FIFO's exact store has one free slot.
-        let claim = unsafe { slots::Vacant::reserve(self) };
-        Some(claim)
+        // SAFETY: this FIFO uses its store's tracked admission and return.
+        unsafe { slots::Vacant::try_reserve(self) }
     }
 }
 

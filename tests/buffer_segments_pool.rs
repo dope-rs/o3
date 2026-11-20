@@ -20,6 +20,21 @@ use o3::{
 static ALLOCATOR: Tracker = Tracker;
 
 #[test]
+fn failed_private_prefix_releases_backings() {
+    let (result, activity) = Tracker::counts(|| {
+        let exact = segments::Exact::try_new(common::buffer::ThreeBytes(*b"abc")).expect("pool");
+        Tracker::fail_after(2, || exact.try_collect())
+    });
+    assert!(matches!(
+        result,
+        Err(common::buffer::Error::Allocation(
+            storage::AllocError::Exhausted(_)
+        ))
+    ));
+    assert_eq!(activity, [3, 3]);
+}
+
+#[test]
 fn insert_amortizes_growth() {
     for front in [false, true] {
         let items: [_; 32] =

@@ -89,26 +89,29 @@ impl<K, Q, P, I: crate::depot::raw::Compact> Table<K, Q, P, I> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    fn drop_chain<S: crate::depot::raw::StagedPhase<Q, P>>(&mut self) {
+        if mem::needs_drop::<K>() || mem::needs_drop::<S::Value>() {
+            let state = self.nodes.state();
+            let mut next = if S::QUEUED {
+                state.head.get()
+            } else {
+                state.parked.get()
+            };
+            while let Some(index) = next {
+                // SAFETY: this chain contains precisely the live nodes of phase S.
+                let node = unsafe { crate::depot::raw::StagedNode::at(self, index) };
+                next = node.next.get();
+                unsafe { node.drop_fields::<S>() };
+            }
+        }
+    }
 }
 
 impl<K, Q, P, I: crate::depot::raw::Compact> Drop for Table<K, Q, P, I> {
     fn drop(&mut self) {
-        if mem::needs_drop::<K>() || mem::needs_drop::<Q>() {
-            let mut next = self.nodes.state().head.get();
-            while let Some(index) = next {
-                let node = unsafe { crate::depot::raw::StagedNode::at(self, index) };
-                next = node.next.get();
-                unsafe { (&mut *node.value.get()).assume_init_mut().clear_queued() };
-            }
-        }
-        if mem::needs_drop::<K>() || mem::needs_drop::<P>() {
-            let mut next = self.nodes.state().parked.get();
-            while let Some(index) = next {
-                let node = unsafe { crate::depot::raw::StagedNode::at(self, index) };
-                next = node.next.get();
-                unsafe { (&mut *node.value.get()).assume_init_mut().clear_parked() };
-            }
-        }
+        self.drop_chain::<staged::Queued>();
+        self.drop_chain::<staged::Parked>();
     }
 }
 

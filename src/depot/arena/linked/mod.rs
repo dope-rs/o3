@@ -86,10 +86,10 @@ pub trait Batch<'a, T: 'a, Tag: 'a>: depot::raw::LinkedBatch<'a, T, Tag> {
     fn try_apply(self) -> Result<Self::Output, Self::Error> {
         let store = &self.nodes().inner;
         let count = self.count();
-        if let Err(error) = store.try_reserve(count) {
-            return Err(self.reject(error));
-        }
-        let mut reserve = slots::Reserve::new(store, count);
+        let mut reserve = match slots::Reserve::try_new(store, count) {
+            Ok(reserve) => reserve,
+            Err(error) => return Err(self.reject(error)),
+        };
         Ok(self.run(&mut reserve))
     }
 }

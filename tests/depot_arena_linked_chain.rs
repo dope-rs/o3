@@ -232,6 +232,11 @@ fn carries_claim_identity() {
     let claim = pool.permit().expect("recycled slot").claim(13);
     // SAFETY: popping returned the FIFO's only slot to this same pool.
     slots::Live::push_back(unsafe { depot::raw::Proof::new((claim, &mut queue)) });
-    assert_eq!(unsafe { pool.queue(&mut queue) }.pop_front(), Some(13));
+    let mut front = unsafe { pool.queue(&mut queue) }
+        .front_entry()
+        .expect("live head");
+    assert_eq!(*front.get_mut(), 13);
+    front.discard();
+    assert!(queue.is_empty());
     assert_eq!(pool.available(), 1);
 }

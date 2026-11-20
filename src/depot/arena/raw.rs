@@ -3,11 +3,11 @@ use std::{mem, num::NonZero};
 #[repr(C)]
 pub struct StagedValue<Key, Queued, Parked> {
     pub(in crate::depot) key: mem::ManuallyDrop<Key>,
-    value: Value<Queued, Parked>,
+    pub(in crate::depot) value: Value<Queued, Parked>,
 }
 
 #[repr(C)]
-union Value<Queued, Parked> {
+pub(in crate::depot) union Value<Queued, Parked> {
     queued: mem::ManuallyDrop<Queued>,
     parked: mem::ManuallyDrop<Parked>,
 }
@@ -36,80 +36,10 @@ impl<Key, Queued, Parked> StagedValue<Key, Queued, Parked> {
     }
 
     /// # Safety
-    /// The union must retain its initialized `Queued` field for the returned borrow.
-    pub(in crate::depot) unsafe fn queued_ref(&self) -> &Queued {
-        // SAFETY: the caller proves the union's active member is `queued`.
-        unsafe { &self.value.queued }
-    }
-
-    /// # Safety
-    /// The union must currently hold its `Queued` variant and remain borrowed exclusively.
-    pub(in crate::depot) unsafe fn queued_mut(&mut self) -> &mut Queued {
-        // SAFETY: the caller proves the union's active member is `queued`.
-        unsafe { &mut self.value.queued }
-    }
-
-    /// # Safety
-    /// The union must currently hold its `Parked` variant and remain borrowed exclusively.
-    pub(in crate::depot) unsafe fn parked_mut(&mut self) -> &mut Parked {
-        // SAFETY: the caller proves the union's active member is `parked`.
-        unsafe { &mut self.value.parked }
-    }
-
-    /// # Safety
     /// The union must retain its initialized `Parked` field for the returned borrow.
     pub unsafe fn parked_ref(&self) -> &Parked {
         // SAFETY: the caller proves the union's active member is `parked`.
         unsafe { &self.value.parked }
-    }
-
-    /// # Safety
-    /// The retained key must be initialized and released exactly once through this call.
-    pub(in crate::depot) unsafe fn take_key(&mut self) -> Key {
-        // SAFETY: the caller takes the key once, consuming its initialized `ManuallyDrop`.
-        unsafe { mem::ManuallyDrop::take(&mut self.key) }
-    }
-
-    /// # Safety
-    /// The union must hold its `Queued` variant, taken exactly once through this call.
-    pub(in crate::depot) unsafe fn take_queued(&mut self) -> Queued {
-        // SAFETY: the caller proves and consumes the active `queued` member once.
-        unsafe { mem::ManuallyDrop::take(&mut self.value.queued) }
-    }
-
-    /// # Safety
-    /// The union must hold its `Parked` variant, taken exactly once through this call.
-    pub(in crate::depot) unsafe fn take_parked(&mut self) -> Parked {
-        // SAFETY: the caller proves and consumes the active `parked` member once.
-        unsafe { mem::ManuallyDrop::take(&mut self.value.parked) }
-    }
-
-    /// # Safety
-    /// The key and the union's `Queued` variant must each be initialized and dropped exactly once.
-    pub(in crate::depot) unsafe fn clear_queued(&mut self) {
-        // SAFETY: the caller drops the initialized key and active `queued` member once.
-        unsafe {
-            mem::ManuallyDrop::drop(&mut self.key);
-            mem::ManuallyDrop::drop(&mut self.value.queued);
-        }
-    }
-
-    /// # Safety
-    /// The key and the union's `Parked` variant must each be initialized and dropped exactly once.
-    pub(in crate::depot) unsafe fn clear_parked(&mut self) {
-        // SAFETY: the caller drops the initialized key and active `parked` member once.
-        unsafe {
-            mem::ManuallyDrop::drop(&mut self.key);
-            mem::ManuallyDrop::drop(&mut self.value.parked);
-        }
-    }
-
-    pub(in crate::depot) fn write_parked(&mut self, value: Parked) {
-        self.value.parked = mem::ManuallyDrop::new(value);
-    }
-
-    pub(in crate::depot) fn write_queued(&mut self, value: Queued) {
-        self.value.queued = mem::ManuallyDrop::new(value);
     }
 }
 

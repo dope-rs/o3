@@ -12,6 +12,15 @@ pub struct Vacant<T, H: linked::Source<T>, Tag = ()> {
 
 impl<T, H: linked::Source<T>, Tag> Vacant<T, H, Tag> {
     /// # Safety
+    /// This owner's store counts all available slots and the owner refunds each claim.
+    pub(in crate::depot) unsafe fn try_reserve(owner: H) -> Option<Self> {
+        if owner.store().available() == 0 {
+            return None;
+        }
+        Some(unsafe { Self::reserve(owner) })
+    }
+
+    /// # Safety
     /// This exact owner has one available slot.
     pub(crate) unsafe fn reserve(owner: H) -> Self {
         let store = owner.store();
@@ -77,28 +86,6 @@ impl<T, H: linked::Source<T>, Tag> Drop for Vacant<T, H, Tag> {
             value: marker::PhantomData,
         }
         .release();
-    }
-}
-
-impl<'a, T, Tag> Vacant<T, &'a slots::Store<T>, Tag> {
-    /// # Safety
-    /// The state's live partition belongs to this vacancy's exact store
-    /// with the same `TRACK = true` accounting policy.
-    pub(crate) unsafe fn bind<'b>(
-        self,
-        state: &'b mut slots::State<Tag>,
-    ) -> Vacant<T, slots::Bound<'b, T, Tag>, Tag>
-    where
-        'a: 'b,
-    {
-        // Transfer the sole recycle/refund entitlement without releasing this vacancy.
-        let this = mem::ManuallyDrop::new(self);
-        Vacant {
-            // SAFETY: the caller retains this store's exact partition and accounting policy.
-            owner: unsafe { state.bind(this.owner) },
-            index: this.index,
-            value: marker::PhantomData,
-        }
     }
 }
 

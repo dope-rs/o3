@@ -414,10 +414,10 @@ pub unsafe trait Reserve<'fifo, 'pool: 'fifo, const TRACK: bool = true>: Sized {
         credit: Self::Credit,
     ) -> Self::Reserved;
 }
-pub(crate) use arena::{EndsPop, SlotOwner};
+pub(crate) use arena::EndsPop;
 pub(in crate::depot) use arena::{
     IndexedBlock, IndexedHook, IndexedMeta, IndexedState, PoolMutable, PoolPolicy, QueueBlock,
-    QueueSlot, SlabCapacity, SlabLinks, SlabSlot, StagedMove, StagedNode, StagedPhase, StagedState,
+    QueueSlot, SlabCapacity, SlabLinks, SlabSlot, StagedNode, StagedPhase, StagedState,
 };
 pub(in crate::depot) use hooks::{LaneInit, LaneStore, LaneUndo};
 

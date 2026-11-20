@@ -176,9 +176,8 @@ impl<T: buffer::raw::Segment> Iterator for Drain<'_, T> {
         let store = handles::nodes(self.source.body.handle);
         if self.full != segments::Count::EMPTY {
             let index = self.source.body.links.head_raw();
-            let index = unsafe { self.source.body.links.detach_store(store, index) };
             self.full = segments::Count::new(self.full.into_raw().wrapping_sub(1));
-            return Some(unsafe { store.detached(index) }.take().0);
+            return Some(unsafe { self.source.body.links.pop::<_, true>(store, index) });
         }
         let split = self.split.take()?;
         split.tail.commit();

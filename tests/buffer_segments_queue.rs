@@ -170,10 +170,15 @@ fn restores_projection() {
             queue.try_push(owner).as_ref().expect("source owner");
         }
         let pool = segments::Pool::try_new(segments::Plan {
-            segments: 3,
+            segments: 4,
             chains: 1,
         })
         .expect("projected metadata");
+        let mut sibling = pool.scoped();
+        sibling
+            .try_push(resident::Shared::from(b"x".as_slice()))
+            .expect("independent chain");
+        let available = pool.available();
         let slice = queue.get(0..12).expect("one share and two copies");
         let error = slice
             .try_bound(&pool, &retain, hold::Policy::new(8, 2))
@@ -185,7 +190,7 @@ fn restores_projection() {
             )) if cause.into_parts().0.get() == 2 && cause.into_parts().1 == 0
         ));
         assert_eq!(budget.resident(), 0);
-        assert!(pool.is_idle());
+        assert!(pool.available() == available);
         let mut bytes = [0; 12];
         queue::Array::try_new(&queue.cursor(), 0)
             .expect("unchanged source range")
@@ -199,6 +204,8 @@ fn restores_projection() {
         assert_eq!(pool.available().segments, 0);
         assert_eq!(pool.available().chains, 0);
         drop(shared);
+        assert_eq!(sibling.contiguous(), Some(b"x".as_slice()));
+        drop(sibling);
         assert!(pool.is_idle());
     });
 }
