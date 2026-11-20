@@ -2,29 +2,23 @@
 
 use std::{cell::Cell, marker::PhantomData};
 
-use crate::mem::{self, Return, lease::Open};
+use crate::depot::queue::resident::{Key, raw::View};
 
 pub trait Target {
-    type Key: Copy;
+    type Parked;
 
-    fn retire(&self, key: Self::Key);
-}
-
-struct Bound<'target, T: Target + ?Sized>(&'target T);
-
-impl<T: Target + ?Sized> Return for Bound<'_, T> {
-    type Item = T::Key;
-
-    fn return_item(self, key: Self::Item) {
-        self.0.retire(key);
+    fn detached_grant<T>(_view: View<'_, T>, _index: usize) -> Option<Self::Parked> {
+        None
     }
+
+    fn retire(&self, key: Key);
 }
 
 /// Two-word ownership of one slot in an exactly borrowed target.
 /// The invariant reference retains the original registration lifetime and !Sync.
 #[repr(transparent)]
 pub struct Lease<'target, T: Target + ?Sized> {
-    active: Option<mem::Lease<Bound<'target, T>, Open>>,
+    active: Option<(&'target T, Key)>,
     target: PhantomData<Cell<&'target T>>,
 }
 
@@ -36,21 +30,17 @@ impl<'target, T: Target + ?Sized> Lease<'target, T> {
         }
     }
 
-    pub(super) fn active(&mut self) -> Option<(&'target T, &mut T::Key)> {
-        self.active.as_mut().map(|lease| {
-            let (target, key) = lease.parts_mut();
-            (target.0, key)
-        })
+    pub(super) fn active(&mut self) -> Option<(&'target T, &mut Key)> {
+        let (target, key) = self.active.as_mut()?;
+        Some((*target, key))
     }
 
-    pub(super) fn set(&mut self, target: &'target T, key: T::Key) {
-        self.active = Some(mem::Lease::open(Bound(target), key));
+    pub(super) fn set(&mut self, target: &'target T, key: Key) {
+        self.active = Some((target, key));
     }
 
     pub(super) fn detach(&mut self) {
-        if let Some(lease) = self.active.take() {
-            lease.into_parts();
-        }
+        self.active = None;
     }
 
     pub(super) fn is_bound(&self) -> bool {
@@ -61,5 +51,13 @@ impl<'target, T: Target + ?Sized> Lease<'target, T> {
 impl<T: Target + ?Sized> Default for Lease<'_, T> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<T: Target + ?Sized> Drop for Lease<'_, T> {
+    fn drop(&mut self) {
+        if let Some((target, key)) = self.active {
+            target.retire(key);
+        }
     }
 }

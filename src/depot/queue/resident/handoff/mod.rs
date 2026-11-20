@@ -2,17 +2,48 @@
 
 use std::mem;
 
-use crate::depot::queue::resident;
+use crate::depot::queue::resident::{self, raw};
 
-mod lane;
-mod registry;
+/// Registry-owned FIFO lanes for one-at-a-time affine handoff.
+pub type Registry<W, G, L> = resident::Lanes<raw::Entry<W, G>, resident::Parking, L>;
 
-pub use lane::Lane;
-pub use registry::Registry;
+impl<W, G, L> resident::Lane<'_, Registry<W, G, L>> {
+    pub fn offer_one(self, grant: G) -> Offer<W, G> {
+        if self.owner.is_draining() {
+            return Offer::Draining(grant);
+        }
+        let Some(entry) = self.owner.park(self.position) else {
+            return Offer::Empty(grant);
+        };
+        // SAFETY: park unlinked the initialized wake. Its grant is installed before returning.
+        let value = unsafe { entry.take() };
+        entry.write_grant(grant);
+        Offer::Value(value)
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.owner.is_empty(self.position)
+    }
+}
+
+impl<W, G, L> resident::Target for Registry<W, G, L> {
+    type Parked = usize;
+
+    fn detached_grant<T>(view: raw::View<'_, T>, index: usize) -> Option<usize> {
+        // The previous hook already proved detachment; only a parked grant points forward to itself.
+        (view.hook().next.get() == view.key().raw()).then_some(index)
+    }
+
+    fn retire(&self, key: resident::Key) {
+        if let resident::Removal::Parked(entry) = self.remove(key) {
+            // SAFETY: removal owns the grant. Move it out before its destructor can reuse this slot.
+            drop(unsafe { entry.take_grant() });
+        }
+    }
+}
 
 /// A linear registration in a [`Registry`]. Value and grant payloads are
 /// invariant, so safe code cannot widen borrowed ownership.
-///
 pub type Registration<'target, W, G, L> = resident::Lease<'target, Registry<W, G, L>>;
 
 impl<W, G, L> Registration<'_, W, G, L> {
@@ -26,7 +57,8 @@ impl<W, G, L> Registration<'_, W, G, L> {
         self.detach();
         match registry.remove(key) {
             resident::Removal::Linked => Cancel::Wake,
-            resident::Removal::Parked(entry) => Cancel::Grant(entry.take_grant()),
+            // SAFETY: removing the parked registration returned its initialized grant.
+            resident::Removal::Parked(entry) => Cancel::Grant(unsafe { entry.take_grant() }),
             resident::Removal::Empty => Cancel::Empty,
         }
     }
@@ -39,7 +71,8 @@ impl<W, G, L> Registration<'_, W, G, L> {
             return Grant::Pending;
         };
         self.detach();
-        Grant::Ready(entry.take_grant())
+        // SAFETY: claim consumed this registration's parked grant.
+        Grant::Ready(unsafe { entry.take_grant() })
     }
 }
 
@@ -54,15 +87,7 @@ const _: () = {
     );
 };
 
-/// A registration whose current handoff binding rejected an update.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[must_use = "a rejected registration must be handled"]
-pub enum Reject {
-    Active { index: usize },
-    Draining { index: usize },
-    Full { index: usize },
-    GrantPending { index: usize },
-}
+pub type Reject = resident::Reject<usize>;
 
 /// Exact result of one grant offer.
 #[derive(Eq, PartialEq)]

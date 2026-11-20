@@ -1,6 +1,6 @@
 //! Unsafe boundary for borrowed resident nodes and their stable hooks.
 
-use std::{cell, mem, ops};
+use std::{cell, convert::Infallible, mem, ops};
 
 use crate::depot::{self, queue::links};
 
@@ -51,11 +51,6 @@ impl<'a, T> View<'a, T> {
         self.item
     }
 
-    pub fn is_parked(&self) -> bool {
-        let hook = self.item.hook();
-        hook.prev_index() == Some(self.key) && hook.next_index() == Some(self.key)
-    }
-
     pub fn unpark(self) -> Option<links::Detached<'a>> {
         self.item.hook().try_unpark(self.key)
     }
@@ -66,41 +61,57 @@ const _: () = {
     assert!(mem::size_of::<Option<View<'static, u64>>>() == 2 * mem::size_of::<usize>());
 };
 
-/// One optionally initialized resident payload.
-pub struct Entry<T> {
-    value: cell::Cell<mem::MaybeUninit<T>>,
+union Payload<W, G> {
+    value: mem::ManuallyDrop<W>,
+    grant: mem::ManuallyDrop<G>,
 }
 
-impl<T> Default for Entry<T> {
+/// Storage for the value or grant selected by the resident node's existing links.
+pub struct Entry<W, G = Infallible> {
+    payload: cell::Cell<mem::MaybeUninit<Payload<W, G>>>,
+}
+
+impl<W, G> Default for Entry<W, G> {
     fn default() -> Self {
         Self {
-            value: cell::Cell::new(mem::MaybeUninit::uninit()),
+            payload: cell::Cell::new(mem::MaybeUninit::uninit()),
         }
     }
 }
 
-impl<T> Entry<T> {
-    pub fn initialize(&self, value: T)
+impl<W, G> Entry<W, G> {
+    fn payload(&self) -> *mut Payload<W, G> {
+        self.payload.as_ptr().cast()
+    }
+
+    pub fn initialize(&self, value: W)
     where
-        T: Copy,
+        W: Copy,
     {
-        self.value.set(mem::MaybeUninit::new(value));
+        // SAFETY: the cell permits writing this field without reading its previous contents.
+        unsafe { (&raw mut (*self.payload()).value).write(mem::ManuallyDrop::new(value)) };
     }
 
     /// # Safety
-    /// The caller owns this exact initialized payload and consumes it once.
-    /// No access may read or retire it again before its next initialization.
-    pub unsafe fn take(&self) -> T {
-        // SAFETY: the owning topology proves this entry's value is initialized.
-        unsafe { self.value.replace(mem::MaybeUninit::uninit()).assume_init() }
+    /// The caller owns this initialized value and consumes it only once.
+    pub unsafe fn take(&self) -> W {
+        unsafe { mem::ManuallyDrop::take(&mut (*self.payload()).value) }
     }
 
     /// # Safety
-    /// The caller owns this exact initialized payload and its sole drop obligation.
-    /// No access may read or retire it again before its next initialization.
+    /// The caller owns this initialized value and its sole drop obligation.
     pub unsafe fn retire(&self) {
-        let mut value = self.value.replace(mem::MaybeUninit::uninit());
-        // SAFETY: the owning topology proves this entry's value is initialized.
-        unsafe { value.assume_init_drop() };
+        drop(unsafe { self.take() });
+    }
+
+    pub(super) fn write_grant(&self, grant: G) {
+        // SAFETY: park removed the value before this grant is installed in the cell.
+        unsafe { (&raw mut (*self.payload()).grant).write(mem::ManuallyDrop::new(grant)) };
+    }
+
+    /// # Safety
+    /// The caller removed the parked grant and owns its single transfer.
+    pub(super) unsafe fn take_grant(&self) -> G {
+        unsafe { mem::ManuallyDrop::take(&mut (*self.payload()).grant) }
     }
 }

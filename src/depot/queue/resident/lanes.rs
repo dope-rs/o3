@@ -1,4 +1,4 @@
-use std::{marker, mem, num};
+use std::{marker, mem, num, ptr};
 
 use crate::{
     alloc,
@@ -7,7 +7,7 @@ use crate::{
         self,
         queue::{
             links,
-            resident::{self, Bounds, Capacity, Draining, Error, Extent},
+            resident::{self, Bounds, Capacity, Draining, Error, Extent, Target, raw::Entry},
             round,
         },
     },
@@ -17,15 +17,15 @@ use crate::{
 #[derive(Clone, Copy)]
 pub struct Key {
     index: links::Index,
-    lane: Lane,
+    lane: Position,
 }
 
 /// One lane admitted by its owner's immutable extent.
 #[derive(Clone, Copy, Eq, PartialEq)]
 #[repr(transparent)]
-pub(super) struct Lane(links::Index);
+pub(super) struct Position(links::Index);
 
-impl Lane {
+impl Position {
     pub(super) fn new<const N: usize, const I: usize>() -> Self {
         const { assert!(I < N && N <= u32::MAX as usize) };
         Self(links::Index::from(
@@ -41,6 +41,20 @@ impl Lane {
         Self(links::Index::from_pos(position))
     }
 }
+
+/// A lane borrowed from the store that admitted its position.
+pub struct Lane<'a, T> {
+    pub(super) owner: &'a T,
+    pub(super) position: Position,
+}
+
+impl<T> Clone for Lane<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Lane<'_, T> {}
 
 /// Marker for lanes whose residents leave through `pop` or `take`.
 pub enum Plain {}
@@ -96,29 +110,34 @@ impl<T, M, L> Lanes<T, M, L> {
         })
     }
 
-    pub(super) fn try_at(&self, index: usize) -> Result<Lane, Bounds<num::NonZero<u32>>> {
+    pub(super) fn at(&self, position: Position) -> Lane<'_, Self> {
+        Lane {
+            owner: self,
+            position,
+        }
+    }
+
+    pub(super) fn try_at(&self, index: usize) -> Result<Position, Bounds<num::NonZero<u32>>> {
         let lanes = self.storage.extent().lanes();
         if index >= lanes.get() as usize {
             return Err(Bounds::new(index, lanes));
         }
         // SAFETY: this original u32 lane extent proves the tail bound and excludes END.
-        Ok(Lane(unsafe { links::Index::new_usize(index) }))
+        Ok(Position(unsafe { links::Index::new_usize(index) }))
     }
 
-    pub(super) fn try_push<E: Copy>(&self, lane: Lane, full: E) -> Result<(Key, &T), E> {
+    fn insert(&self, lane: Position) -> Option<(Key, &T)> {
         let entries = self.storage.as_ref();
         // SAFETY: `self.free` and `entries` share this one `Capacity` extent, and
         // every hooked key was acquired from that same slice, so the vacant chain
         // stays acyclic inside it.
-        let Some(view) = (unsafe { resident::raw::View::acquire(&self.free, entries) }) else {
-            return Err(full);
-        };
+        let view = unsafe { resident::raw::View::acquire(&self.free, entries) }?;
         // SAFETY: acquisition retains this detached hook and the admitted lane
         // belongs to this exact owner's reciprocal active ring.
         round::Join::insert(unsafe {
             depot::raw::Proof::new((self.join(lane, entries), *view.key()))
         });
-        Ok((
+        Some((
             Key {
                 index: *view.key(),
                 lane,
@@ -127,13 +146,12 @@ impl<T, M, L> Lanes<T, M, L> {
         ))
     }
 
-    pub(super) fn relink_back(&self, key: Key, lane: Lane) -> (Key, &T) {
+    fn relink_back(&self, key: &mut Key, lane: Position, linked: bool) {
         let entries = self.storage.as_ref();
-        let view = Self::view(entries, key.index);
         let target = self.join(lane, entries);
-        if is_linked(view) {
+        if linked {
             if key.lane == lane {
-                return (key, view.into_ref());
+                return;
             }
             // SAFETY: this key retains its exact current lane membership.
             let vacant = round::Join::remove(unsafe {
@@ -145,16 +163,10 @@ impl<T, M, L> Lanes<T, M, L> {
             // SAFETY: the retained key is detached in this exact owner's store.
             round::Join::insert(unsafe { depot::raw::Proof::new((target, key.index)) });
         }
-        (
-            Key {
-                index: key.index,
-                lane,
-            },
-            view.into_ref(),
-        )
+        key.lane = lane;
     }
 
-    pub(super) fn pop(&self, lane: Lane) -> Option<resident::raw::View<'_, T>> {
+    pub(super) fn pop(&self, lane: Position) -> Option<resident::raw::View<'_, T>> {
         let entries = self.storage.as_ref();
         // SAFETY: the admitted lane retains its reciprocal FIFO and exact active ring.
         let vacant = round::Join::pop(unsafe { depot::raw::Proof::new(self.join(lane, entries)) })?;
@@ -165,7 +177,7 @@ impl<T, M, L> Lanes<T, M, L> {
 
     pub(super) fn take<const ROTATE: bool>(&self) -> Option<&T> {
         let entries = self.storage.as_ref();
-        let lane = Lane(self.round.first()?);
+        let lane = Position(self.round.first()?);
         // SAFETY: this exact active front proves a reciprocal nonempty lane.
         let vacant = round::Join::active::<ROTATE>(unsafe {
             depot::raw::Proof::new(self.join(lane, entries))
@@ -187,7 +199,7 @@ impl<T, M, L> Lanes<T, M, L> {
         self.draining.is_active()
     }
 
-    pub(super) fn is_empty(&self, lane: Lane) -> bool {
+    pub(super) fn is_empty(&self, lane: Position) -> bool {
         let lanes = self.storage.tail();
         // SAFETY: the admitted lane belongs to this owner's immutable lane extent.
         unsafe { resident::raw::View::new(lanes, lane.index()) }.is_empty()
@@ -195,11 +207,11 @@ impl<T, M, L> Lanes<T, M, L> {
 
     fn join<'a>(
         &'a self,
-        lane: Lane,
+        lane: Position,
         entries: &'a [resident::raw::Node<T>],
     ) -> round::Join<'a, [resident::raw::Node<T>], [resident::raw::Node<links::Chain>]> {
         let lanes = self.storage.tail();
-        // SAFETY: each private Lane was admitted by this owner's immutable extent.
+        // SAFETY: each private Position was admitted by this owner's immutable extent.
         let lane = unsafe { resident::raw::View::new(lanes, lane.index()) };
         round::Join {
             hooks: entries,
@@ -216,18 +228,82 @@ impl<T, M, L> Lanes<T, M, L> {
     }
 }
 
+impl<T, M, const N: usize> Lanes<T, M, resident::Fixed<N>> {
+    pub fn lane<const I: usize>(&self) -> Lane<'_, Self> {
+        self.at(Position::new::<N, I>())
+    }
+}
+
+impl<W, G, M, L> Lanes<Entry<W, G>, M, L> {
+    /// Takes the next value in drain order and ends draining at quiescence.
+    #[must_use = "a drained item remains caller-owned"]
+    pub fn drain_next(&self) -> Option<W> {
+        self.draining.drain(|| {
+            let entry = self.take::<false>()?;
+            // SAFETY: take removed one initialized wake value from the ring.
+            Some(unsafe { entry.take() })
+        })
+    }
+}
+
+impl<'a, W, G, M, L> Lane<'a, Lanes<Entry<W, G>, M, L>> {
+    pub fn try_keep<P>(
+        self,
+        slot: &mut resident::Lease<'a, Lanes<Entry<W, G>, M, L>>,
+        value: W,
+    ) -> Result<(), resident::Reject<P>>
+    where
+        W: Copy,
+        Lanes<Entry<W, G>, M, L>: Target<Parked = P>,
+    {
+        let index = self.position.index().get();
+        if self.owner.is_draining() {
+            return Err(resident::Reject::Draining { index });
+        }
+        let entry = match slot.active() {
+            Some((active, key)) => {
+                let view = Lanes::<_, M, L>::view(active.storage.as_ref(), key.index);
+                let linked = is_linked(view);
+                if !linked
+                    && let Some(index) =
+                        <Lanes<Entry<W, G>, M, L> as Target>::detached_grant(view, index)
+                {
+                    return Err(resident::Reject::GrantPending { index });
+                }
+                if !ptr::eq(active, self.owner) {
+                    return Err(resident::Reject::Active { index });
+                }
+                active.relink_back(key, self.position, linked);
+                &**view.into_ref()
+            }
+            None => {
+                let Some((key, entry)) = self.owner.insert(self.position) else {
+                    return Err(resident::Reject::Full { index });
+                };
+                slot.set(self.owner, key);
+                entry
+            }
+        };
+        entry.initialize(value);
+        Ok(())
+    }
+
+    #[must_use = "a taken item remains caller-owned"]
+    pub fn take_one(self) -> Option<W> {
+        let entry = self.owner.pop(self.position)?;
+        // SAFETY: pop detached one initialized wake value; its registration retains the slot.
+        Some(unsafe { entry.take() })
+    }
+}
+
 impl<T, L> Lanes<T, Parking, L> {
-    pub(super) fn park(&self, lane: Lane) -> Option<&T> {
+    pub(super) fn park(&self, lane: Position) -> Option<&T> {
         let entries = self.storage.as_ref();
         // SAFETY: the admitted lane retains its reciprocal FIFO and exact active ring.
         let vacant = round::Join::pop(unsafe { depot::raw::Proof::new(self.join(lane, entries)) })?;
         let view = Self::view(entries, vacant.index());
         vacant.park();
         Some(view.into_ref())
-    }
-
-    pub(super) fn is_parked(&self, key: Key) -> bool {
-        Self::view(self.storage.as_ref(), key.index).is_parked()
     }
 
     pub(super) fn claim(&self, key: Key) -> Option<&T> {
@@ -261,7 +337,7 @@ impl<T, L> Lanes<T, Parking, L> {
 }
 
 impl<T, L> Lanes<T, Plain, L> {
-    pub(super) fn remove(&self, key: Key) -> Option<Lane> {
+    pub(super) fn remove(&self, key: Key) -> Option<Position> {
         let entries = self.storage.as_ref();
         let view = Self::view(entries, key.index);
         if is_linked(view) {

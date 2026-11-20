@@ -3,7 +3,8 @@
 
 use std::{cell, marker, mem, num};
 
-use lanes::{Key, Lane, Lanes, Parking, Plain, Removal};
+pub use lanes::Lane;
+use lanes::{Key, Lanes, Parking, Plain, Position, Removal};
 use lease::{Lease, Target};
 
 use crate::{
@@ -16,6 +17,16 @@ pub mod fifo;
 pub mod handoff;
 mod lanes;
 mod lease;
+
+/// The destination lane and exact cause of a rejected registration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use = "a rejected registration must be handled"]
+pub enum Reject<P> {
+    Active { index: usize },
+    Draining { index: usize },
+    Full { index: usize },
+    GrantPending { index: P },
+}
 
 /// A lane extent fixed by the storage constructor.
 #[derive(Clone, Copy)]

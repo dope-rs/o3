@@ -1,19 +1,12 @@
 //! Bounded payloads with owner-bound lanes and linear FIFO registrations.
 
-use std::{marker, mem, num, ptr};
+use std::{convert::Infallible, marker, mem, num};
 
 use crate::depot::queue::resident;
 
 /// Bounded FIFO value slots with a constructor-proved lane extent.
 pub type Fifo<W, L = num::NonZero<usize>> =
     resident::Lanes<resident::raw::Entry<W>, resident::Plain, L>;
-
-/// One lane borrowed from its exact immutable FIFO owner.
-#[derive(Clone, Copy)]
-pub struct Lane<'a, W, L = num::NonZero<usize>> {
-    fifo: &'a Fifo<W, L>,
-    lane: resident::Lane,
-}
 
 /// The invariant identity of one FIFO's immutable lane extent.
 pub struct Scope<'scope> {
@@ -83,22 +76,12 @@ impl<'scope> TryFrom<Index<'scope>> for Compact<'scope> {
 /// Linear ownership of one slot, including after its value has been taken.
 pub type Registration<'target, W, L = num::NonZero<usize>> = resident::Lease<'target, Fifo<W, L>>;
 
-/// A registration whose current queue binding rejected an update.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[must_use = "a rejected registration must be handled"]
-pub enum Reject {
-    Active { index: usize },
-    Draining { index: usize },
-    Full { index: usize },
-}
+pub type Reject = resident::Reject<Infallible>;
 
 impl<W, L> Fifo<W, L> {
     /// Borrows lane zero, retained by every constructor's nonzero extent.
-    pub fn first(&self) -> Lane<'_, W, L> {
-        Lane {
-            fifo: self,
-            lane: resident::Lane::new::<1, 0>(),
-        }
+    pub fn first(&self) -> resident::Lane<'_, Self> {
+        self.at(resident::Position::new::<1, 0>())
     }
 
     pub fn take_next(&self) -> Option<W> {
@@ -110,25 +93,14 @@ impl<W, L> Fifo<W, L> {
         // remains reserved by its registration while this value is consumed.
         Some(unsafe { entry.take() })
     }
-
-    /// Takes the next value in drain order and ends draining at quiescence.
-    #[must_use = "a drained item remains caller-owned"]
-    pub fn drain_next(&self) -> Option<W> {
-        self.draining.drain(|| {
-            let entry = self.take::<false>()?;
-            // SAFETY: only initialized values are linked; take removes
-            // this link before the one owning value is consumed.
-            Some(unsafe { entry.take() })
-        })
-    }
 }
 
 impl<W> Fifo<W> {
     pub fn try_lane(
         &self,
         index: usize,
-    ) -> Result<Lane<'_, W>, resident::Bounds<num::NonZero<u32>>> {
-        self.try_at(index).map(|lane| Lane { fifo: self, lane })
+    ) -> Result<resident::Lane<'_, Self>, resident::Bounds<num::NonZero<u32>>> {
+        Ok(self.at(self.try_at(index)?))
     }
 
     /// Creates one FIFO and borrows its source under a fresh invariant scope.
@@ -159,59 +131,8 @@ impl<'scope, W> Fifo<W, Scope<'scope>> {
     }
 
     /// Borrows a lane admitted by this scope's only FIFO.
-    pub fn lane(&self, index: Index<'scope>) -> Lane<'_, W, Scope<'scope>> {
-        Lane {
-            fifo: self,
-            lane: resident::Lane::from_pos(index.position),
-        }
-    }
-}
-
-impl<W, const N: usize> Fifo<W, resident::Fixed<N>> {
-    /// Borrows a lane proved to exist by this FIFO's fixed extent.
-    pub fn lane<const I: usize>(&self) -> Lane<'_, W, resident::Fixed<N>> {
-        Lane {
-            fifo: self,
-            lane: resident::Lane::new::<N, I>(),
-        }
-    }
-}
-
-impl<'a, W, L> Lane<'a, W, L> {
-    pub fn try_keep(self, slot: &mut Registration<'a, W, L>, value: W) -> Result<(), Reject>
-    where
-        W: Copy,
-    {
-        let fifo = self.fifo;
-        let lane = self.lane;
-        let index = lane.index().get();
-        if fifo.is_draining() {
-            return Err(Reject::Draining { index });
-        }
-        match slot.active() {
-            Some((active, key)) => {
-                if !ptr::eq(active, fifo) {
-                    return Err(Reject::Active { index });
-                }
-                let (next, entry) = active.relink_back(*key, lane);
-                entry.initialize(value);
-                *key = next;
-            }
-            None => {
-                let (key, entry) = fifo.try_push(lane, Reject::Full { index })?;
-                entry.initialize(value);
-                slot.set(fifo, key);
-            }
-        }
-        Ok(())
-    }
-
-    #[must_use = "a taken item remains caller-owned"]
-    pub fn take_one(self) -> Option<W> {
-        let entry = self.fifo.pop(self.lane)?;
-        // SAFETY: pop removes one initialized linked value from this exact
-        // owner; the registration keeps its now-empty slot reserved.
-        Some(unsafe { entry.take() })
+    pub fn lane(&self, index: Index<'scope>) -> resident::Lane<'_, Self> {
+        self.at(resident::Position::from_pos(index.position))
     }
 }
 
@@ -230,14 +151,14 @@ impl<W, L> Registration<'_, W, L> {
         if fifo.is_draining() {
             return None;
         }
-        (Lane { fifo, lane }).take_one()
+        fifo.at(lane).take_one()
     }
 }
 
 impl<W, L> resident::Target for Fifo<W, L> {
-    type Key = resident::Key;
+    type Parked = Infallible;
 
-    fn retire(&self, key: Self::Key) {
+    fn retire(&self, key: resident::Key) {
         let _ = self.remove(key);
     }
 }
