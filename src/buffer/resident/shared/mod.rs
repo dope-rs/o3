@@ -89,16 +89,6 @@ impl<'d> Shared<'d> {
             region: self.region.try_clone()?,
         })
     }
-    pub(in crate::buffer) fn try_share(
-        view: regions::NonEmpty<'_, '_, Self>,
-    ) -> Result<Self, rc::Error> {
-        let view = view.view();
-        Ok(Self {
-            // SAFETY: the source-bound selection retains the same immutable
-            // region throughout retention; no independent owner can be supplied.
-            region: unsafe { view.source.region.try_view(view.as_slice())? },
-        })
-    }
 }
 // SAFETY: shared access preserves the original immutable extent.
 unsafe impl buffer::raw::Source for Shared<'_> {}

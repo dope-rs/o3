@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::{
     buffer,
-    buffer::{hold, resident, segments::Item, storage, storage::regions, write::consume},
+    buffer::{hold, resident, segments::Item, storage, write::consume},
     mem::rc,
 };
 
@@ -15,7 +15,7 @@ pub trait Seal: Sized {
         source: Result<buffer::raw::Slices<'_, 1>, consume::Error>,
         domain: &Self::Retention,
     ) -> Result<Item<Self>, hold::CopyError>;
-    fn try_share(view: regions::NonEmpty<'_, '_, Self>) -> Result<Item<Self>, rc::Error>;
+    fn try_share(view: &Item<buffer::View<'_, Self>>) -> Result<Item<Self>, rc::Error>;
 }
 
 impl Seal for storage::Shared {
@@ -38,9 +38,9 @@ impl Seal for storage::Shared {
         Ok(Item { value })
     }
 
-    fn try_share(view: regions::NonEmpty<'_, '_, Self>) -> Result<Item<Self>, rc::Error> {
+    fn try_share(view: &Item<buffer::View<'_, Self>>) -> Result<Item<Self>, rc::Error> {
         Ok(Item {
-            value: view.view().try_clone()?,
+            value: view.value.try_clone()?,
         })
     }
 }
@@ -68,9 +68,12 @@ impl<'d> Seal for resident::Shared<'d> {
         Ok(Item { value })
     }
 
-    fn try_share(view: regions::NonEmpty<'_, '_, Self>) -> Result<Item<Self>, rc::Error> {
+    fn try_share(view: &Item<buffer::View<'_, Self>>) -> Result<Item<Self>, rc::Error> {
+        let view = &view.value;
+        // SAFETY: the view borrows the original region and its admitted nonempty slice together.
+        let region = unsafe { view.source.region.try_view(view.as_slice())? };
         Ok(Item {
-            value: resident::Shared::try_share(view)?,
+            value: Self { region },
         })
     }
 }

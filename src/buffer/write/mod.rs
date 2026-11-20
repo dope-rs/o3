@@ -307,18 +307,6 @@ impl<'a> Spare<'a> {
         *source = tail;
     }
 
-    /// Admits the exact source before dependent work, then copies only on success.
-    pub fn try_append<T, E: From<consume::Error>>(
-        &mut self,
-        bytes: &[u8],
-        ready: impl FnOnce() -> Result<T, E>,
-    ) -> Result<T, E> {
-        let append = Staging::try_new(self, [bytes])?;
-        let value = ready()?;
-        append.copy();
-        Ok(value)
-    }
-
     /// Publishes this writer's complete initialized prefix exactly once.
     pub fn commit(self) {
         *self.target += self.len;

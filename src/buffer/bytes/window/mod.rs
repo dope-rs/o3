@@ -3,8 +3,8 @@
 
 pub(in crate::buffer) use capacity::Capacity;
 pub(in crate::buffer) use growth::Growth;
-pub(in crate::buffer) use plans::{Edit, try_staged};
-use plans::{try_copy, try_slices};
+pub(in crate::buffer) use plans::try_staged;
+use plans::try_copy;
 pub use snapshot::Snapshot;
 pub(in crate::buffer) use state::State;
 

@@ -183,36 +183,34 @@ fn retain_costs_match() {
 }
 
 #[test]
-fn retains_scoped_view() {
-    let retained = {
-        let copied = Shared::try_copy(b"abcdef");
-        let copied = copied.expect("scoped view fixture must be copyable");
-        let source = resident::Shared::from(copied);
-        let pointer = source.as_slice().as_ptr().wrapping_add(1);
-        let retained = source
-            .get(1..5)
-            .expect("range lies within scoped bytes")
-            .try_retain()
-            .expect("asserted retained edge");
-        assert_eq!(retained.as_slice().as_ptr(), pointer);
-        retained
-    };
-    assert_eq!(retained.as_slice(), b"bcde");
-}
+fn retains_selected_backing() {
+    let source = Shared::try_copy(b"_abcdef_").expect("source allocation");
+    let start = source.as_slice().as_ptr();
+    let plain = buffer::Cursor::try_get(&source, 1..7)
+        .expect("outer range")
+        .try_retain()
+        .expect("plain owner");
+    assert_eq!(Tracker::counts(|| drop(source)).1, [0, 0]);
+    assert_eq!(plain.as_slice(), b"abcdef");
+    assert_eq!(plain.as_slice().as_ptr(), start.wrapping_add(1));
 
-#[test]
-fn retains_owned_view() {
-    let retained = {
-        let copied = Shared::try_copy(b"abcdef");
-        let source = copied.expect("owned view fixture must be copyable");
-        let pointer = source.as_slice().as_ptr().wrapping_add(1);
-        let view =
-            (buffer::Cursor::try_get(&source, 1..5)).expect("the range lies within owned bytes");
-        let retained = (view.try_retain()).expect("the owned view must be retainable");
-        assert_eq!(retained.as_slice().as_ptr(), pointer);
-        retained
-    };
-    assert_eq!(retained.as_slice(), b"bcde");
+    let source = resident::Shared::from(plain);
+    let scoped = source
+        .get(1..5)
+        .expect("inner range")
+        .try_retain()
+        .expect("scoped owner");
+    let empty = source
+        .get(2..2)
+        .expect("empty range")
+        .try_retain()
+        .expect("empty owner");
+    assert_eq!(Tracker::counts(|| drop(source)).1, [0, 0]);
+    assert_eq!(scoped.as_slice(), b"bcde");
+    assert_eq!(scoped.as_slice().as_ptr(), start.wrapping_add(2));
+    assert_eq!(Tracker::counts(|| drop(scoped)).1, [0, 1]);
+    assert!(empty.is_empty());
+    assert!(empty.backing().is_none());
 }
 
 #[test]
@@ -236,21 +234,6 @@ fn validates_compact_ranges() {
             len: 9,
         })
     ));
-}
-
-#[test]
-fn omits_empty_backing() {
-    let copied = Shared::try_copy(b"abcdef");
-    let copied = copied.expect("empty view fixture must be copyable");
-    let source = resident::Shared::from(copied);
-    let retained = source
-        .get(2..2)
-        .expect("empty range lies within scoped bytes")
-        .try_retain()
-        .expect("asserted retained edge");
-
-    assert!(retained.is_empty());
-    assert!(retained.backing().is_none());
 }
 
 #[test]

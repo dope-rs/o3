@@ -1,6 +1,5 @@
 use std::{num::NonZero, ops, ptr};
 
-pub(in crate::buffer) use nonempty::NonEmpty;
 pub(in crate::buffer) use prefix::Prefix;
 pub(in crate::buffer) use tag::Header;
 pub use tag::Tag;
@@ -33,7 +32,6 @@ pub(in crate::buffer) unsafe fn try_init<P: crate::buffer::raw::Policy>(
     Ok(unsafe { regions::Init::new(heap) })
 }
 
-mod nonempty;
 mod prefix;
 mod tag;
 mod value;
@@ -337,14 +335,14 @@ where
 
 impl<'d> From<regions::Shared<Option<provided::Account<'d>>>> for resident::Shared<'d> {
     fn from(region: regions::Shared<Option<provided::Account<'d>>>) -> Self {
-        match region.owner {
-            Some(owner) => Self {
-                region: regions::Shared {
-                    owner: resident::State::Provided(owner),
-                    bytes: region.bytes,
+        Self {
+            region: regions::Shared {
+                owner: match region.owner {
+                    Some(owner) => resident::State::Provided(owner),
+                    None => resident::State::Slice,
                 },
+                bytes: region.bytes,
             },
-            None => Self::new(),
         }
     }
 }

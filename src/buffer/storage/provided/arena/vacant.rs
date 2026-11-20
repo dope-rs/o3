@@ -93,7 +93,7 @@ impl<'d, T, C> Vacant<'d, T, (), &'d C> {
         C: buffer::raw::Fixed<T>,
     {
         // SAFETY: the fixed arena initialized every slot with its admitted resident ceiling.
-        let resident = unsafe { arena::Entry::resident(self.node.sink().entry) };
+        let resident = unsafe { *self.entry().entry.capacity() as u32 };
         let context = self.context;
         buffer::raw::Limit::scope(resident, |limit| {
             // SAFETY: the native admission and this vacancy retain the same context and layout.

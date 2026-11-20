@@ -1,6 +1,7 @@
 use std::{
-    cell,
-    mem::{MaybeUninit, offset_of, size_of},
+    cell, marker,
+    mem::{MaybeUninit, size_of},
+    num::NonZero,
     ops, ptr,
 };
 
@@ -8,8 +9,8 @@ use provided::account;
 
 use crate::{
     buffer::{
-        raw::Projection,
-        resident,
+        raw::{Policy as _, Projection},
+        resident, storage,
         storage::{provided, provided::arena},
     },
     mem::raw::{self, Edge},
@@ -21,12 +22,12 @@ use crate::{
 #[derive(Default)]
 pub(super) struct Counter(cell::Cell<u32>);
 
-/// The embedded account domain; a live count retains its initialized debit.
+/// A live edge retains the slot and its paying budget.
 #[derive(Debug)]
-#[repr(C)]
-pub(in crate::buffer::storage::provided) struct Registration<'d> {
+#[repr(transparent)]
+pub(super) struct Registration<'d> {
     count: raw::Count,
-    pub(super) value: cell::UnsafeCell<MaybeUninit<resident::Charge<'d>>>,
+    scope: marker::PhantomData<fn(&'d ()) -> &'d ()>,
 }
 
 /// The hidden scope's authority to reclaim an initialized item.
@@ -37,59 +38,43 @@ enum State {
     Occupied,
 }
 
-/// Scope-owned metadata; the free and returned lists share one phase-owned link.
-#[repr(C, align(8))]
-pub(in crate::buffer::storage::provided) struct Entry<'d> {
-    state: cell::Cell<State>,
-    pub(super) resident: cell::Cell<MaybeUninit<u32>>,
-    pub(super) domain: &'d arena::State<'d>,
-    pub(super) next: arena::nodes::Link<'d>,
-    registration: Registration<'d>,
+/// An account can only exist while the slot is detached from both lists.
+#[derive(Clone, Copy)]
+pub(super) union Data<'d> {
+    pub(super) free: Option<ptr::NonNull<Entry<'d>>>,
+    pub(super) returned: ptr::NonNull<Entry<'d>>,
+    budget: resident::Budget<'d>,
 }
 
-impl<'d> Entry<'d> {
-    pub(super) fn new(
-        domain: &'d arena::State<'d>,
-        resident: MaybeUninit<u32>,
-        next: Option<arena::Empty<'d>>,
-    ) -> Self {
-        Self {
-            state: cell::Cell::new(State::Empty),
-            resident: cell::Cell::new(resident),
-            domain,
-            next: cell::Cell::new(next.map(|node| node.entry)),
-            registration: Registration {
-                count: raw::Count::empty(),
-                value: cell::UnsafeCell::new(MaybeUninit::uninit()),
-            },
-        }
-    }
+#[repr(C, align(8))]
+pub(in crate::buffer::storage::provided) struct Entry<'d> {
+    registration: Registration<'d>,
+    state: cell::Cell<State>,
+    pub(super) resident: cell::Cell<MaybeUninit<usize>>,
+    pub(super) data: cell::Cell<Data<'d>>,
+    pub(super) domain: &'d arena::State<'d>,
+}
 
-    /// # Safety
-    /// The pointer retains the complete slot allocation for its active scope.
-    /// Its resident was initialized by the fixed scope or exact admission.
-    pub(in crate::buffer::storage::provided) unsafe fn resident(
-        pointer: ptr::NonNull<Self>,
-    ) -> u32 {
-        // SAFETY: the caller retains the slot and its initialized resident value.
-        unsafe { pointer.as_ref().resident.get().assume_init() }
-    }
-
+impl<'d> storage::NonEmpty<provided::Prefix<'_, 'd, &[u8]>> {
     #[inline]
     pub(in crate::buffer::storage::provided) fn try_account<A: resident::Admission>(
-        owner: &provided::Owner<'d>,
+        self,
         budget: resident::Budget<'d>,
         admission: A,
-    ) -> Result<ops::ControlFlow<A::Declined, provided::Account<'d>>, account::Cause> {
-        let pointer = owner.entry;
+    ) -> Result<
+        ops::ControlFlow<A::Declined, storage::Shared<Option<provided::Account<'d>>>>,
+        account::Cause,
+    > {
+        let prefix = self.into_storage();
+        let pointer = prefix.owner.entry;
         // SAFETY: the owner retains this scope's stable slot. Occupied
         // registrations remain shared; admission invokes no user callbacks.
-        let entry: &'d Self = unsafe { pointer.as_ref() };
+        let entry: &'d Entry<'d> = unsafe { pointer.as_ref() };
         let registration = &entry.registration;
         if !registration.is_empty() {
-            // SAFETY: the published count retains the initialized resident charge.
-            let charge = unsafe { (*registration.value.get()).assume_init_ref() };
-            if !ptr::eq(charge.budget().core(), budget.core()) {
+            // SAFETY: the live account keeps this slot detached with its original paying budget.
+            let paying = unsafe { entry.data.get().budget };
+            if !ptr::eq(paying.core(), budget.core()) {
                 return Err(account::Cause::Foreign);
             }
             if let ops::ControlFlow::Break(declined) = admission.check(budget, 0) {
@@ -105,37 +90,65 @@ impl<'d> Entry<'d> {
             if count >= limit {
                 return Err(account::Cause::Exhausted { count, limit });
             }
-            // SAFETY: the owner retains the slot's original resident layout.
-            let resident = unsafe { Self::resident(pointer) } as usize;
-            if let ops::ControlFlow::Break(declined) = admission.check(budget, resident) {
+            // SAFETY: the admitted projection fits this slot's initialized ceiling,
+            // and the nonempty prefix retains at least one byte of that projection.
+            let resident = unsafe { NonZero::new_unchecked(*entry.capacity() as u32) };
+            if let ops::ControlFlow::Break(declined) =
+                admission.check(budget, resident.get() as usize)
+            {
                 return Ok(ops::ControlFlow::Break(declined));
             }
-            let charge = budget
-                .try_charge(resident)
+            budget
+                .try_acquire(resident)
                 .map_err(account::Cause::Budget)?;
             domain.accounted.0.set(count + 1);
-            // SAFETY: this empty registration has no issued account. Initialize
-            // its sole debit before publishing the first edge; no callbacks run.
-            unsafe {
-                (*registration.value.get()).write(charge);
-                registration.activate();
-            }
+            entry.data.set(Data { budget });
+            // SAFETY: the detached slot owns the debit and its count is still empty.
+            unsafe { registration.activate() };
         }
-        // SAFETY: admission transferred one live embedded edge. Deriving its
-        // address from the complete slot preserves provenance for finalization.
-        Ok(ops::ControlFlow::Continue(provided::Account {
-            registration: unsafe {
-                raw::Owner::from_raw(pointer.byte_add(offset_of!(Self, registration)).cast())
-            },
+        // SAFETY: admission transfers one edge to the first field of this repr(C) entry.
+        let owner = provided::Account {
+            registration: unsafe { raw::Owner::from_raw(pointer.cast()) },
+        };
+        // SAFETY: the counted edge retains the same slot as these admitted prefix bytes.
+        Ok(ops::ControlFlow::Continue(unsafe {
+            storage::Shared::assume(prefix.bytes, Some(owner))
         }))
+    }
+}
+
+impl<'d> Entry<'d> {
+    pub(super) fn new(
+        domain: &'d arena::State<'d>,
+        resident: MaybeUninit<usize>,
+        next: Option<arena::Empty<'d>>,
+    ) -> Self {
+        Self {
+            registration: Registration {
+                count: raw::Count::empty(),
+                scope: marker::PhantomData,
+            },
+            state: cell::Cell::new(State::Empty),
+            resident: cell::Cell::new(resident),
+            data: cell::Cell::new(Data {
+                free: next.map(|node| node.entry),
+            }),
+            domain,
+        }
+    }
+
+    /// # Safety
+    /// Admission initialized this u32 ceiling and the slot cannot be reused during the borrow.
+    pub(in crate::buffer::storage::provided) unsafe fn capacity(&self) -> &usize {
+        unsafe { (&*self.resident.as_ptr()).assume_init_ref() }
     }
 
     /// # Safety
     /// The registration is initialized and all its issued access has ended.
     /// Consume it once before returning the slot or initializing another charge.
     unsafe fn refund(&self) {
-        // SAFETY: exclusive registration ownership consumes its sole resident debit.
-        unsafe { (*self.registration.value.get()).assume_init_drop() };
+        // SAFETY: the registration still holds its budget and the same ceiling it debited.
+        unsafe { self.data.get().budget.release(*self.capacity()) };
     }
 
     /// # Safety
@@ -198,10 +211,8 @@ unsafe impl raw::Edge for Registration<'_> {
 // refunds before returning the slot, without callbacks or premature reuse.
 unsafe impl<'d> raw::Target for Registration<'d> {
     unsafe fn destroy(pointer: ptr::NonNull<Self>) {
-        // SAFETY: activation retained the complete slot's provenance for this
-        // exact embedded registration in the stable repr(C) entry.
-        let pointer =
-            unsafe { pointer.byte_sub(offset_of!(Entry<'d>, registration)) }.cast::<Entry<'d>>();
+        // Activation issued the first field's address from the complete repr(C) slot.
+        let pointer = pointer.cast::<Entry<'d>>();
         // SAFETY: the last counted edge ended and set this registration's count to zero.
         let entry = unsafe { pointer.as_ref() };
         let domain = entry.domain;
@@ -215,7 +226,6 @@ unsafe impl<'d> raw::Target for Registration<'d> {
 }
 
 const _: () = {
-    assert!(size_of::<Registration<'_>>() == 3 * size_of::<usize>());
-    assert!(size_of::<Entry<'_>>() == 6 * size_of::<usize>());
+    assert!(size_of::<Entry<'_>>() == 4 * size_of::<usize>());
     assert!(align_of::<Entry<'_>>() == 8);
 };

@@ -104,7 +104,7 @@ impl<'a, P: crate::buffer::raw::Policy> Unique<'a, P> {
         let len = (range.end - range.start) as usize;
         let dst = crate::buffer::raw::Header::data(pointer);
         // SAFETY: Unique keeps the exact source alive and distinct from the
-        // fresh allocation; Edit proves both copied ranges.
+        // fresh allocation. The window admits the live suffix and the appended source.
         unsafe {
             let source = buffer::raw::range(self.data(), range.start as usize, len);
             (source, tail).copy_to(dst.as_ptr());

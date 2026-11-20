@@ -12,13 +12,19 @@ use crate::{
 /// One edge retaining its concrete initialized registration and scope.
 #[derive(Debug)]
 pub struct Account<'d> {
-    pub(super) registration: raw::Owner<arena::Registration<'d>>,
+    pub(super) registration: raw::Owner<arena::entry::Registration<'d>>,
 }
 
 impl<'d> Account<'d> {
-    pub(in crate::buffer) fn charge(&self) -> &buffer::resident::Charge<'d> {
-        // SAFETY: the owner borrow retains this exact initialized registration.
-        unsafe { (*self.registration.get().value.get()).assume_init_ref() }
+    pub(in crate::buffer) fn capacity(&self) -> &usize {
+        // SAFETY: this counted edge was issued from the complete slot and keeps its ceiling immutable.
+        unsafe {
+            self.registration
+                .as_ptr()
+                .cast::<arena::Entry<'d>>()
+                .as_ref()
+                .capacity()
+        }
     }
 }
 
@@ -39,6 +45,6 @@ const _: () = assert!(size_of::<Account<'_>>() == size_of::<usize>());
 
 impl buffer::Residency for Option<provided::Account<'_>> {
     fn resident(&self) -> usize {
-        self.as_ref().map_or(0, |owner| owner.charge().capacity())
+        self.as_ref().map_or(0, |owner| *owner.capacity())
     }
 }

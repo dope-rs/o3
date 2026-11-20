@@ -1,4 +1,3 @@
-use crate::buffer::storage::regions;
 pub(in crate::buffer::segments) mod seal;
 
 use std::{num::NonZero, ops};
@@ -32,10 +31,12 @@ impl<T: buffer::raw::Segment> Item<T> {
             ops::ControlFlow::Continue(unsafe { Self::assume(value) })
         }
     }
+}
 
+impl<T: buffer::raw::Source> Item<T> {
     /// # Safety
-    /// This exact retained owner must expose a nonempty visible extent.
-    pub(in crate::buffer::segments) unsafe fn assume(value: T) -> Self {
+    /// This exact source must expose a nonempty visible extent.
+    pub(in crate::buffer) unsafe fn assume(value: T) -> Self {
         Self { value }
     }
 }
@@ -81,16 +82,6 @@ impl<T: AsRef<[u8]>> Item<T> {
     pub(in crate::buffer::segments) fn chunk(&self) -> buffer::raw::Chunk<'_> {
         // SAFETY: the item retains this complete nonempty borrowed span.
         unsafe { buffer::raw::Chunk::new(self.value.as_ref()) }
-    }
-}
-
-impl<'source, S: ?Sized> From<&regions::NonEmpty<'_, 'source, S>>
-    for Item<buffer::View<'source, S>>
-{
-    fn from(view: &regions::NonEmpty<'_, 'source, S>) -> Self {
-        Self {
-            value: *view.view(),
-        }
     }
 }
 
@@ -157,8 +148,18 @@ impl<'a, T: buffer::raw::Segment> Item<buffer::View<'a, T>> {
         })
     }
 
-    pub(in crate::buffer::segments) fn try_retain(self) -> Result<Item<T>, rc::Error> {
-        T::try_share(regions::NonEmpty::from(&self))
+    pub(in crate::buffer) fn try_retain(&self) -> Result<Item<T>, rc::Error> {
+        T::try_share(self)
+    }
+}
+
+impl<S: segments::Seal> buffer::View<'_, S> {
+    /// Retains this already-validated range without allocating or copying.
+    pub fn try_retain(self) -> Result<S, rc::Error> {
+        if self.is_empty() {
+            return Ok(S::EMPTY);
+        }
+        S::try_share(&Item { value: self }).map(Item::into_inner)
     }
 }
 

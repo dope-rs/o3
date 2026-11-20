@@ -4,9 +4,8 @@ use crate::{
     buffer,
     buffer::{
         bytes::window,
-        pool::owners,
         storage,
-        write::{self, Sink, consume, consume::Consume},
+        write::{self, consume, consume::Consume},
     },
     mem::rc,
 };
@@ -14,8 +13,8 @@ use crate::{
 /// Growable byte accumulator bounded by `MAX_CAPACITY`.
 #[derive(Default)]
 pub struct Snapshot<const MAX_CAPACITY: usize> {
-    state: Option<window::State<(), MAX_CAPACITY>>,
-    tail: u32,
+    pub(super) state: Option<window::State<(), MAX_CAPACITY>>,
+    pub(super) tail: u32,
 }
 
 impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
@@ -117,7 +116,7 @@ impl<const MAX_CAPACITY: usize> Snapshot<MAX_CAPACITY> {
         let Some(state) = &mut self.state else {
             return Ok(&mut []);
         };
-        window::Edit::new(state, &mut self.tail).try_as_mut()
+        state.try_as_mut(&mut self.tail)
     }
 }
 
@@ -172,37 +171,6 @@ impl<const MAX_CAPACITY: usize> buffer::View<'_, Snapshot<MAX_CAPACITY>> {
                 }))
             }
             _ => Ok(storage::Shared::new()),
-        }
-    }
-}
-
-impl<const MAX_CAPACITY: usize> Sink for Snapshot<MAX_CAPACITY> {
-    type Error = storage::AllocError;
-
-    fn write_slice(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
-        if bytes.is_empty() {
-            return Ok(());
-        }
-        let state = match &mut self.state {
-            Some(state) => state,
-            slot @ None => {
-                let capacity = num::NonZero::<usize>::MIN.saturating_add(bytes.len() - 1);
-                *slot = Some(window::try_copy(bytes, capacity)?);
-                return Ok(());
-            }
-        };
-        window::Edit::new(state, &mut self.tail).try_extend(bytes)
-    }
-
-    fn write_slices<const N: usize>(&mut self, slices: [&[u8]; N]) -> Result<(), Self::Error> {
-        let source = owners::Measured::try_slices(slices, MAX_CAPACITY - self.len())
-            .map_err(storage::AllocError::Capacity)?;
-        match &mut self.state {
-            Some(state) => window::Edit::new(state, &mut self.tail).try_slices(source),
-            slot @ None => {
-                *slot = window::try_slices(source)?;
-                Ok(())
-            }
         }
     }
 }

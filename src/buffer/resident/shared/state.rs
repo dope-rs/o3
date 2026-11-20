@@ -52,7 +52,7 @@ impl<'d> State<'d> {
             Self::Owned(owner) => owner.root(),
             Self::Resident(owner) => Root::Resident(owner.get()),
             Self::Accounted(owner) => Root::Accounted(owner.get()),
-            Self::Provided(owner) => Root::Provided(owner.charge()),
+            Self::Provided(owner) => Root::Provided(owner.capacity()),
             Self::Pool(owner) => owner.root(),
         })
     }

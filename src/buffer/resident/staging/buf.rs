@@ -183,14 +183,14 @@ impl<I: buffer::raw::SliceExt> Reserve<&mut Buf<'_>, owners::Measured<I>> {
             }
             State::Live(Backing::Local(snapshot)) => {
                 let result = if APPEND {
-                    window::Edit::try_staged(Reserve {
+                    window::State::try_staged(Reserve {
                         buf: (snapshot, &mut buf.head),
                         target,
                         source: src,
                     })
                 } else {
                     // The strict target remains bound to this unchanged exclusive owner.
-                    window::Edit::try_reserve(Reserve {
+                    window::State::try_reserve(Reserve {
                         buf: (snapshot, &mut buf.head),
                         target,
                         source: (),
@@ -400,13 +400,11 @@ impl<'d> Buf<'d> {
         ) -> Result<R, hold::Error>,
     {
         use buffer::raw::Retain as _;
-        use storage::regions::NonEmpty;
 
-        let Some(view) = NonEmpty::new(plan) else {
+        if plan.is_empty() {
             return finish(Some(resident::Shared::new().into()), plan, budget);
-        };
-        let view = view.view();
-        let owner = match &view.source.backing {
+        }
+        let owner = match &plan.source.backing {
             State::Empty | State::Cold(_) => {
                 return finish(Some(resident::Shared::new().into()), plan, budget);
             }
@@ -437,7 +435,7 @@ impl<'d> Buf<'d> {
                     region: unsafe {
                         regions::Shared::from_extent(
                             owner,
-                            regions::Extent::from_bytes(view.as_slice()),
+                            regions::Extent::from_bytes(plan.as_slice()),
                         )
                     },
                 }

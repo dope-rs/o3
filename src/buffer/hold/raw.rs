@@ -4,7 +4,7 @@ use crate::buffer::{
     self,
     hold::{Error, Retained},
     resident, storage,
-    storage::{provided, provided::Frozen as _, regions},
+    storage::{provided, provided::Frozen as _},
 };
 
 /// # Safety
@@ -72,11 +72,9 @@ unsafe impl<'d> Retain<'d> for storage::Shared<provided::Owner<'d>> {
     where
         Self: 'a,
     {
-        let prefix = provided::Prefix {
-            bytes: plan.as_slice(),
-            owner: plan.source.owner(),
-        };
-        let owner = prefix.try_account(budget).map_err(Error::Account)?;
+        let owner = provided::Prefix::from_view(*plan)
+            .try_account(budget)
+            .map_err(Error::Account)?;
         Ok(resident::Shared::from(owner).into())
     }
 
@@ -88,11 +86,7 @@ unsafe impl<'d> Retain<'d> for storage::Shared<provided::Owner<'d>> {
     where
         Self: 'a,
     {
-        let prefix = provided::Prefix {
-            bytes: plan.as_slice(),
-            owner: plan.source.owner(),
-        };
-        let std::ops::ControlFlow::Continue(owner) = prefix
+        let std::ops::ControlFlow::Continue(owner) = provided::Prefix::from_view(*plan)
             .try_account_with(budget, resident::Cap(limit))
             .map_err(Error::Account)?
         else {
@@ -122,13 +116,10 @@ where
     where
         Self: 'a,
     {
-        let Some(view) = regions::NonEmpty::new(plan) else {
+        if plan.is_empty() {
             return Ok(resident::Shared::new().into());
-        };
-        let inner = view
-            .view()
-            .try_clone()
-            .map_err(resident::AllocError::Retain)?;
+        }
+        let inner = plan.try_clone().map_err(resident::AllocError::Retain)?;
         let inner: resident::Shared<'d> = inner.into();
         Ok(inner.into())
     }

@@ -1,8 +1,11 @@
-use std::{cell, marker, num};
+use std::{cell, marker, num, ptr};
 
 use crate::buffer::storage::{
     provided,
-    provided::arena::{self, entry::Counter},
+    provided::arena::{
+        self,
+        entry::{Counter, Data},
+    },
 };
 
 /// Intrusive storage whose slot type is fixed by its original arena.
@@ -23,9 +26,9 @@ impl<'d, T, L> Domain<'d, T, L> {
         &self,
         context: C,
     ) -> Option<provided::Vacant<'d, T, L, C>> {
-        let mut node = self.state.free.take()?;
+        let node = self.state.free.take()?;
         // SAFETY: this node was removed from the live free list's head.
-        self.state.free.set(unsafe { node.take_next() });
+        self.state.free.set(unsafe { node.next() });
         Some(provided::Vacant {
             node: crate::mem::Lease::open(node, ()),
             domain: marker::PhantomData,
@@ -33,11 +36,15 @@ impl<'d, T, L> Domain<'d, T, L> {
         })
     }
     pub(super) fn pop_returned(&self) -> Option<T> {
-        let (mut node, tail) = self.state.returned.take()?;
-        // SAFETY: this node was removed from the live returned list's head.
-        self.state
-            .returned
-            .set(unsafe { node.take_next() }.map(|head| (head, tail)));
+        let (node, tail) = self.state.returned.take()?;
+        let rest = if node.entry == tail {
+            None
+        } else {
+            // SAFETY: finish linked every nonterminal returned node to its live successor.
+            let entry = unsafe { node.entry.as_ref().data.get().returned };
+            Some((arena::Ready { entry }, tail))
+        };
+        self.state.returned.set(rest);
         // SAFETY: this domain's detached ready head owns its initialized item
         // in the original typed slot. All external and account edges have ended.
         let item = unsafe {
@@ -82,9 +89,9 @@ impl<'d> State<'d> {
     pub(super) fn push_free(&self, node: arena::Empty<'d>) {
         let next = self.free.take();
         // SAFETY: this affine vacancy retains its exact detached slot.
-        unsafe { node.entry.as_ref() }
-            .next
-            .set(next.map(|node| node.entry));
+        unsafe { node.entry.as_ref() }.data.set(Data {
+            free: next.map(|node| node.entry),
+        });
         self.free.set(Some(node));
     }
     pub(in crate::buffer::storage::provided) fn has_returned(&self) -> bool {
@@ -94,11 +101,11 @@ impl<'d> State<'d> {
         ready
     }
     pub(super) fn finish(&self, node: arena::Ready<'d>) {
-        // SAFETY: the node retains its stable slot for the complete scope.
-        let tail = &unsafe { node.entry.as_ref() }.next;
+        let tail = node.entry;
         let head = match self.returned.take() {
             Some((head, last)) => {
-                last.set(Some(node.entry));
+                // SAFETY: the former tail is live in this queue and gains its first successor.
+                unsafe { last.as_ref() }.data.set(Data { returned: tail });
                 head
             }
             None => node,
@@ -109,7 +116,7 @@ impl<'d> State<'d> {
 
 const _: () = assert!(size_of::<State<'_>>() == 5 * size_of::<usize>());
 
-type Queue<'d> = Option<(arena::Ready<'d>, &'d arena::nodes::Link<'d>)>;
+type Queue<'d> = Option<(arena::Ready<'d>, ptr::NonNull<arena::Entry<'d>>)>;
 
 const _: () = assert!(size_of::<Queue<'_>>() == 2 * size_of::<usize>());
 

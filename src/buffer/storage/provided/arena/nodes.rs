@@ -1,8 +1,6 @@
-use std::{cell, ptr};
+use std::ptr;
 
 use crate::buffer::storage::provided::arena;
-
-pub(super) type Link<'d> = cell::Cell<Option<ptr::NonNull<arena::Entry<'d>>>>;
 
 /// Affine ownership of one slot in its retained phase.
 pub(in crate::buffer::storage::provided) struct Node<'d, const READY: bool> {
@@ -12,15 +10,12 @@ pub(in crate::buffer::storage::provided) struct Node<'d, const READY: bool> {
 pub(in crate::buffer::storage::provided) type Empty<'d> = Node<'d, false>;
 pub(in crate::buffer::storage::provided) type Ready<'d> = Node<'d, true>;
 
-impl<'d, const READY: bool> Node<'d, READY> {
+impl<'d> Empty<'d> {
     /// # Safety
-    /// This node is the removed head of its live phase's list.
-    pub(super) unsafe fn take_next(&mut self) -> Option<Self> {
-        // SAFETY: this live list's links retain nodes in the same phase and domain.
-        unsafe { self.entry.as_ref() }
-            .next
-            .take()
-            .map(|entry| Self { entry })
+    /// Own the removed list head. Transfer its successor exactly once before reusing the slot.
+    pub(super) unsafe fn next(&self) -> Option<Self> {
+        // SAFETY: on the free list the slot word contains its vacant successor.
+        unsafe { self.entry.as_ref().data.get().free }.map(|entry| Self { entry })
     }
 }
 

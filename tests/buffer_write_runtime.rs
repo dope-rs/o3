@@ -1,51 +1,13 @@
-use std::{mem::MaybeUninit, num::NonZero, slice};
+use std::{mem::MaybeUninit, num::NonZero};
 
 use o3::{
     base::num::bounded,
     buffer::{
         pool,
         storage::{Owned, inline},
-        write::{self, Array, Sink, Slice, SpareExt as _, Staged, consume},
+        write::{self, Array, Sink, Slice, SpareExt as _, consume},
     },
 };
-
-#[test]
-fn admits_before_ready() {
-    let mut bytes = b"xxx".to_vec();
-    bytes.clear();
-    let mut stage = Staged::<u32>::try_new(&mut bytes, 3).expect("stage");
-    let mut spare = stage.spare();
-    let mut calls = 0;
-    let result = spare.try_append(b"long", || {
-        calls += 1;
-        Ok::<_, consume::Error>(())
-    });
-    assert!(result.is_err());
-    assert_eq!(calls, 0);
-    let result = spare.try_append(b"yes", || {
-        calls += 1;
-        consume::Error::check(1, 0)
-    });
-    assert!(result.is_err());
-    assert_eq!(calls, 1);
-    assert_eq!(spare.len(), 0);
-    // SAFETY: clear preserved three initialized bytes in this allocation,
-    // and the staged writer neither reallocates nor deinitializes them.
-    assert_eq!(unsafe { slice::from_raw_parts(bytes.as_ptr(), 3) }, b"xxx");
-    let mut stage = Staged::<u32>::try_new(&mut bytes, 3).expect("stage");
-    let mut spare = stage.spare();
-    let value = spare
-        .try_append(b"yes", || {
-            calls += 1;
-            Ok::<_, consume::Error>(7)
-        })
-        .expect("ready");
-    assert_eq!(value, 7);
-    assert_eq!(calls, 2);
-    spare.commit();
-    stage.commit();
-    assert_eq!(bytes, b"yes");
-}
 
 #[test]
 fn appends_vector_batches() {

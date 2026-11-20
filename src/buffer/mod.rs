@@ -84,18 +84,6 @@ impl<'source, S: ?Sized> View<'source, S> {
     }
 }
 
-impl<S: segments::Seal> View<'_, S> {
-    /// Retains this already-validated range without allocating or copying.
-    pub fn try_retain(self) -> Result<S, rc::Error> {
-        use storage::regions::NonEmpty;
-
-        let Some(view) = NonEmpty::new(&self) else {
-            return Ok(S::EMPTY);
-        };
-        S::try_share(view).map(segments::Item::into_inner)
-    }
-}
-
 impl<S: Residency + ?Sized> View<'_, S> {
     /// Backing capacity kept live by retaining this selection; zero when empty.
     pub fn resident(&self) -> usize {

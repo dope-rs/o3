@@ -19,8 +19,8 @@ impl regions::End for Owner<'_> {
 
 impl buffer::Residency for Owner<'_> {
     fn resident(&self) -> usize {
-        // SAFETY: the external edge retains its entire original slot allocation.
-        (unsafe { arena::Entry::resident(self.entry) }) as usize
+        // SAFETY: the external edge retains the slot and its admitted resident ceiling.
+        unsafe { *self.entry.as_ref().capacity() }
     }
 }
 

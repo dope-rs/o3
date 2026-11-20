@@ -1,6 +1,6 @@
 use std::num;
 
-use crate::buffer::{bytes::window, write::consume};
+use crate::buffer::write::consume;
 
 /// One nonzero window capacity bounded by its owning window's ceiling.
 #[repr(transparent)]
@@ -20,15 +20,18 @@ impl<const MAX: usize> Capacity<MAX> {
         Ok(Self(value))
     }
 
-    pub(in crate::buffer::bytes::window) fn try_extend(
-        edit: &window::Edit<'_, (), MAX>,
-        src: &[u8],
-    ) -> Result<Self, consume::Error> {
-        let len = (edit.state.head - *edit.tail) as usize;
-        consume::Error::check(src.len(), MAX - len)?;
-        Ok(Self(
-            num::NonZero::<u32>::MIN.saturating_add((len + src.len()).saturating_sub(1) as u32),
-        ))
+    pub(super) fn try_append<const N: usize>(
+        snapshot: &super::Snapshot<MAX>,
+        first: usize,
+        slices: &[&[u8]; N],
+    ) -> Result<Option<Self>, consume::Error> {
+        let () = Self::VALID;
+        let used = snapshot.len();
+        let added = consume::Error::checked_end(first, MAX - used, slices)?;
+        Ok(num::NonZero::new(added).map(|added| {
+            // SAFETY: added is positive and checked_end bounds the sum by MAX, which fits u32.
+            Self(unsafe { crate::mem::raw::Counter::nonzero((used + added.get()) as u32) })
+        }))
     }
 
     pub(in crate::buffer) const fn get(self) -> u32 {

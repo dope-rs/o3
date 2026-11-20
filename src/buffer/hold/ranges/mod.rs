@@ -6,7 +6,7 @@ pub use iter::Iter;
 use crate::{
     base::marker::ThreadBound,
     buffer,
-    buffer::{resident, segments, storage, storage::regions},
+    buffer::{resident, segments, storage},
 };
 
 mod error;
@@ -165,8 +165,8 @@ fn share<'d>(
         bytes: view.bytes,
     };
     // SAFETY: callers select validated, nonempty views from the same Set.
-    let view = unsafe { regions::NonEmpty::assume(&view) };
-    <storage::Shared as segments::Seal>::try_share(view)
+    unsafe { segments::Item::assume(view) }
+        .try_retain()
         .map(segments::Item::from)
         .map_err(|error| retain::Error::Retain { index, error })
 }

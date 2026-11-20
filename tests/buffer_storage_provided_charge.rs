@@ -107,54 +107,53 @@ fn projected_prefix_keeps_provided_owner() {
 fn chunks_preserve_owner() {
     use buffer::raw::Freeze as _;
 
-    Item::try_scope(|unique, budget, arena| {
+    Item::try_scope(|mut unique, budget, arena| {
+        let start = unique.as_slice().as_ptr();
+        let size = NonZero::<usize>::MIN.saturating_add(2);
         let held = {
-            let mut unique = unique;
-            let start = unique.as_slice().as_ptr();
-            let size = NonZero::<usize>::MIN.saturating_add(2);
-            let held = {
-                let mut chunks = provided::Chunks::new(&mut unique, size);
-                let mut first = chunks.next().expect("first segment must exist");
-                let mut second = chunks.next().expect("second segment must exist");
-                let last = chunks.next().expect("final partial segment must exist");
-                assert!(chunks.next().is_none());
-                assert_eq!(first.as_ref(), b"exa");
-                assert_eq!(second.as_ref(), b"ctl");
-                assert_eq!(last.as_ref(), b"y");
-                assert_eq!(first.as_ref().as_ptr(), start);
-                assert_eq!(second.as_ref().as_ptr(), start.wrapping_add(3));
-                assert_eq!(last.as_ref().as_ptr(), start.wrapping_add(6));
-                let four = size.saturating_add(1);
-                assert!(
-                    matches!(first.try_take(four), Err(error) if error.into_parts() == (four, 3))
-                );
-                assert_eq!(first.as_ref(), b"exa");
-                let mut prefix = first
-                    .try_take(NonZero::<usize>::MIN)
-                    .expect("one-byte nested prefix must fit");
-                prefix.as_mut()[0] = b'E';
-                second.as_mut()[0] = b'C';
-                assert_eq!(prefix.as_ref(), b"E");
-                assert_eq!(first.as_ref(), b"xa");
-                assert_eq!(second.as_ref(), b"Ctl");
-                assert_eq!(budget.resident(), 0);
-                assert!(!arena.has_returned());
-                let frozen = prefix.freeze();
-                assert_eq!(frozen.as_ref().as_ptr(), start);
-                let held = frozen
-                    .try_account(&budget)
-                    .expect("nested prefix must retain its original owner");
-                assert_eq!(budget.resident(), 7);
-                held
+            let (mut first, mut second) = {
+                let mut chunks = unique.chunks_mut(size);
+                (
+                    chunks.next().expect("first chunk"),
+                    chunks.next().expect("second chunk"),
+                )
             };
-            assert!(unique.as_slice().is_empty());
-            assert!(unique.as_mut_slice().is_empty());
-            held
+            first.as_mut()[0] = b'E';
+            second.as_mut()[0] = b'C';
+            assert_eq!(second.as_ref(), b"Ctl");
+            first.freeze().try_account(&budget).expect("original slot")
         };
-        assert_eq!(held.as_slice(), b"E");
+        assert!(unique.as_slice().is_empty());
+        drop(unique);
+        assert_eq!(held.as_slice(), b"Exa");
+        assert_eq!(held.as_slice().as_ptr(), start);
+        assert_eq!(budget.resident(), 7);
         assert!(!arena.has_returned());
     })
     .expect("provided charge fixture");
+}
+
+#[test]
+fn releases_zero_resident_slot() {
+    let mut arena =
+        provided::Arena::<[u8; 0]>::try_allocate(NonZero::<u32>::MIN).expect("one slot")(());
+    let mut domain = resident::Domain::new();
+    arena.scope(Pin::new(&mut domain), |token, arena, domain| {
+        let budget = domain
+            .get_mut()
+            .try_budget(0, token.proof())
+            .expect("empty budget");
+        let empty = arena
+            .vacant()
+            .expect("vacant")
+            .try_insert([], 0, <[u8; 0]>::as_mut_slice)
+            .expect("empty item")
+            .try_account(&budget)
+            .expect("empty prefix");
+        let empty = resident::Shared::from(empty);
+        assert_eq!(arena.pop_returned(), Some([]));
+        assert!(empty.is_empty());
+    });
 }
 
 #[test]
@@ -219,6 +218,7 @@ fn keeps_foreign_charge() {
         }
         assert_eq!(second.resident(), 0);
         assert!(matches!(arena.pop_returned(), Some([7])));
+        assert!(!arena.has_returned());
     });
 }
 
@@ -302,15 +302,22 @@ fn shares_proved_charge() {
         let held = {
             let source = unique.into_shared();
             {
+                let _full = budget.try_charge(7).expect("full budget");
+                assert!(
+                    matches!(source.try_get(6..8, &budget), Err(account::Error::Range(e))
+                    if (e.start(), e.end(), e.len()) == (6, 8, 7))
+                );
+            }
+            {
                 let prefix = {
                     let held = source
                         .try_account(&budget)
                         .expect("shared owner must fit its budget");
                     {
                         let again = source
-                            .try_account(&budget)
+                            .try_get(1..4, &budget)
                             .expect("shared owner must reuse its charge");
-                        assert_eq!(again.as_slice(), b"exactly");
+                        assert_eq!(again.as_slice(), b"xac");
                     }
                     assert_eq!(budget.resident(), 7);
                     let clone = held.try_clone().expect("retained edge must be clonable");
@@ -510,8 +517,7 @@ fn bounds_nested_prefix() {
                 .try_take(NonZero::<usize>::MIN.saturating_add(2))
                 .expect("three-byte nested prefix");
             let two = NonZero::<usize>::MIN.saturating_add(1);
-            let result = prefix.try_take(two);
-            let error = result.err().expect("one byte remains");
+            let error = prefix.try_take(two).expect_err("one byte remains");
             assert_eq!(error.into_parts(), (two, 1));
             assert_eq!(prefix.as_ref(), b"c");
             let head = head.freeze();

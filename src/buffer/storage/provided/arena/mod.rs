@@ -12,7 +12,7 @@ mod nodes;
 use std::{cell, marker, mem, num, pin, ptr, slice};
 
 pub(in crate::buffer::storage::provided) use domain::{Domain, State};
-pub(in crate::buffer::storage::provided) use entry::{Entry, Registration};
+pub(in crate::buffer::storage::provided) use entry::Entry;
 pub(in crate::buffer::storage::provided) use nodes::{Empty, Ready};
 use root::Root;
 
@@ -85,7 +85,7 @@ impl<T, C, L> Arena<T, C, L> {
     pub(in crate::buffer::storage::provided) unsafe fn enter<'d>(
         &'d mut self,
         limit: u32,
-        resident: mem::MaybeUninit<u32>,
+        resident: mem::MaybeUninit<usize>,
     ) -> (Root<'d, T, C, L>, Scope<'d, T, L>) {
         const {
             assert!(size_of::<Header<C>>() == size_of::<Active<'_, T, C, L>>());
@@ -141,7 +141,7 @@ impl<T, C, L> Arena<T, C, L> {
     fn scope_in<S, R>(
         &mut self,
         state: pin::Pin<&mut S>,
-        resident: mem::MaybeUninit<u32>,
+        resident: mem::MaybeUninit<usize>,
         run: impl for<'d> FnOnce(
             region::Token<region::Identity<'d>>,
             Root<'d, T, C, L>,
@@ -170,7 +170,7 @@ impl<T, C: buffer::raw::Fixed<T>> Arena<T, C, ()> {
         terminal: &mut O::Terminal,
         op: O,
     ) -> O::Output {
-        let resident = mem::MaybeUninit::new(self.context().resident().get());
+        let resident = mem::MaybeUninit::new(self.context().resident().get() as usize);
         let mut input = (self, state, terminal);
         brand::scope_pinned(pin::Pin::new(&mut input), |token, regions, input| {
             let (arena, state, terminal) = input.get_mut();
@@ -239,7 +239,7 @@ impl<T, C: buffer::raw::Fixed<T>> Arena<T, C, ()> {
             pin::Pin<&'d mut S>,
         ) -> R,
     ) -> R {
-        let resident = mem::MaybeUninit::new(self.context().resident().get());
+        let resident = mem::MaybeUninit::new(self.context().resident().get() as usize);
         self.scope_in(state, resident, run)
     }
 }
@@ -253,7 +253,9 @@ pub(in crate::buffer::storage::provided) struct Slot<'d, T, L> {
 
 impl<T> Slot<'_, T, cell::Cell<u32>> {
     pub(in crate::buffer::storage::provided) fn set_resident(&self, resident: u32) {
-        self.entry.resident.set(mem::MaybeUninit::new(resident));
+        self.entry
+            .resident
+            .set(mem::MaybeUninit::new(resident as usize));
     }
 }
 

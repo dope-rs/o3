@@ -1,14 +1,13 @@
 //! Owner-preserving storage for resources returned by an external subsystem.
 //! Fixed and exact capacity owners over one private intrusive state machine.
 
-use std::{mem, num::NonZero, ops};
+use std::{borrow::Borrow, mem, num::NonZero, ops};
 
 pub use arena::{Arena, account::Account, owner::Owner, root::Root, vacant::Vacant};
 
 use crate::{
     buffer,
     buffer::{
-        bytes::ChunksMut,
         resident, storage,
         storage::provided,
         write::{consume, consume::Consume},
@@ -37,13 +36,18 @@ pub trait Frozen<'d>: buffer::raw::Source + buffer::Residency {
     fn try_account(&self, budget: &resident::Budget<'d>) -> Result<Self::Account, account::Cause>;
 }
 
-/// Exclusive mutable projection into one provided item.
 #[derive(Debug)]
 #[repr(C)]
-pub struct Unique<'d> {
-    pub(in crate::buffer::storage::provided) view: &'d mut [u8],
-    pub(in crate::buffer::storage::provided) owner: provided::Owner<'d>,
+pub struct Slice<B, O> {
+    bytes: B,
+    owner: O,
 }
+
+/// Exclusive mutable projection into one provided item.
+pub type Unique<'d> = Slice<&'d mut [u8], Owner<'d>>;
+
+/// A removed prefix borrowing its original unique owner.
+pub type Prefix<'a, 'd, B = &'a mut [u8]> = Slice<B, &'a Owner<'d>>;
 
 impl<'d> Unique<'d> {
     pub(in crate::buffer::storage::provided) const fn new(
@@ -51,28 +55,33 @@ impl<'d> Unique<'d> {
         owner: provided::Owner<'d>,
     ) -> Self {
         Self {
-            view: view.into_inner(),
+            bytes: view.into_inner(),
             owner,
         }
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        self.view
+        self.bytes
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        self.view
+        self.bytes
     }
 
     pub fn try_take(
         &mut self,
         amount: NonZero<usize>,
     ) -> Result<provided::Prefix<'_, 'd>, consume::Error> {
-        let bytes = buffer::raw::Selection::try_new(&mut self.view, amount.get())?.take();
-        Ok(provided::Prefix {
-            bytes,
-            owner: &self.owner,
-        })
+        Prefix::take_from(&mut self.bytes, &self.owner, amount)
+    }
+
+    pub fn chunks_mut<'a>(
+        &'a mut self,
+        size: NonZero<usize>,
+    ) -> impl Iterator<Item = Prefix<'a, 'd>> {
+        let owner = &self.owner;
+        buffer::bytes::ChunksMut::new(mem::take(&mut self.bytes), size)
+            .map(move |bytes| Prefix { bytes, owner })
     }
 
     pub fn try_account(
@@ -94,11 +103,8 @@ impl<'d> Unique<'d> {
     }
 
     pub fn into_shared(self) -> storage::Shared<provided::Owner<'d>> {
-        let Self { view, owner } = self;
-        // SAFETY: this Unique consumes the exact projection and live owner
-        // paired by its branded admission, retaining the source lifetime.
-
-        unsafe { storage::Shared::assume(view, owner) }
+        // SAFETY: Unique transfers the initialized slice with the external edge that retains it.
+        unsafe { storage::Shared::assume(self.bytes, self.owner) }
     }
 }
 
@@ -107,34 +113,33 @@ unsafe impl buffer::raw::Consume for Unique<'_> {
     fn consume<const MAX: u32>(prefix: buffer::raw::Consumed<'_, '_, Self, MAX>) {
         // SAFETY: projection retains this owner's unchanged exclusive byte extent.
         <&mut [u8] as buffer::raw::Consume>::consume(unsafe {
-            prefix.map(|source| &mut source.view)
+            prefix.map(|source| &mut source.bytes)
         });
     }
 }
 
-// SAFETY: Unique retains its provided owner while the paired slice restricts its extent.
-unsafe impl buffer::raw::Store for Unique<'_> {
+// SAFETY: narrowing this disjoint slice keeps its owned or borrowed slot edge, even when empty.
+unsafe impl<O> buffer::raw::Store for Slice<&mut [u8], O> {
     fn empty() -> Option<Self> {
         None
     }
 
     fn restrict(slice: buffer::raw::Slice<'_, '_, Self>) {
-        // SAFETY: Unique exposes the same exclusive extent and retains its owner;
-        // inner projection preserves the slice's canonical empty-storage policy.
-        let slice = unsafe { slice.map(|source| &mut source.view) };
+        // SAFETY: the selection belongs to these bytes and the owner stays in place.
+        let slice = unsafe { slice.map(|source| &mut source.bytes) };
         <&mut [u8] as buffer::raw::Store>::project(slice);
     }
 }
 
-impl AsRef<[u8]> for Unique<'_> {
+impl<B: AsRef<[u8]>, O> AsRef<[u8]> for Slice<B, O> {
     fn as_ref(&self) -> &[u8] {
-        self.view
+        self.bytes.as_ref()
     }
 }
 
-impl AsMut<[u8]> for Unique<'_> {
+impl<O> AsMut<[u8]> for Slice<&mut [u8], O> {
     fn as_mut(&mut self) -> &mut [u8] {
-        self.view
+        self.bytes
     }
 }
 
@@ -142,27 +147,27 @@ impl ops::Deref for Unique<'_> {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
-        self.view
+        self.bytes
     }
 }
 
-impl buffer::Residency for Unique<'_> {
+impl<'d, B, O: Borrow<Owner<'d>>> buffer::Residency for Slice<B, O> {
     fn resident(&self) -> usize {
-        self.owner.resident()
+        self.owner.borrow().resident()
     }
 }
 
 impl Consume for Unique<'_> {
     fn remaining(&self) -> usize {
-        self.view.len()
+        self.bytes.len()
     }
 
     fn try_consume(&mut self, amount: usize) -> Result<(), consume::Error> {
-        self.view.try_consume(amount)
+        self.bytes.try_consume(amount)
     }
 
     fn consume_max(&mut self, max: usize) -> usize {
-        self.view.consume_max(max)
+        self.bytes.consume_max(max)
     }
 }
 
@@ -183,10 +188,15 @@ const _: () = {
     );
 };
 
-/// A removed prefix borrowing its original unique owner.
-pub struct Prefix<'a, 'd, T = &'a mut [u8]> {
-    pub(in crate::buffer) bytes: T,
-    pub(in crate::buffer) owner: &'a provided::Owner<'d>,
+impl<'a, 'd> Prefix<'a, 'd> {
+    fn take_from<'bytes: 'a>(
+        bytes: &mut &'bytes mut [u8],
+        owner: &'a Owner<'d>,
+        amount: NonZero<usize>,
+    ) -> Result<Self, consume::Error> {
+        let bytes = buffer::raw::Selection::try_new(bytes, amount.get())?.take();
+        Ok(Self { bytes, owner })
+    }
 }
 
 impl<'a, 'd> Mutable<'d> for Prefix<'a, 'd> {
@@ -198,11 +208,7 @@ impl<'a, 'd> Mutable<'d> for Prefix<'a, 'd> {
         Self: 'b;
 
     fn try_take(&mut self, amount: NonZero<usize>) -> Result<Self::Prefix<'_>, consume::Error> {
-        let bytes = buffer::raw::Selection::try_new(&mut self.bytes, amount.get())?.take();
-        Ok(Prefix {
-            bytes,
-            owner: self.owner,
-        })
+        Prefix::take_from(&mut self.bytes, self.owner, amount)
     }
 }
 
@@ -210,32 +216,6 @@ impl<'a, 'd> From<Prefix<'a, 'd>> for Prefix<'a, 'd, &'a [u8]> {
     fn from(prefix: Prefix<'a, 'd>) -> Self {
         let Prefix { bytes, owner } = prefix;
         Self { bytes, owner }
-    }
-}
-
-/// Disjoint mutable segments retaining their original provided owner.
-pub struct Chunks<'a, 'd> {
-    bytes: ChunksMut<'a>,
-    owner: &'a provided::Owner<'d>,
-}
-
-impl<'a, 'd> Chunks<'a, 'd> {
-    pub fn new(source: &'a mut Unique<'d>, size: NonZero<usize>) -> Self {
-        Self {
-            bytes: ChunksMut::new(mem::take(&mut source.view), size),
-            owner: &source.owner,
-        }
-    }
-}
-
-impl<'a, 'd> Iterator for Chunks<'a, 'd> {
-    type Item = Prefix<'a, 'd>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        Some(Prefix {
-            bytes: self.bytes.next()?,
-            owner: self.owner,
-        })
     }
 }
 
@@ -253,7 +233,14 @@ impl<'a, 'd> Frozen<'d> for Prefix<'a, 'd, &'a [u8]> {
     }
 }
 
-impl<'d> Prefix<'_, 'd, &[u8]> {
+impl<'a, 'd> Prefix<'a, 'd, &'a [u8]> {
+    pub(in crate::buffer) fn from_view(view: buffer::View<'a, storage::Shared<Owner<'d>>>) -> Self {
+        Self {
+            bytes: view.as_slice(),
+            owner: view.source.owner(),
+        }
+    }
+
     #[inline]
     pub(in crate::buffer) fn try_account_with<A: resident::Admission>(
         &self,
@@ -263,39 +250,10 @@ impl<'d> Prefix<'_, 'd, &[u8]> {
         ops::ControlFlow<A::Declined, storage::Shared<Option<provided::Account<'d>>>>,
         account::Cause,
     > {
-        if self.bytes.is_empty() {
-            return Ok(ops::ControlFlow::Continue(storage::Shared::<
-                Option<provided::Account<'_>>,
-            >::new()));
-        }
-        use arena::Entry;
-
-        let owner = match Entry::try_account(self.owner, *budget, admission)? {
-            ops::ControlFlow::Continue(owner) => owner,
-            ops::ControlFlow::Break(declined) => return Ok(ops::ControlFlow::Break(declined)),
+        let Ok(prefix) = storage::NonEmpty::try_new(Self { ..*self }) else {
+            return Ok(ops::ControlFlow::Continue(storage::Shared::new()));
         };
-        // SAFETY: this prefix's private construction and disjoint projections
-        // retain its original owner; admission extends that exact backing.
-        let inner = unsafe { storage::Shared::assume(self.bytes, Some(owner)) };
-        Ok(ops::ControlFlow::Continue(inner))
-    }
-}
-
-impl<T: AsRef<[u8]>> AsRef<[u8]> for Prefix<'_, '_, T> {
-    fn as_ref(&self) -> &[u8] {
-        self.bytes.as_ref()
-    }
-}
-
-impl AsMut<[u8]> for Prefix<'_, '_> {
-    fn as_mut(&mut self) -> &mut [u8] {
-        self.bytes
-    }
-}
-
-impl buffer::Residency for Prefix<'_, '_, &[u8]> {
-    fn resident(&self) -> usize {
-        self.owner.resident()
+        prefix.try_account(*budget, admission)
     }
 }
 

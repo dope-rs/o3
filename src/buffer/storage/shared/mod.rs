@@ -135,26 +135,19 @@ impl<'d> storage::Shared<provided::Owner<'d>> {
         &self,
         budget: &resident::Budget<'d>,
     ) -> Result<storage::Shared<Option<provided::Account<'d>>>, account::Cause> {
-        provided::Prefix {
-            bytes: self.as_ref(),
-            owner: self.owner(),
-        }
-        .try_account(budget)
+        provided::Prefix::from_view(buffer::View::new(self)).try_account(budget)
     }
     pub fn try_get(
         &self,
         range: ops::Range<usize>,
         budget: &resident::Budget<'d>,
     ) -> Result<storage::Shared<Option<provided::Account<'d>>>, account::Error> {
-        let Some(bytes) = self.as_ref().get(range.clone()) else {
-            return Err(account::Error::Range(range::Error::new(range, self.len())));
-        };
-        provided::Prefix {
-            bytes,
-            owner: self.owner(),
-        }
-        .try_account(budget)
-        .map_err(account::Error::Account)
+        let view = buffer::View::new(self)
+            .try_get(range)
+            .map_err(account::Error::Range)?;
+        provided::Prefix::from_view(view)
+            .try_account(budget)
+            .map_err(account::Error::Account)
     }
 }
 
