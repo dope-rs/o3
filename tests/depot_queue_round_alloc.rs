@@ -21,62 +21,66 @@ static ALLOCATOR: Tracker = Tracker;
 #[test]
 fn keeps_hot_allocation() {
     let capacity = capacity::Count::new(64);
-    let baseline = {
-        let (slab, baseline) = Tracker::measure(|| slab::Store::<u64>::try_new(capacity));
-        assert!(slab.is_ok(), "required fixture outcome");
-        baseline
-    };
-    let (created, cold) = Tracker::measure(|| Set::<u64>::try_new(capacity));
-    assert_eq!(cold, [baseline[0] + 1, baseline[1] + 64 * 8, 0, 0]);
-    let mut owner = created.expect("allocate joint owner");
-    let ((), hot) = Tracker::measure(|| {
-        for (index, entry) in owner.entries().enumerate() {
-            let entry = match entry {
-                set::Entry::Vacant(entry) => Some(entry),
-                _ => None,
+    capacity::Domain::with(capacity, |domain| {
+        let baseline = {
+            let (slab, baseline) = Tracker::measure(|| slab::Store::<u64>::try_new(capacity));
+            assert!(slab.is_ok(), "required fixture outcome");
+            baseline
+        };
+        let (created, cold) = Tracker::measure(|| Set::<u64>::try_in(domain));
+        assert_eq!(cold, [baseline[0] + 1, baseline[1] + 64 * 8, 0, 0]);
+        let mut owner = created.expect("allocate joint owner");
+        let ((), hot) = Tracker::measure(|| {
+            for (index, entry) in owner.entries().enumerate() {
+                let entry = match entry {
+                    set::Entry::Vacant(entry) => Some(entry),
+                    _ => None,
+                }
+                .expect("fresh resident");
+                let ready = entry.insert(index as u64).insert();
+                let ready = ready.remove().insert();
+                ready.requeue();
             }
-            .expect("fresh resident");
-            let ready = entry.insert(index as u64).insert();
-            let ready = ready.remove().insert();
-            ready.requeue();
-        }
-        for _ in 0..256 {
-            let head = owner.turn().expect("scheduled resident");
-            head.advance();
-        }
-        while let Some(head) = owner.turn() {
-            head.remove().discard();
-        }
+            for _ in 0..256 {
+                let head = owner.turn().expect("scheduled resident");
+                head.advance();
+            }
+            while let Some(head) = owner.turn() {
+                head.remove().discard();
+            }
+        });
+        assert_eq!(hot, [0; 4]);
+        let ((), freed) = Tracker::measure(move || assert!(owner.is_empty()));
+        assert_eq!(freed, [0, 0, cold[0], cold[1]]);
     });
-    assert_eq!(hot, [0; 4]);
-    let ((), freed) = Tracker::measure(move || assert!(owner.is_empty()));
-    assert_eq!(freed, [0, 0, cold[0], cold[1]]);
 }
 
 #[test]
 fn empty_never_allocates() {
-    let (created, cold) =
-        Tracker::measure(|| Tracker::fail_after(0, || Set::<u64>::try_new(capacity::Count::EMPTY)));
-    let mut owner = created.expect("empty owner requests no memory");
-    assert_eq!(cold, [0; 4]);
-    assert!(owner.turn().is_none());
-    let ((), freed) = Tracker::measure(move || assert!(owner.is_empty()));
-    assert_eq!(freed, [0; 4]);
+    capacity::Domain::with(capacity::Count::EMPTY, |domain| {
+        let (created, cold) =
+            Tracker::measure(|| Tracker::fail_after(0, || Set::<u64>::try_in(domain)));
+        let mut owner = created.expect("empty owner requests no memory");
+        assert_eq!(cold, [0; 4]);
+        assert!(owner.turn().is_none());
+        let ((), freed) = Tracker::measure(move || assert!(owner.is_empty()));
+        assert_eq!(freed, [0; 4]);
+    });
 }
 
 #[test]
 fn exhaustion_keeps_failure() {
     for capacity in [1, 64, 256] {
-        for allowed in 0..2 {
-            let (created, counts) = Tracker::measure(|| {
-                Tracker::fail_after(allowed, || {
-                    Set::<u64>::try_new(capacity::Count::new(capacity))
-                })
-            });
-            assert!(matches!(created, Err(alloc::Error::Exhausted)));
-            assert_eq!(counts[0], counts[2]);
-            assert_eq!(counts[1], counts[3]);
-        }
+        capacity::Domain::with(capacity::Count::new(capacity), |domain| {
+            for allowed in 0..2 {
+                let (created, counts) = Tracker::measure(|| {
+                    Tracker::fail_after(allowed, || Set::<u64>::try_in(domain))
+                });
+                assert!(matches!(created, Err(alloc::Error::Exhausted)));
+                assert_eq!(counts[0], counts[2]);
+                assert_eq!(counts[1], counts[3]);
+            }
+        });
     }
 }
 

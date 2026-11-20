@@ -11,10 +11,7 @@ pub struct Domain<'a> {
 }
 
 impl Domain<'_> {
-    pub(in crate::depot) fn with<R>(
-        count: capacity::Count,
-        run: impl for<'a> FnOnce(Domain<'a>) -> R,
-    ) -> R {
+    pub fn with<R>(count: capacity::Count, run: impl for<'a> FnOnce(Domain<'a>) -> R) -> R {
         run(Domain {
             count,
             brand: marker::PhantomData,

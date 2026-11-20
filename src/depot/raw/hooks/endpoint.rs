@@ -59,7 +59,7 @@ impl<'a> EndpointHook<'a, u32> {
 }
 
 /// One observed link and its resolved neighbor under the original owner loan.
-pub(in crate::depot) struct Neighbor<'a, W, H = links::Chain> {
+pub(in crate::depot) struct Neighbor<'a, W, H> {
     link: W,
     target: Target<'a, W, H>,
 }

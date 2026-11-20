@@ -389,37 +389,6 @@ pub enum Entry<'a, T, Tag = (), const MAX: u32 = { u32::MAX }> {
     Occupied(slab::Occupied<entries::Busy<'a, T, MAX>, Tag, false>),
 }
 
-/// An occupied slot whose next generation has been proved available.
-pub struct Reuse<'a, T, Tag = (), const MAX: u32 = { u32::MAX }, const ROOT: bool = true> {
-    entry: slab::Occupied<entries::Busy<'a, T, MAX>, Tag, ROOT>,
-    next: key::Generation<MAX>,
-}
-
-impl<'a, T, Tag, const MAX: u32, const ROOT: bool>
-    TryFrom<slab::Occupied<entries::Busy<'a, T, MAX>, Tag, ROOT>> for Reuse<'a, T, Tag, MAX, ROOT>
-{
-    type Error = slab::Occupied<entries::Busy<'a, T, MAX>, Tag, ROOT>;
-
-    fn try_from(entry: Self::Error) -> Result<Self, Self::Error> {
-        let Some(next) = entry.entry.generation().checked_add(1) else {
-            return Err(entry);
-        };
-        Ok(Self { entry, next })
-    }
-}
-
-impl<'a, T, Tag, const MAX: u32, const ROOT: bool> Reuse<'a, T, Tag, MAX, ROOT> {
-    pub fn key(&self) -> key::Handle<Tag, MAX> {
-        self.entry.key()
-    }
-
-    /// Replaces the value and advances its identity without rechecking capacity or generation.
-    pub fn replace(self, value: T) -> (slab::Occupied<entries::Busy<'a, T, MAX>, Tag, ROOT>, T) {
-        let (busy, prior) = self.entry.entry.replace(self.next, value);
-        (slab::Occupied::new(busy), prior)
-    }
-}
-
 /// The retained (owner, index, projector) selects a valid field of that initialized slot.
 /// The field remains disjoint from mutable payloads for the owner's full returned loan.
 pub enum Field {}

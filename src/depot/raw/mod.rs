@@ -24,7 +24,7 @@ use crate::depot::{
     capacity,
     index::{Initialized, Stored, bitmap, set},
     queue::{
-        indexed::keyed::{self, lanes},
+        indexed::keyed,
         links::Index,
         pool::{Lane, fifo::Fifo},
         ring, tagged,
@@ -359,16 +359,6 @@ pub unsafe trait KeyPlane<P = ()>:
 pub unsafe trait KeyJoin<P = ()>: KeySource<P> {
     fn target(&self) -> &keyed::Fifo<Self::Key, P>;
     fn link(live: Proof<(&Self, Index), Initialized<P>>) -> &keyed::Link<Self::Key, P>;
-}
-/// # Safety
-/// This exclusive owner retains its heads/links with slots below `u32::MAX + 1 - N`.
-/// Shared aliases and payload operations preserve topology, live slots and exclusive authority.
-pub unsafe trait LaneSelect<const N: usize, const L: usize, P = ()>:
-    Sized + Project<Index, P> + AsRef<lanes::Fifo<Self::Key, N, P>>
-{
-    type Key: Address;
-    type Slot: KeyOwner<P, Key = Self::Key, Fifo = lanes::Fifo<Self::Key, N, P>>
-        + From<Self::Output>;
 }
 /// # Safety
 /// Encodings through `MAX` are complete, injective, and round-trip exactly.

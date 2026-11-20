@@ -16,8 +16,13 @@ pub struct Slot<'a, B, const N: usize> {
 
 /// A removed value's exact slot and original FIFO position.
 #[must_use = "an unrestored withdrawal leaves its value removed"]
-pub struct Withdrawn<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V> = ()>
-{
+pub(super) struct Withdrawn<
+    'a,
+    K: crate::depot::raw::Key,
+    V,
+    const N: usize,
+    S: lanes::raw::State<V>,
+> {
     slot: direct::Vacant<'a, K, lanes::Node<V, N, S>>,
     queues: &'a [links::Chain; N],
     lane: Option<Index<N>>,
@@ -75,9 +80,7 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
     }
 
     /// Removes the value while retaining its exact key and original position.
-    pub(in crate::depot) fn take_owned(
-        self,
-    ) -> (Withdrawn<'a, K, V, N, S>, lanes::raw::Owned<V, S>) {
+    pub(super) fn take_owned(self) -> (Withdrawn<'a, K, V, N, S>, lanes::raw::Owned<V, S>) {
         let index = self.detach::<false>();
         // SAFETY: unlink retained the exact entry and the pre-resolved index.
         let (slot, node) = unsafe { self.slot.take_at(index) };
@@ -125,12 +128,8 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
 
 impl<'a, K: crate::depot::raw::Key, V, const N: usize> Occupied<'a, K, V, N> {
     pub fn remove(self) -> V {
-        self.take_owned().1.into_value()
-    }
-
-    pub fn take(self) -> (Withdrawn<'a, K, V, N>, V) {
-        let (slot, value) = self.take_owned();
-        (slot, value.into_value())
+        let (_, value) = self.take_owned();
+        value.into_parts().0
     }
 }
 
@@ -138,10 +137,7 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
     Withdrawn<'a, K, V, N, S>
 {
     /// Restores the exact original lane and FIFO position without another lookup.
-    pub(in crate::depot) fn restore_with(
-        self,
-        value: lanes::raw::Owned<V, S>,
-    ) -> Occupied<'a, K, V, N, S> {
+    pub(super) fn restore_with(self, value: lanes::raw::Owned<V, S>) -> Occupied<'a, K, V, N, S> {
         // SAFETY: the retained vacancy belongs to this exact u32-sized table.
         let index = unsafe { links::Index::new_usize(self.slot.key().index()) };
         let slot = self
@@ -158,21 +154,8 @@ impl<'a, K: crate::depot::raw::Key, V, const N: usize, S: lanes::raw::State<V>>
     }
 
     /// Inserts the successor unlinked, ready for its selected destination.
-    pub(in crate::depot) fn insert_with(
-        self,
-        value: lanes::raw::Owned<V, S>,
-    ) -> Occupied<'a, K, V, N, S> {
+    pub(super) fn insert_with(self, value: lanes::raw::Owned<V, S>) -> Occupied<'a, K, V, N, S> {
         Slot::new(self.slot, self.queues).insert_with(value)
-    }
-}
-
-impl<'a, K: crate::depot::raw::Key, V, const N: usize> Withdrawn<'a, K, V, N> {
-    pub fn restore(self, value: V) -> Occupied<'a, K, V, N> {
-        self.restore_with(lanes::raw::Owned::new(value))
-    }
-
-    pub fn insert(self, value: V) -> Occupied<'a, K, V, N> {
-        self.insert_with(lanes::raw::Owned::new(value))
     }
 }
 

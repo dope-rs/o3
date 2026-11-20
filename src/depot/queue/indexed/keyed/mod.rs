@@ -3,7 +3,6 @@
 use crate::depot::{queue::links, raw};
 
 mod fifo;
-pub mod lanes;
 mod link;
 
 pub use fifo::Fifo;

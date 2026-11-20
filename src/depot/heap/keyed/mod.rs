@@ -70,6 +70,10 @@ const _: () = assert!(
 pub type Min<K, P, I = u32, B = ()> = super::owner::Owner<K, P, (), I, (), B>;
 
 impl<K: crate::depot::raw::Address, P: Ord, I: Position, B> Min<K, P, I, B> {
+    fn allocate(count: capacity::Count) -> Result<Self, heap::Error> {
+        Ok(Self::new(heap::Capacity::try_new(count)?.allocate()?))
+    }
+
     pub fn first_entry(&mut self) -> Option<keyed::Occupied<'_, K, P, I, B>> {
         let entry = heap::Entry::first(self)?;
         let key = entry.value().identity;
@@ -97,17 +101,7 @@ impl<K: crate::depot::raw::Address, P: Ord, I: Position> Min<K, P, I> {
     }
 
     pub fn try_new(capacity: capacity::Count) -> Result<Self, heap::Error> {
-        Ok(Self::new(heap::Capacity::try_new(capacity)?.allocate()?))
-    }
-
-    pub fn try_with<R>(
-        capacity: capacity::Count,
-        run: impl for<'a> FnOnce(Min<K, P, I, capacity::Domain<'a>>, capacity::Domain<'a>) -> R,
-    ) -> Result<R, heap::Error> {
-        let storage = heap::Capacity::try_new(capacity)?.allocate()?;
-        Ok(capacity::Domain::with(capacity, |domain| {
-            run(Min::new(storage), domain)
-        }))
+        Self::allocate(capacity)
     }
 
     pub fn retire(&mut self, key: K) {
@@ -122,6 +116,10 @@ impl<K: crate::depot::raw::Address, P: Ord, I: Position> Min<K, P, I> {
 }
 
 impl<'a, K: crate::depot::raw::Address, P: Ord, I: Position> Min<K, P, I, capacity::Domain<'a>> {
+    pub fn try_in(domain: capacity::Domain<'a>) -> Result<Self, heap::Error> {
+        Self::allocate(domain.count())
+    }
+
     /// Replaces this bounded index with the supplied source identity and priority.
     pub fn replace(&mut self, key: capacity::Key<'a, K>, priority: P) {
         self.slot(key).replace(priority);

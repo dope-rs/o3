@@ -76,7 +76,7 @@ fn retains_phase_and_fifo() {
             },
             [19, 23],
         ));
-    let _ = table
+    table
         .vacant(keys[3])
         .expect("empty slot")
         .insert::<typed::Data>((
@@ -85,11 +85,14 @@ fn retains_phase_and_fifo() {
                 drops: Counted(&data),
                 value: 29,
             },
-        ));
+        ))
+        .move_to_back(ready);
 
     let ((), counts) = Tracker::measure(|| {
         let address = match table.entry(keys[1]).expect("resident data") {
-            typed::Entry::Data(mut slot) => {
+            typed::Entry::Data(slot) => {
+                let (vacant, value) = slot.take();
+                let mut slot = vacant.restore(value);
                 slot.get_mut().1.value += 1;
                 Some(slot.get() as *const _)
             }
@@ -97,7 +100,7 @@ fn retains_phase_and_fifo() {
         }
         .expect("data phase");
         assert_eq!(data.get(), Some(0));
-        assert_eq!(table.back(ready), Some(keys[1]));
+        assert_eq!(table.back(ready), Some(keys[3]));
 
         let slot = match table.front(ready) {
             Some(typed::Front::Control(slot)) => Some(slot),
@@ -168,8 +171,8 @@ fn retains_phase_and_fifo() {
             Some(typed::Entry::Data(slot)) => Some(slot),
             _ => None,
         }
-        .expect("initially unlinked data");
-        assert_eq!(slot.lane(), None);
+        .expect("remaining ready data");
+        assert_eq!(slot.lane(), Some(ready));
         slot.move_to_back(waiting);
         assert_eq!(table.move_all(waiting, ready), 2);
         assert_eq!(table.back(ready), Some(keys[3]));

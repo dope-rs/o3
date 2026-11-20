@@ -17,10 +17,6 @@ impl<V> Owned<V> {
             state: (),
         }
     }
-
-    pub(in crate::depot) fn into_value(self) -> V {
-        self.into_parts().0
-    }
 }
 
 impl<V, S: State<V>> Owned<V, S> {

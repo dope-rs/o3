@@ -1,6 +1,5 @@
 use o3::{depot::queue::links, mem::slot::Storage};
 
-pub mod keyed;
 pub mod slab;
 
 #[derive(Clone, Copy)]

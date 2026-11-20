@@ -46,7 +46,7 @@ where
 
     /// Initializes the reservation and publishes its dense position.
     /// The reserved slot proves `pos < capacity <= u32::MAX`.
-    pub(in crate::depot::arena::slab) fn install(
+    pub(in crate::depot) fn install(
         self,
         value: T,
     ) -> entries::Busy<'a, T, MAX, M, PARTITIONS, P, S> {

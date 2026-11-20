@@ -1,6 +1,6 @@
 use std::marker;
 
-use crate::depot::capacity;
+use crate::depot::{arena::slab::key, capacity, queue::links};
 
 /// An identity bounded by one invariant construction domain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,5 +25,12 @@ impl<'a, K> Key<'a, K> {
 
     pub const fn as_inner(&self) -> &K {
         &self.key
+    }
+}
+
+impl<Tag, const MAX: u32> Key<'_, key::Handle<Tag, MAX>> {
+    pub(in crate::depot) fn slot(&self) -> links::Index {
+        // SAFETY: the branded index is below its Count, which never exceeds Index::END.
+        unsafe { links::Index::new_raw(self.key.index()) }
     }
 }

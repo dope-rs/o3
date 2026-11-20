@@ -87,8 +87,6 @@ fn keeps_allocation_layout() {
         16
     );
     assert_eq!(mem::size_of::<slab::Entry<'static, u64>>(), 24);
-    assert_eq!(mem::size_of::<slab::Reuse<'static, u64>>(), 24);
-    assert_eq!(mem::size_of::<Option<slab::Reuse<'static, u64>>>(), 24);
     for count in [0, 1, 3, 8] {
         let bytes = (count as usize * 28 + 7) & !7;
         let calls = usize::from(count != 0);
@@ -180,101 +178,32 @@ fn keeps_disjoint_slots() {
     let mut table = (slab::Store::<u64>::try_new(capacity::Count::new(4)))
         .expect("allocate four physical slots");
     let old = (table.insert(11)).expect("insert the first physical slot");
-    let (live, next, hot) = {
-        let (reused, hot) = Tracker::measure(|| {
-            let mut entries = table.entries();
-            let occupied =
-                into_occupied((entries.next()).expect("the first slot must retain its value"))
-                    .expect("the first slot must retain its value");
-            let mut free = entries.map(|entry| {
-                let (entry,) = match entry {
-                    slab::Entry::Vacant(entry) => Some((entry,)),
-                    _ => None,
-                }
-                .expect("remaining slots must be vacant");
-                entry
-            });
-            let a = free.next();
-            assert!(a.is_some(), "first reservation");
-            let c = {
-                let b = free.next();
-                assert!(b.is_some(), "second reservation");
-                let c = free.next().expect("third reservation");
-                assert!(free.next().is_none());
-                c
-            };
-            slab::Reuse::try_from(occupied).map(|reuse| {
-                let (live, prior) = reuse.replace(22);
-                assert_eq!(prior, 11);
-                assert_eq!(*live.get(), 22);
-                let next = c.insert(33);
-                assert!((live.key()) != (next));
-                (live.key(), next)
-            })
+    let (next, hot) = Tracker::measure(|| {
+        let mut entries = table.entries();
+        let mut occupied = entries
+            .next()
+            .and_then(into_occupied)
+            .expect("first resident");
+        let mut free = entries.filter_map(|entry| match entry {
+            slab::Entry::Vacant(entry) => Some(entry),
+            slab::Entry::Occupied(_) => None,
         });
-        match reused {
-            Ok((live, next)) => (live, next, hot),
-            outcome => {
-                assert!(outcome.is_ok(), "occupied generation must be reusable");
-                return;
-            }
-        }
-    };
+        let a = free.next().expect("first reservation");
+        let b = free.next().expect("second reservation");
+        let c = free.next().expect("third reservation");
+        assert!(free.next().is_none());
+        drop(b);
+        *occupied.get_mut() = 22;
+        let next = c.insert(33);
+        drop(a);
+        next
+    });
     assert_eq!(hot, [0; 4]);
-    assert_eq!(table.try_get(old).ok(), None);
-    assert_eq!(table.try_get(live).ok(), Some(&22));
+    assert_eq!(table.try_get(old).ok(), Some(&22));
     assert_eq!(table.try_get(next).ok(), Some(&33));
-    assert!(!table.is_full());
-    table.insert(44).as_ref().expect("required fixture outcome");
-    table.insert(55).as_ref().expect("required fixture outcome");
-    assert!((table.insert(66)) == (Err(66)));
-}
-
-#[test]
-fn reuse_keeps_generation() {
-    let mut table = (slab::Store::<u64, (), 2>::try_new(capacity::Count::new(1)))
-        .expect("allocate one physical slot");
-    let old = (table.insert(11)).expect("insert the initial generation");
-    {
-        let entry =
-            (table.try_entry(old)).expect("slab key must retain its original slot observation");
-
-        let reuse = slab::Reuse::try_from(entry);
-        match &reuse {
-            Ok(_) => {}
-            outcome => {
-                assert!(outcome.is_ok(), "required fixture outcome");
-                return;
-            }
-        }
-    }
-    assert_eq!(table.try_get(old).ok(), Some(&11));
-    let entry = (table.try_entry(old)).expect("slab key must retain its original slot observation");
-
-    match slab::Reuse::try_from(entry) {
-        Ok(reuse) => {
-            let (last, prior) = reuse.replace(22);
-            assert_eq!(prior, 11);
-            assert_eq!(last.key().index(), old.index());
-            assert_eq!(last.key().generation().get(), 2);
-            let entry = {
-                let result = slab::Reuse::try_from(last);
-                assert!(result.is_err(), "the final generation cannot be reused");
-                match result {
-                    Err(error) => error,
-                    Ok(_) => return,
-                }
-            };
-            assert_eq!(*entry.get(), 22);
-            assert_eq!(entry.remove(), 22);
-        }
-        outcome => {
-            assert!(outcome.is_ok(), "remaining generation must be reusable");
-            return;
-        }
-    }
-    assert!(table.is_full());
-    assert!((table.insert(33)) == (Err(33)));
+    table.insert(44).expect("returned reservation");
+    table.insert(55).expect("returned reservation");
+    assert_eq!(table.insert(66), Err(66));
 }
 
 #[test]

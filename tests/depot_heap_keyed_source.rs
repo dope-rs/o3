@@ -55,100 +55,92 @@ fn retains_source() {
 
 #[test]
 fn projects_scheduled() {
-    assert!(
-        keyed::Min::<key::Handle, u64>::try_with(capacity::Count::new(1), |mut heap, domain| {
-            let mut source = round::Set::<u64, (), { u32::MAX }, _>::try_in(domain)
-                .expect("resident allocation");
-            let ((), allocs) = Tracker::measure(|| {
-                for value in 0..4096 {
-                    let key = {
-                        let entry = source.try_vacant().expect("retired resident").insert(value);
-                        let key = entry.key();
-                        heap.replace(key, value + 7);
-                        key
-                    };
-                    let retry = heap.first_entry().expect("scheduled resident");
-                    assert!(retry.key() == key);
-                    // SAFETY: this fixture retains the idle resident and retires its heap entry first.
-                    let (mut entry, retry) = round::set::Occupied::from_live(unsafe {
-                        depot::raw::Proof::new(((&mut source, retry), key))
-                    });
-                    assert_eq!(retry.remove(), value + 7);
-                    assert_eq!(*entry.get(), value);
-                    *entry.get_mut() += 1;
-                    assert_eq!(*entry.get(), value + 1);
-                    entry.discard();
-                }
-            });
-            assert_eq!(allocs, [0; 4]);
-            assert!(heap.is_empty());
-            assert_eq!(source.len(), o3::depot::capacity::Count::EMPTY);
-        })
-        .is_ok(),
-        "heap allocation"
-    );
+    capacity::Domain::with(capacity::Count::new(1), |domain| {
+        let mut heap = keyed::Min::<key::Handle, u64, u32, _>::try_in(domain).expect("retry heap");
+        let mut source = round::Set::<u64>::try_in(domain).expect("resident allocation");
+        let ((), allocs) = Tracker::measure(|| {
+            for value in 0..4096 {
+                let key = {
+                    let entry = source.try_vacant().expect("retired resident").insert(value);
+                    let key = entry.key();
+                    heap.replace(key, value + 7);
+                    key
+                };
+                let retry = heap.first_entry().expect("scheduled resident");
+                assert!(retry.key() == key);
+                // SAFETY: this fixture retains the idle resident and retires its heap entry first.
+                let (mut entry, retry) = round::set::Occupied::from_live(unsafe {
+                    depot::raw::Proof::new(((&mut source, retry), key))
+                });
+                assert_eq!(retry.remove(), value + 7);
+                assert_eq!(*entry.get(), value);
+                *entry.get_mut() += 1;
+                assert_eq!(*entry.get(), value + 1);
+                entry.discard();
+            }
+        });
+        assert_eq!(allocs, [0; 4]);
+        assert!(heap.is_empty());
+        assert_eq!(source.len(), o3::depot::capacity::Count::EMPTY);
+    });
 }
 
 #[test]
 fn retains_generations() {
     let count = capacity::Count::new(2);
-    assert!(
-        keyed::Min::<key::Handle, u64>::try_with(count, |mut heap, domain| {
-            let mut records =
-                round::Set::<u64, (), { u32::MAX }, _>::try_in(domain).expect("source storage");
-            let first = records.try_vacant().expect("first vacant").insert(1);
-            let first_id = first.key();
-            first.insert();
-            let second = records.try_vacant().expect("second vacant").insert(2);
-            let other_id = second.key();
-            second.insert();
-            let ((), allocs) = Tracker::measure(|| {
-                heap.replace(first_id, 10);
-                heap.replace(other_id, 20);
-                let entry = records.try_entry(first_id);
-                let entry = entry.expect("the occupied source must be available");
-                let entry = round::set::Reuse::try_from(entry);
-                let entry = entry
-                    .map_err(|entry| *entry.key().as_inner())
-                    .expect("the reusable source must be available");
-                let (entry, prior) = entry.replace(3);
-                assert_eq!(prior, 1);
-                let next = entry.key();
-                assert!(next != first_id);
-                heap.replace(next, 30);
-                let first = heap.first_entry().expect("minimum");
-                assert!(first.key() == other_id);
-                assert_eq!(first.remove(), 20);
-                heap.retire(first_id);
-                let last = heap.first_entry().expect("new generation retained");
-                assert!(last.key() == next);
-                assert_eq!(last.remove(), 30);
-                assert!(heap.is_empty());
-                assert_eq!(*entry.into_mut(), 3);
-                assert!(records.contains(next));
-                assert!(!records.contains(first_id));
-                let error = {
-                    let result = records.try_entry(first_id);
-                    assert!(result.is_err(), "superseded source");
-                    match result {
-                        Err(error) => error,
-                        Ok(_) => return,
-                    }
-                };
-                assert!(matches!(error, key::Stale::Generation { key, actual }
+    capacity::Domain::with(count, |domain| {
+        let mut heap = keyed::Min::<key::Handle, u64, u32, _>::try_in(domain).expect("retry heap");
+        let mut records = round::Set::<u64>::try_in(domain).expect("source storage");
+        let first = records.try_vacant().expect("first vacant").insert(1);
+        let first_id = first.key();
+        first.insert();
+        let second = records.try_vacant().expect("second vacant").insert(2);
+        let other_id = second.key();
+        second.insert();
+        let ((), allocs) = Tracker::measure(|| {
+            heap.replace(first_id, 10);
+            heap.replace(other_id, 20);
+            let entry = records.try_entry(first_id);
+            let entry = entry.expect("the occupied source must be available");
+            let entry = round::set::Reuse::try_from(entry);
+            let entry = entry
+                .map_err(|entry| *entry.key().as_inner())
+                .expect("the reusable source must be available");
+            let (entry, prior) = entry.replace(3);
+            assert_eq!(prior, 1);
+            let next = entry.key();
+            assert!(next != first_id);
+            heap.replace(next, 30);
+            let first = heap.first_entry().expect("minimum");
+            assert!(first.key() == other_id);
+            assert_eq!(first.remove(), 20);
+            heap.retire(first_id);
+            let last = heap.first_entry().expect("new generation retained");
+            assert!(last.key() == next);
+            assert_eq!(last.remove(), 30);
+            assert!(heap.is_empty());
+            assert_eq!(*entry.into_mut(), 3);
+            assert!(records.contains(next));
+            assert!(!records.contains(first_id));
+            let error = {
+                let result = records.try_entry(first_id);
+                assert!(result.is_err(), "superseded source");
+                match result {
+                    Err(error) => error,
+                    Ok(_) => return,
+                }
+            };
+            assert!(matches!(error, key::Stale::Generation { key, actual }
                 if key == first_id && actual == next.as_inner().generation()));
-            });
-            assert_eq!(allocs, [0; 4]);
-        })
-        .is_ok(),
-        "heap storage"
-    );
+        });
+        assert_eq!(allocs, [0; 4]);
+    });
 }
 
 #[test]
 fn classifies_bound_state() {
-    keyed::Min::<key::Handle, u64>::try_with(capacity::Count::new(1), |_, domain| {
-        let mut records = round::Set::<u64, (), 2, _>::try_in(domain).expect("source storage");
+    capacity::Domain::with(capacity::Count::new(1), |domain| {
+        let mut records = round::Set::<u64, (), 2>::try_in(domain).expect("source storage");
         let first = records.try_vacant().expect("first vacancy").insert(1);
         let key = first.key();
         first.discard();
@@ -162,7 +154,7 @@ fn classifies_bound_state() {
             if seen == key && actual.get() == 2)
         );
 
-        let mut records = round::Set::<u64, (), 1, _>::try_in(domain).expect("retiring storage");
+        let mut records = round::Set::<u64, (), 1>::try_in(domain).expect("retiring storage");
         let last = records.try_vacant().expect("last vacancy").insert(2);
         let key = last.key();
         last.discard();
@@ -170,8 +162,7 @@ fn classifies_bound_state() {
             matches!(records.try_entry(key), Err(key::Stale::Retired { key: seen, actual })
             if seen == key && actual == key.as_inner().generation())
         );
-    })
-    .expect("heap storage");
+    });
 }
 
 #[test]

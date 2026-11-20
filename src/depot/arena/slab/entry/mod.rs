@@ -6,6 +6,10 @@ pub struct Slot<B, Tag = (), const ROOT: bool = true> {
 }
 
 impl<B, Tag, const ROOT: bool> Slot<B, Tag, ROOT> {
+    pub(in crate::depot) fn into_inner(self) -> B {
+        self.entry
+    }
+
     pub(in crate::depot::arena::slab) fn new(entry: B) -> Self {
         Self {
             entry,

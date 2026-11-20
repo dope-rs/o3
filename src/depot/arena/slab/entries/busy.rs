@@ -34,8 +34,12 @@ where
     S: storage::Storage,
 {
     pub(in crate::depot) fn index(&self) -> u32 {
+        self.slot_index().raw()
+    }
+
+    pub(in crate::depot) fn slot_index(&self) -> links::Index {
         // SAFETY: both constructors retain a slot borrowed from this core's allocation.
-        unsafe { self.slot.index(self.core.slots.as_ref()) }.raw()
+        unsafe { self.slot.index(self.core.slots.as_ref()) }
     }
 
     pub(in crate::depot) fn generation(&self) -> key::Generation<MAX> {
@@ -139,12 +143,12 @@ where
         unsafe { &mut *self.slot.value_ptr() }
     }
 
-    pub(in crate::depot) fn replace(mut self, next: key::Generation<MAX>, value: T) -> (Self, T) {
+    pub(in crate::depot) fn replace(&mut self, next: key::Generation<MAX>, value: T) -> T {
         let prior = mem::replace(self.value_mut(), value);
         self.slot
             .generation
             .set(<cycle::Mode<RECYCLE> as Policy>::stored(next));
-        (self, prior)
+        prior
     }
 }
 
